@@ -206,7 +206,9 @@ class UiBuilderSuppliedDocumentTest {
       encodeDefaults = true
       explicitNulls = false
     }
-    val evidence = Path.of("../docs/design/evidence/ui-builder-unsaved-remote-preview")
+    // Copied from compose-preview-server's docs/design/evidence/ui-builder-unsaved-remote-preview
+    // when the module moved here: the document and the server's own JSON and RC exports of it.
+    val evidence = Path.of("src/test/fixtures/ui-builder-unsaved-remote-preview")
     val document =
       json.decodeFromString<DesignDocumentV1>(Files.readString(evidence.resolve("document.json")))
   }

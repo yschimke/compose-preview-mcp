@@ -90,9 +90,7 @@ val stageRcViewerPlayer =
     archiveFile.set(
       layout.file(rcPlayerJsDist.elements.map { artifacts -> artifacts.single().asFile })
     )
-    shimFile.set(
-      layout.projectDirectory.file("src/rc-player/inert-custom-host.js")
-    )
+    shimFile.set(layout.projectDirectory.file("src/rc-player/inert-custom-host.js"))
     resourcePath.set("rc-viewer/rc-player-bundle.js")
     outputDirectory.set(layout.buildDirectory.dir("generated/rc-viewer-player"))
   }

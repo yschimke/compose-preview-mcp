@@ -13,6 +13,7 @@ harness. It moved here from
 | `mcp-app/rc-viewer.html`, `mcp-app/openai-probe.html` | MCP App pages only this server serves |
 | `mcp-app/compose-preview-viewer.html`, `mcp-app/preview-library.html` | Copied from compose-preview-server releases, with `server-assets.provenance.json` |
 | `harness/` | Playwright checks for `rc-viewer.html` |
+| `docs/LOCAL_MCP.md`, `docs/openai-extensions-probe.md` | The tools and apps the server offers, and the OpenAI MCP Extensions probe |
 
 ## Building
 

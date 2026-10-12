@@ -35,5 +35,5 @@ may depend on, is [`docs/design/MCP_REPOSITORY.md`](docs/design/MCP_REPOSITORY.m
 
 release-please cuts a draft release from the PR titles; `release.yml` attaches
 `compose-preview-mcp-<version>.tar.gz`, the viewer and its provenance, then publishes it. The CLI's
-`compose-preview mcp serve` resolves the newest release here. `release-please-config.json` carries
-`"release-as": "4.0.0"` for the first release only; remove it once 4.0.0 is out.
+`compose-preview mcp serve` resolves the newest release here. The line started at 4.0.0 and every
+release since is a minor bump (`always-bump-minor`).

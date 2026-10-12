@@ -1,0 +1,13 @@
+{
+  "name": "compose-preview-mcp-harness",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Playwright checks for the MCP App pages this repository owns.",
+  "type": "module",
+  "scripts": {
+    "rc-viewer": "node stage-rc-player.mjs && playwright test -c playwright.config.mjs"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.64.0"
+  }
+}

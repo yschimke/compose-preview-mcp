@@ -1,0 +1,161 @@
+name: Release
+
+# release-please cuts a DRAFT release; the distribution lane attaches the assets; only then is the
+# release published. So a failed build never leaves a tag whose assets do not exist, which matters
+# because `compose-preview mcp serve` resolves the newest release and downloads its tarball.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      publish_tag:
+        description: >-
+          Run the distribution lane for an EXISTING release tag (e.g. v4.0.0) instead of cutting a
+          new release, to recover a release whose upload died. Leave empty for the normal run.
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: "release-${{ github.ref }}-${{ github.event_name == 'push' && startsWith(github.event.head_commit.message, 'chore(main): release ') && github.sha || 'updates' }}"
+  cancel-in-progress: false
+
+jobs:
+  release-please:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    outputs:
+      release_created: ${{ steps.release.outputs.release_created }}
+      publish: ${{ steps.plan.outputs.publish }}
+      publish_tag: ${{ steps.plan.outputs.tag }}
+    steps:
+      - uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
+        id: release
+        if: ${{ !inputs.publish_tag }}
+        with:
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+          skip-github-pull-request: true
+
+      # A draft release does not create its tag; the lanes below check out and address the release
+      # by tag, so create it at the released commit.
+      - name: Ensure the release tag exists for the draft
+        if: ${{ !cancelled() && steps.release.outputs.release_created == 'true' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ steps.release.outputs.tag_name }}
+          SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          if gh api "repos/{owner}/{repo}/git/ref/tags/${TAG}" >/dev/null 2>&1; then
+            echo "tag ${TAG} already exists"
+            exit 0
+          fi
+          gh api --method POST "repos/{owner}/{repo}/git/refs" \
+            -f "ref=refs/tags/${TAG}" -f "sha=${SHA}" >/dev/null
+
+      - name: Plan what this run publishes
+        id: plan
+        if: ${{ !cancelled() }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          PUBLISH_TAG: ${{ inputs.publish_tag }}
+          RELEASE_CREATED: ${{ steps.release.outputs.release_created }}
+          RELEASE_TAG: ${{ steps.release.outputs.tag_name }}
+        run: |
+          set -euo pipefail
+          if [ -n "${PUBLISH_TAG}" ]; then
+            gh release view "${PUBLISH_TAG}" --json isDraft >/dev/null || {
+              echo "::error::no release for tag ${PUBLISH_TAG}"
+              exit 1
+            }
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+            echo "tag=${PUBLISH_TAG}" >> "$GITHUB_OUTPUT"
+          elif [ "${RELEASE_CREATED}" = "true" ]; then
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+            echo "tag=${RELEASE_TAG}" >> "$GITHUB_OUTPUT"
+          else
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+            echo "tag=" >> "$GITHUB_OUTPUT"
+          fi
+
+  # The assets: the distribution `compose-preview mcp serve` launches, and the MCP App viewer with
+  # its provenance, re-published byte for byte from the compose-preview-server release this build
+  # pins (mcp-app/server-assets.provenance.json). compose-agent-plugins bundles the viewer from
+  # here (`scripts/update-viewer.py`).
+  publish-distributions:
+    needs: release-please
+    if: ${{ needs.release-please.outputs.publish == 'true' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      TAG: ${{ needs.release-please.outputs.publish_tag }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.release-please.outputs.publish_tag }}
+          persist-credentials: false
+      - name: Derive version from tag
+        run: echo "PLUGIN_VERSION=${TAG#v}" >> "$GITHUB_ENV"
+      - uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
+        with:
+          cache-provider: basic
+          cache-read-only: true
+      - name: Check the borrowed MCP App pages against their provenance
+        run: python3 scripts/update-server-assets.py --check
+      - name: Build the distribution
+        run: ./gradlew :mcp:distTar
+      - name: Write the viewer's provenance
+        run: python3 scripts/viewer-provenance.py "${TAG}" > build/compose-preview-viewer.provenance.json
+      - name: Upload the distribution and the viewer
+        run: >-
+          gh release upload "${TAG}" --clobber
+          "mcp/build/distributions/compose-preview-mcp-${PLUGIN_VERSION}.tar.gz"
+          "mcp-app/compose-preview-viewer.html"
+          "build/compose-preview-viewer.provenance.json"
+
+  finish-release:
+    needs: [release-please, publish-distributions]
+    if: ${{ !cancelled() && needs.publish-distributions.result == 'success' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - name: Publish the draft GitHub release
+        run: gh release edit "${{ needs.release-please.outputs.publish_tag }}" --draft=false --latest
+
+  # The PR half, after any release this run cut is published: release-please cannot see drafts,
+  # so running it beside the release half would baseline on the previous release.
+  update-release-pr:
+    needs: [release-please, finish-release]
+    if: >-
+      ${{ !cancelled()
+      && !inputs.publish_tag
+      && (needs.release-please.outputs.release_created != 'true'
+      || needs.finish-release.result == 'success') }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
+        with:
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+          skip-github-release: true

@@ -1,0 +1,757 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Compose Previews</title>
+<!--
+  The Compose Preview library as an MCP App (compose-preview-server #1241). Served as
+  ui://compose-preview/library by the local server (previews_library, settings_register_project)
+  and by the hosted catalog server (catalog_library, ui_builder_open). It is its own asset rather
+  than a mode of compose-preview-viewer.html so the two can change independently.
+
+  Everything it needs arrives in the opening tool result's structuredContent
+  (schema "compose-preview-library/v1"):
+    mode        "library" | "register" | "designs"
+    host        "local" | "hosted"
+    tools       { refresh, render, register, listDesigns, view } — the tool names to call back
+    renderArgs  extra arguments for tools.render (the library always asks for pixels)
+    renderVia   "tool" (default) or "resource" — read the preview URI with resources/read instead
+    projects    [{ id, name, path, modules: [{ path, previews: [{ uri, name, displayName, ... }] }] }]
+
+  Deep links: hostContext["openai/deepLink"].url, at ui/initialize and on
+  ui/notifications/host-context-changed. Routes: /, /project/<id>, /preview/<encoded uri>,
+  /design/<id>. OpenAiDeepLinks.kt builds the links; LibraryRoute parses the same shapes.
+-->
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: var(--color-background-primary, #fff);
+    --bg2: var(--color-background-secondary, #f4f4f6);
+    --fg: var(--color-text-primary, #1b1b1f);
+    --fg2: var(--color-text-secondary, #62626b);
+    --line: var(--color-border-primary, #dcdce2);
+    --accent: var(--color-text-info, #2458d6);
+    --sel: var(--color-background-info, #e6edff);
+    font: 13px/1.4 var(--font-sans, system-ui, sans-serif);
+  }
+  :root[data-theme="dark"] {
+    --bg: var(--color-background-primary, #17171a); --bg2: var(--color-background-secondary, #222227);
+    --fg: var(--color-text-primary, #ececf1); --fg2: var(--color-text-secondary, #a0a0aa);
+    --line: var(--color-border-primary, #36363d); --accent: var(--color-text-info, #8fb0ff);
+    --sel: var(--color-background-info, #26324f);
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body { margin: 0; background: var(--bg); color: var(--fg); display: flex; flex-direction: column; }
+  header { display: flex; gap: 8px; align-items: center; padding: 10px 12px; border-bottom: 1px solid var(--line); }
+  header h1 { font-size: 15px; margin: 0; white-space: nowrap; }
+  header .count { color: var(--fg2); white-space: nowrap; }
+  input[type=search], input[type=text] { flex: 1; min-width: 0; font: inherit; color: inherit; background: var(--bg2); border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px; }
+  button { font: inherit; color: inherit; background: var(--bg2); border: 1px solid var(--line); border-radius: 8px; padding: 5px 10px; cursor: pointer; }
+  button:disabled { opacity: .5; cursor: default; }
+  main { flex: 1; display: grid; grid-template-columns: minmax(220px, 34%) 1fr; min-height: 0; }
+  nav { border-right: 1px solid var(--line); overflow: auto; padding: 6px 0; }
+  .recents { border-bottom: 1px solid var(--line); padding-bottom: 8px; margin-bottom: 6px; }
+  .recents header { border: 0; padding: 6px 12px; justify-content: space-between; }
+  .recents h2 { font-size: 12px; margin: 0; }
+  .recent.row { align-items: center; }
+  .recent img { width: 48px; height: 48px; object-fit: contain; background: var(--bg2); border-radius: 4px; }
+  .recent .sub { color: var(--fg2); font-size: 11px; }
+  .project > .row { font-weight: 600; }
+  .row { display: flex; gap: 6px; align-items: baseline; padding: 4px 12px; cursor: pointer; user-select: none; }
+  .row:hover { background: var(--bg2); }
+  .row.selected { background: var(--sel); }
+  .row .meta { color: var(--fg2); font-weight: 400; font-size: 12px; margin-left: auto; white-space: nowrap; }
+  .row .twisty { width: 10px; color: var(--fg2); flex: none; }
+  .module > .row { padding-left: 26px; font-family: var(--font-mono, ui-monospace, monospace); font-size: 12px; }
+  .preview.row { padding-left: 42px; }
+  .preview .sub { color: var(--fg2); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .preview .name { white-space: nowrap; }
+  .collapsed > .children { display: none; }
+  section#pane { overflow: auto; padding: 16px; display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+  #pane h2 { font-size: 15px; margin: 0; }
+  .uri { font-family: var(--font-mono, ui-monospace, monospace); font-size: 11px; color: var(--fg2); overflow-wrap: anywhere; }
+  .stage { flex: 1; display: flex; align-items: flex-start; justify-content: center; background: var(--bg2); border-radius: 12px; padding: 16px; min-height: 200px; }
+  .stage img { max-width: 100%; height: auto; box-shadow: 0 1px 4px rgb(0 0 0 / .25); border-radius: 4px; background: #fff; }
+  .empty { color: var(--fg2); padding: 12px; }
+  .status { color: var(--fg2); font-size: 12px; }
+  .error { color: var(--color-text-danger, #c5221f); white-space: pre-wrap; }
+  form.register { display: flex; gap: 8px; }
+  @media (max-width: 640px) { main { grid-template-columns: 1fr; } nav { max-height: 45vh; border-right: 0; border-bottom: 1px solid var(--line); } }
+</style>
+<body>
+<header>
+  <h1 id="title">Compose Previews</h1>
+  <div id="tabs" hidden role="group" aria-label="Library contents">
+    <button id="previews-tab" aria-pressed="true">Previews</button>
+    <button id="designs-tab" aria-pressed="false">Designs</button>
+  </div>
+  <input id="search" type="search" placeholder="Search previews" aria-label="Search previews">
+  <span class="count" id="count"></span>
+  <button id="refresh" title="Refresh">Refresh</button>
+</header>
+<main>
+  <nav id="tree" aria-label="Projects"><div class="empty">Waiting for the host…</div></nav>
+  <section id="pane"><div class="empty">Select a preview to render it.</div></section>
+</main>
+<script>
+(() => {
+  'use strict';
+  const REQUEST_TIMEOUT_MS = 120_000;
+  const $ = id => document.getElementById(id);
+  const pending = new Map();
+  let nextId = 1;
+  const state = {
+    data: null,          // structuredContent of the opening result
+    expanded: new Set(), // project ids and project::module keys
+    selected: null,      // preview uri or design id
+    query: '',
+    route: null,
+    designs: null,
+    tab: 'previews',
+    hostFiles: false,
+    refreshInFlight: null,
+    startedProjects: new Set(),
+    renders: new Map(), // Last successful pixels in this app session; never a fabricated preview.
+    selectionGeneration: 0,
+    contextQueue: Promise.resolve(),
+    contextVersion: 0,
+    recents: [],
+    recentScope: null,
+  };
+
+  // ---- MCP Apps bridge ------------------------------------------------------------------------
+  function request(method, params) {
+    const id = nextId++;
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        if (pending.delete(id)) reject(new Error(`${method} timed out`));
+      }, REQUEST_TIMEOUT_MS);
+      pending.set(id, { resolve, reject, timer, method });
+      window.parent.postMessage({ jsonrpc: '2.0', id, method, params }, '*');
+    });
+  }
+  const notify = (method, params) => window.parent.postMessage({ jsonrpc: '2.0', method, params }, '*');
+  const callTool = (name, args) => request('tools/call', { name, arguments: args || {} });
+
+  window.addEventListener('message', event => {
+    if (event.source !== window.parent) return;
+    const message = event.data;
+    if (!message || message.jsonrpc !== '2.0') return;
+    if (message.id != null && !message.method && pending.has(message.id)) {
+      const slot = pending.get(message.id);
+      pending.delete(message.id);
+      clearTimeout(slot.timer);
+      if (message.error) slot.reject(new Error(message.error.message || JSON.stringify(message.error)));
+      else slot.resolve(message.result);
+      return;
+    }
+    switch (message.method) {
+      case 'ui/notifications/tool-result':
+        accept(message.params);
+        break;
+      case 'ui/notifications/host-context-changed':
+        applyHostContext(message.params || {});
+        break;
+      default:
+        if (message.id != null && message.method) {
+          window.parent.postMessage({ jsonrpc: '2.0', id: message.id, result: {} }, '*');
+        }
+    }
+  });
+
+  // ---- Host context: theme and deep links -----------------------------------------------------
+  function applyHostContext(ctx) {
+    if (ctx.theme) document.documentElement.dataset.theme = ctx.theme;
+    const vars = ctx.styles && ctx.styles.variables;
+    if (vars) for (const [k, v] of Object.entries(vars)) if (v) document.documentElement.style.setProperty(k, v);
+    if (Object.prototype.hasOwnProperty.call(ctx, 'openai/deepLink')) {
+      const url = deepLinkUrl(ctx['openai/deepLink']);
+      if (url) { state.route = parseRoute(url); applyRoute(); }
+    }
+  }
+
+  // `{url}` per the spec; older hosts sent `{path: [...], query: [[k, v], ...]}`.
+  function deepLinkUrl(link) {
+    if (!link) return null;
+    if (typeof link.url === 'string') return link.url;
+    if (Array.isArray(link.path)) {
+      const search = new URLSearchParams(link.query || []).toString();
+      return '/' + link.path.map(encodeURIComponent).join('/') + (search ? '?' + search : '');
+    }
+    return null;
+  }
+
+  function parseRoute(url) {
+    if (!url.startsWith('/') || url.includes('#')) return { kind: 'home' };
+    const path = url.split('?')[0].replace(/\/+$/, '');
+    if (!path) return { kind: 'home' };
+    const parts = path.slice(1).split('/');
+    if (parts.length !== 2 || !parts[1]) return { kind: 'home' };
+    let value;
+    try { value = decodeURIComponent(parts[1]); } catch { return { kind: 'home' }; }
+    if (['project', 'preview', 'design'].includes(parts[0])) return { kind: parts[0], value };
+    return { kind: 'home' };
+  }
+
+  function applyRoute() {
+    const route = state.route;
+    if (!route || !state.data) return;
+    if (route.kind === 'project') {
+      state.expanded.add(route.value);
+      for (const m of (projectById(route.value)?.modules || [])) state.expanded.add(route.value + '::' + m.path);
+      renderTree();
+      if (state.data.tools?.refresh) void refresh(route.value);
+      scrollTo(route.value);
+    } else if (route.kind === 'preview') {
+      const found = findPreview(route.value);
+      if (found) {
+        state.expanded.add(found.project.id);
+        state.expanded.add(found.project.id + '::' + found.module.path);
+      }
+      select(route.value, found?.preview);
+    } else if (route.kind === 'design') {
+      state.tab = 'designs';
+      render();
+      if (state.data.host === 'local') selectLocalDesign((state.data.designs || []).find(d => d.id === route.value));
+      else if (state.data.tools?.listDesigns) void loadDesigns().then(() => openDesign(route.value));
+    }
+  }
+
+  // ---- Data -----------------------------------------------------------------------------------
+  function accept(result) {
+    const data = result?.structuredContent;
+    if (!data || data.schema !== 'compose-preview-library/v1') return;
+    const previous = state.data;
+    // A refresh scoped to one project (hosted: one catalog) lists the others without previews;
+    // keep what was already loaded for them.
+    if (previous && data.mode === previous.mode) {
+      for (const project of data.projects || []) {
+        const before = (previous.projects || []).find(p => p.id === project.id);
+        if (before && !(project.modules || []).length && (before.modules || []).length) project.modules = before.modules;
+      }
+    }
+    state.data = data;
+    restoreRecents();
+    // Only a selection that has left the listing is cleared; a project appearing or disappearing
+    // elsewhere leaves the pane, the chat context and the render cache alone.
+    if (state.selected && state.tab === 'previews' && previous
+      && findPreview(state.selected, previous) && !findPreview(state.selected)) clearSelection();
+    if (state.selected && state.tab === 'designs' && data.host === 'local'
+      && !(data.designs || []).some(d => d.id === state.selected)) clearSelection();
+    if (!previous) {
+      $('title').textContent = data.mode === 'designs' ? 'UI Builder designs'
+        : data.mode === 'register' ? 'Register a project' : 'Compose Previews';
+      if ((data.projects || []).length === 1) state.expanded.add(data.projects[0].id);
+    }
+    render();
+    const projects = data.projects || [];
+    if (state.tab === 'previews' && data.mode === 'library' && data.host === 'local' && projects.length === 1 && (!state.route || state.route.kind === 'home')) {
+      const project = projects[0];
+      state.expanded.add(project.id);
+      const previews = (project.modules || []).flatMap(m => m.previews || []);
+      if (!state.selected && previews.length) {
+        const last = state.recents.find(r => r.kind === 'preview' && previews.some(p => p.uri === r.id));
+        const preview = previews.find(p => p.uri === last?.id) || previews.find(p => p.sourceFile) || previews[0];
+        void select(preview.uri, preview);
+      }
+      else if (!previews.length && !state.startedProjects.has(project.id)) {
+        state.startedProjects.add(project.id);
+        // Defer until the current refresh has released its in-flight guard.
+        setTimeout(() => void refresh(project.id), 0);
+      }
+    }
+    if (!previous) {
+      $('search').placeholder = data.mode === 'designs' ? 'Search designs' : 'Search previews';
+      if (data.mode === 'designs') void loadDesigns().then(applyRoute);
+      else applyRoute();
+    }
+  }
+
+  const projectById = id => (state.data?.projects || []).find(p => p.id === id);
+  function findPreview(uri, data = state.data) {
+    for (const project of data?.projects || [])
+      for (const module of project.modules || [])
+        for (const preview of module.previews || [])
+          if (preview.uri === uri) return { project, module, preview };
+    return null;
+  }
+
+  async function refresh(projectId, quiet = false) {
+    const tool = state.data?.tools?.refresh;
+    if (!tool) return;
+    if (state.refreshInFlight) {
+      await state.refreshInFlight;
+      if (projectId) return refresh(projectId, quiet);
+      return;
+    }
+    $('refresh').disabled = true;
+    state.refreshInFlight = (async () => {
+      try {
+        const result = await callTool(tool, projectId ? { projectId } : {});
+        if (result?.isError) throw new Error(textOf(result) || 'Refresh failed');
+        accept(result);
+      } catch (err) {
+        $('count').textContent = 'Refresh failed; showing last loaded previews. Use Refresh to retry.';
+        if (!quiet && !state.selected) showError('Refresh failed', err);
+      } finally {
+        $('refresh').disabled = false;
+        state.refreshInFlight = null;
+      }
+    })();
+    return state.refreshInFlight;
+  }
+
+  // Sidebar and chat can have separate server processes. Re-read the shared registrations while
+  // visible, including the empty state, and let background discovery populate the tree.
+  setInterval(() => {
+    if (!document.hidden && state.data?.mode === 'library' && state.data?.host === 'local') void refresh(undefined, true);
+  }, 5000);
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden && state.data?.mode === 'library' && state.data?.host === 'local') void refresh(undefined, true);
+  });
+
+  // ---- Rendering ------------------------------------------------------------------------------
+  function render() {
+    const mode = state.data?.mode;
+    $('search').hidden = mode === 'register';
+    const hasDesigns = mode === 'library' && (state.data?.host === 'local' || state.data?.tools?.listDesigns);
+    $('tabs').hidden = !hasDesigns;
+    const designsTab = mode === 'designs' || (hasDesigns && state.tab === 'designs');
+    $('previews-tab').setAttribute('aria-pressed', String(!designsTab));
+    $('designs-tab').setAttribute('aria-pressed', String(designsTab));
+    $('search').placeholder = designsTab ? 'Search designs' : 'Search previews';
+    $('search').setAttribute('aria-label', $('search').placeholder);
+    if (mode === 'register') renderRegister();
+    else if (designsTab) renderDesigns();
+    else renderTree();
+  }
+
+  function matches(preview) {
+    const q = state.query;
+    if (!q) return true;
+    return [preview.name, preview.displayName, preview.uri, preview.sourceFile]
+      .some(s => s && s.toLowerCase().includes(q));
+  }
+
+  function el(tag, attrs, ...children) {
+    const node = document.createElement(tag);
+    for (const [k, v] of Object.entries(attrs || {})) {
+      if (k === 'class') node.className = v;
+      else if (k.startsWith('on')) node.addEventListener(k.slice(2), v);
+      else if (v != null) node.setAttribute(k, v);
+    }
+    for (const child of children) if (child != null) node.append(child);
+    return node;
+  }
+
+  function renderTree() {
+    const tree = $('tree');
+    tree.replaceChildren();
+    const projects = state.data?.projects || [];
+    let total = 0, shown = 0;
+    if (!projects.length) {
+      tree.append(el('div', { class: 'empty' }, state.data?.host === 'hosted'
+        ? 'No catalogs are served here.'
+        : 'No projects are registered yet. Ask the agent to register one, or use "Register project…" in the plugin settings.'));
+    }
+    for (const project of projects) {
+      const modules = project.modules || [];
+      const count = modules.reduce((n, m) => n + (m.previews || []).length, 0);
+      total += count;
+      if (state.query && !modules.some(m => (m.previews || []).some(matches))) continue;
+      const open = state.expanded.has(project.id) || !!state.query;
+      const node = el('div', { class: 'project' + (open ? '' : ' collapsed'), 'data-id': project.id });
+      node.append(el('div', { class: 'row', title: project.path || project.id, onclick: () => toggle(project.id, true) },
+        el('span', { class: 'twisty' }, open ? '▾' : '▸'), el('span', {}, project.name || project.id),
+        el('span', { class: 'meta' }, project.previewCount != null && !modules.length ? String(project.previewCount) : modules.length ? String(count) : '…')));
+      const children = el('div', { class: 'children' });
+      if (!modules.length) children.append(el('div', { class: 'empty' }, state.data.host === 'hosted'
+        ? 'Loading its previews…' : project.warming ? 'Preparing previews… This updates automatically.' : 'Open this project to discover its previews.'));
+      for (const module of modules) {
+        const key = project.id + '::' + module.path;
+        const previews = (module.previews || []).filter(matches);
+        shown += previews.length;
+        if (state.query && !previews.length) continue;
+        const mOpen = state.expanded.has(key) || !!state.query || modules.length === 1;
+        const mNode = el('div', { class: 'module' + (mOpen ? '' : ' collapsed') });
+        mNode.append(el('div', { class: 'row', onclick: () => toggle(key) },
+          el('span', { class: 'twisty' }, mOpen ? '▾' : '▸'), el('span', {}, module.path || project.name),
+          el('span', { class: 'meta' }, String((module.previews || []).length))));
+        const list = el('div', { class: 'children' });
+        if (!(module.previews || []).length) list.append(el('div', { class: 'empty' }, project.warming ? 'Preparing previews… This updates automatically.' : 'No previews discovered in this module yet.'));
+        for (const preview of previews) {
+          list.append(el('div', {
+            class: 'preview row' + (state.selected === preview.uri ? ' selected' : ''), role: 'button', tabindex: '0',
+            title: preview.uri, onclick: () => select(preview.uri, preview),
+            onkeydown: e => { if (e.key === 'Enter') select(preview.uri, preview); },
+          }, el('div', {}, el('div', { class: 'name' }, preview.displayName || preview.name),
+            preview.sourceFile ? el('div', { class: 'sub' }, preview.sourceFile + (preview.sourceLine ? ':' + preview.sourceLine : '')) : null)));
+        }
+        mNode.append(list);
+        children.append(mNode);
+      }
+      node.append(children);
+      tree.append(node);
+    }
+    renderRecents('preview');
+    $('count').textContent = state.query ? `${shown} of ${total}` : total ? `${total} previews` : '';
+  }
+
+  function toggle(key, isProject) {
+    if (state.expanded.has(key)) state.expanded.delete(key);
+    else {
+      state.expanded.add(key);
+      const project = isProject && projectById(key);
+      if (project && !(project.modules || []).some(m => (m.previews || []).length)) void refresh(key);
+    }
+    renderTree();
+  }
+
+  function scrollTo(id) {
+    const node = document.querySelector(`[data-id="${CSS.escape(id)}"]`);
+    if (node) node.scrollIntoView({ block: 'start' });
+  }
+
+  // Widget-scoped presentation cache, never an authoritative listing or a cross-user browser store.
+  const RECENT_LIMIT = 8;
+  const THUMB_LIMIT = 80_000;
+  // Keyed on the host alone: the project set grows as projects are registered and discovered, and
+  // an item whose project has gone simply stops resolving (renderRecents filters it out).
+  function restoreRecents() {
+    const scope = state.data.host;
+    if (scope === state.recentScope) return;
+    state.recentScope = scope;
+    let saved;
+    try { saved = window.openai?.widgetState?.privateContent?.composePreviewRecents; }
+    catch (err) { console.debug('Recent items unavailable', err); }
+    state.recents = saved?.schema === 1 && saved.scope === scope && Array.isArray(saved.items)
+      ? saved.items.slice(0, RECENT_LIMIT).filter(r => r && ['preview', 'local-design', 'hosted-design'].includes(r.kind)
+        && typeof r.id === 'string' && r.id.length <= 4096 && typeof r.name === 'string' && r.name.length <= 4096 && Number.isFinite(r.at)).map(r => ({
+          kind: r.kind, id: r.id, name: r.name, at: r.at,
+          ...(typeof r.thumb === 'string' && r.thumb.length <= THUMB_LIMIT && /^data:image\/png;base64,[A-Za-z0-9+/=]+$/.test(r.thumb)
+            && Number.isFinite(r.imageAt) ? { thumb: r.thumb, imageAt: r.imageAt } : {}),
+        })) : [];
+  }
+
+  function persistRecents() {
+    try {
+      if (typeof window.openai?.setWidgetState !== 'function') return;
+      const previous = window.openai.widgetState || {};
+      window.openai.setWidgetState({ ...previous, privateContent: { ...previous.privateContent,
+        composePreviewRecents: { schema: 1, scope: state.recentScope, items: state.recents },
+      } });
+    } catch (err) { console.debug('Recent items could not be persisted', err); }
+  }
+
+  function remember(kind, id, name) {
+    const before = state.recents.find(r => r.kind === kind && r.id === id);
+    state.recents = [{ ...before, kind, id, name: name || id, at: Date.now() },
+      ...state.recents.filter(r => !(r.kind === kind && r.id === id))].slice(0, RECENT_LIMIT);
+    persistRecents();
+  }
+
+  async function rememberPixels(kind, id, png) {
+    // Persist small, real thumbnails, not multi-megabyte render payloads.
+    const scope = state.recentScope;
+    const generation = state.selectionGeneration;
+    try {
+      const image = new Image();
+      image.src = png;
+      await image.decode();
+      const canvas = document.createElement('canvas');
+      const scale = Math.min(1, 192 / Math.max(image.naturalWidth, image.naturalHeight));
+      canvas.width = Math.max(1, Math.round(image.naturalWidth * scale));
+      canvas.height = Math.max(1, Math.round(image.naturalHeight * scale));
+      canvas.getContext('2d').drawImage(image, 0, 0, canvas.width, canvas.height);
+      const thumb = canvas.toDataURL('image/png');
+      const item = state.recents.find(r => r.kind === kind && r.id === id);
+      if (!item || scope !== state.recentScope || generation !== state.selectionGeneration || thumb.length > THUMB_LIMIT) return;
+      item.thumb = thumb;
+      item.imageAt = Date.now();
+      persistRecents();
+      render();
+    } catch (err) { console.debug('Thumbnail unavailable', err); }
+  }
+
+  function renderRecents(kind) {
+    const recent = state.recents.filter(r => kind === 'preview' ? r.kind === kind && findPreview(r.id)
+      : r.kind === (state.data.host === 'local' ? 'local-design' : 'hosted-design')
+        && (state.data.host === 'local' ? state.data.designs || [] : state.designs || []).some(d => d.id === r.id))
+      .filter(r => !state.query || (r.name + r.id).toLowerCase().includes(state.query));
+    const itemKind = kind === 'preview' ? 'preview' : state.data.host === 'local' ? 'local-design' : 'hosted-design';
+    if (!state.recents.some(r => r.kind === itemKind)) return;
+    const section = el('div', { class: 'recents', 'aria-label': 'Recent items' });
+    section.append(el('header', {}, el('h2', {}, 'Recent'), el('button', { type: 'button', onclick: () => {
+      state.recents = [];
+      persistRecents();
+      render();
+    } }, 'Clear recent items')));
+    if (!recent.length) section.append(el('div', { class: 'empty' }, state.query
+      ? 'No matching recent items.' : 'Recent items are not in the current listing.'));
+    for (const item of recent) {
+      const choose = () => item.kind === 'preview' ? select(item.id, findPreview(item.id)?.preview)
+        : item.kind === 'local-design' ? selectLocalDesign(state.data.designs.find(d => d.id === item.id)) : openDesign(item.id);
+      section.append(el('div', { class: 'recent row' + (state.selected === item.id ? ' selected' : ''),
+        role: 'button', tabindex: '0', onclick: choose, onkeydown: e => { if (e.key === 'Enter') choose(); } },
+        item.thumb ? el('img', { src: item.thumb, alt: 'Last successful render of ' + item.name }) : null,
+        el('div', {}, el('div', {}, item.name), el('div', { class: 'sub' }, item.imageAt
+          ? 'Rendered ' + new Date(item.imageAt).toLocaleString() : 'Opened ' + new Date(item.at).toLocaleString()))));
+    }
+    $('tree').prepend(section);
+  }
+
+  // Serialize updates: an older acknowledgement must never leave chat on the wrong item.
+  function shareSelection(selection) {
+    const version = ++state.contextVersion;
+    const indicator = selection ? el('div', { class: 'chat-context status', role: 'status' }, 'Sharing selection with chat…') : null;
+    state.contextQueue = state.contextQueue.then(async () => {
+      if (version !== state.contextVersion) return;
+      try {
+        await request('ui/update-model-context', { content: selection ? [{ type: 'text', text: JSON.stringify({
+          schema: 'compose-preview-selection/v1', selection,
+        }) }] : [] });
+        if (version === state.contextVersion && indicator) indicator.textContent = 'Selection shared with chat';
+      } catch (err) {
+        if (version === state.contextVersion && indicator) indicator.textContent = 'Could not share selection with chat. ' + (err.message || err);
+      }
+    });
+    return indicator;
+  }
+
+  function clearSelection() {
+    state.selected = null;
+    ++state.selectionGeneration;
+    shareSelection(null);
+    $('pane').replaceChildren(el('div', { class: 'empty' }, state.tab === 'designs'
+      ? 'Select a design to view it.' : 'Select a preview to render it.'));
+  }
+
+  async function select(uri, preview) {
+    state.selected = uri;
+    const generation = ++state.selectionGeneration;
+    remember('preview', uri, preview?.displayName || preview?.name);
+    renderTree();
+    const pane = $('pane');
+    const found = findPreview(uri);
+    const context = shareSelection({ kind: 'preview', host: state.data.host, uri,
+      name: preview?.displayName || preview?.name, projectId: found?.project.id,
+      projectName: found?.project.name, module: found?.module.path,
+      sourceFile: preview?.sourceFile, sourceLine: preview?.sourceLine });
+    const recent = state.recents.find(r => r.kind === 'preview' && r.id === uri);
+    const cached = state.renders.get(uri) || (recent?.thumb ? { png: recent.thumb, at: recent.imageAt, thumbnail: true } : null);
+    const status = el('div', { class: 'status' }, cached
+      ? `Showing last successful render${cached.thumbnail ? ' thumbnail' : ''} (${new Date(cached.at).toLocaleString()}); refreshing…` : 'Rendering…');
+    const stage = el('div', { class: 'stage' });
+    if (cached) stage.append(el('img', { src: cached.png, alt: preview?.name || uri }));
+    pane.replaceChildren(el('h2', {}, preview?.displayName || preview?.name || uri.split('/').pop()),
+      el('div', { class: 'uri' }, uri), context, status, stage);
+    try {
+      const png = await renderPreview(uri);
+      if (state.selected !== uri || generation !== state.selectionGeneration) return;
+      if (png) {
+        state.renders.delete(uri);
+        state.renders.set(uri, { png, at: Date.now() });
+        // Bound retained pixels; the sidebar can stay open for hours.
+        if (state.renders.size > 12) state.renders.delete(state.renders.keys().next().value);
+        void rememberPixels('preview', uri, png);
+        stage.replaceChildren(el('img', { src: png, alt: preview?.name || uri }));
+        status.textContent = 'Updated ' + new Date().toLocaleTimeString();
+      } else status.textContent = cached ? 'No new image returned; showing last successful render.' : 'The render returned no image.';
+    } catch (err) {
+      if (state.selected !== uri || generation !== state.selectionGeneration) return;
+      status.replaceChildren(el('div', { class: 'error' }, (cached ? 'Refresh failed; showing last successful render. ' : '') + String(err.message || err)));
+    }
+  }
+
+  async function renderPreview(uri) {
+    const data = state.data;
+    if (data.renderVia === 'resource') {
+      const read = await request('resources/read', { uri });
+      const blob = (read?.contents || []).find(c => c.blob);
+      return blob ? `data:${blob.mimeType || 'image/png'};base64,${blob.blob}` : null;
+    }
+    const result = await callTool(data.tools.render, { uri, ...(data.renderArgs || {}) });
+    if (result?.isError) throw new Error(textOf(result) || 'render failed');
+    return imageOf(result);
+  }
+
+  const textOf = result => (result?.content || []).filter(c => c.type === 'text').map(c => c.text).join('\n');
+  function imageOf(result) {
+    const image = (result?.content || []).find(c => c.type === 'image');
+    if (image) return `data:${image.mimeType || 'image/png'};base64,${image.data}`;
+    const link = (result?.content || []).find(c => c.type === 'text' && /^https:\/\//.test(c.text?.trim?.() || ''));
+    return link ? link.text.trim() : null;
+  }
+
+  function showError(title, err) {
+    $('pane').replaceChildren(el('h2', {}, title), el('div', { class: 'error' }, String(err?.message || err)));
+  }
+
+  // ---- Register mode (settings page modal) ----------------------------------------------------
+  function renderRegister() {
+    $('tree').replaceChildren(...(state.data.projects || []).map(p =>
+      el('div', { class: 'row', title: p.path }, el('span', {}, p.name), el('span', { class: 'meta' }, p.path || ''))));
+    if (!(state.data.projects || []).length) $('tree').append(el('div', { class: 'empty' }, 'No projects registered yet.'));
+    const input = el('input', { type: 'text', placeholder: '/path/to/gradle/project', 'aria-label': 'Project path' });
+    const out = el('div', { class: 'status' });
+    const form = el('form', { class: 'register', onsubmit: async e => {
+      e.preventDefault();
+      const path = input.value.trim();
+      if (!path) return;
+      out.textContent = 'Registering…';
+      try {
+        const result = await callTool(state.data.tools.register, { path });
+        if (result?.isError) throw new Error(textOf(result));
+        out.textContent = 'Registered. It warms up in the background.';
+        await refresh();
+      } catch (err) { out.replaceChildren(el('div', { class: 'error' }, String(err.message || err))); }
+    } }, input, el('button', { type: 'submit' }, 'Register'));
+    $('pane').replaceChildren(el('h2', {}, 'Register a Gradle project'),
+      el('div', { class: 'status' }, 'The folder that holds settings.gradle(.kts). Its previews appear in the library once discovered.'), form, out);
+  }
+
+  // ---- Designs mode (hosted ui_builder_open) --------------------------------------------------
+  async function loadDesigns() {
+    try {
+      const result = await callTool(state.data.tools.listDesigns, {});
+      if (result?.isError) throw new Error(textOf(result));
+      state.designs = designsFrom(result);
+      if (state.tab === 'designs' || state.data?.mode === 'designs') renderDesigns();
+    } catch (err) {
+      if (state.tab === 'designs' || state.data?.mode === 'designs') $('tree').replaceChildren(el('div', { class: 'error' }, String(err.message || err)));
+    }
+  }
+
+  // Tolerant: take any array of objects carrying a design id.
+  function designsFrom(result) {
+    let body = result?.structuredContent;
+    if (!body) { try { body = JSON.parse(textOf(result)); } catch { body = null; } }
+    const out = [];
+    const visit = v => {
+      if (Array.isArray(v)) v.forEach(visit);
+      else if (v && typeof v === 'object') {
+        const id = v.designId || (v.id && (v.name || v.title) ? v.id : null);
+        if (typeof id === 'string') out.push({ id, name: v.name || v.title || id });
+        else Object.values(v).forEach(visit);
+      }
+    };
+    visit(body);
+    return out;
+  }
+
+  function renderDesigns() {
+    const local = state.data?.host === 'local';
+    const all = local ? state.data.designs || [] : state.designs;
+    const designs = (all || []).filter(d => !state.query || (d.name + d.id + (d.path || '')).toLowerCase().includes(state.query));
+    $('tree').replaceChildren(...designs.map(d => el('div', {
+      class: 'row' + (state.selected === d.id ? ' selected' : ''), role: 'button', tabindex: '0',
+      onclick: () => local ? selectLocalDesign(d) : openDesign(d.id),
+      onkeydown: e => { if (e.key === 'Enter') local ? selectLocalDesign(d) : openDesign(d.id); },
+    }, el('div', {}, el('div', { class: 'name' }, d.name),
+      d.path ? el('div', { class: 'sub' }, d.path) : null))));
+    if (all && !designs.length) $('tree').append(el('div', { class: 'empty' }, state.query
+      ? 'No matching designs.' : local ? 'No .uid designs found in registered projects or active session folders.' : 'No designs.'));
+    if (!all) $('tree').append(el('div', { class: 'empty' }, 'Loading designs…'));
+    renderRecents('design');
+    $('count').textContent = all ? `${all.length} designs` : '';
+  }
+
+  function fileUrl(path) {
+    const normalized = path.startsWith('/') ? path : path.replace(/\\/g, '/');
+    const encodePath = value => value.split('/').map(encodeURIComponent).join('/');
+    // Preserve the drive colon and UNC authority; encode only path segments.
+    if (/^[A-Za-z]:\//.test(normalized)) return 'file:///' + normalized.slice(0, 2) + encodePath(normalized.slice(2));
+    if (normalized.startsWith('//')) {
+      const slash = normalized.indexOf('/', 2);
+      return 'file://' + normalized.slice(2, slash) + encodePath(normalized.slice(slash));
+    }
+    return 'file://' + encodePath(normalized);
+  }
+
+  function selectLocalDesign(design) {
+    if (!design) return;
+    remember('local-design', design.id, design.name);
+    state.selected = design.id;
+    ++state.selectionGeneration;
+    renderDesigns();
+    const context = shareSelection({ kind: 'local-design', host: 'local', id: design.id, name: design.name, path: design.path });
+    const status = el('div', { class: 'status' }, 'Open this .uid file in UI Builder to view and edit it. Changes save back to this file.');
+    const button = el('button', { type: 'button', onclick: async () => {
+      button.disabled = true;
+      try {
+        if (state.hostFiles) await request('openai/files/open', { path: design.path });
+        else await request('ui/open-link', { url: fileUrl(design.path) });
+        status.textContent = 'Asked the host to open the design. If it did not open, open the file at the path above.';
+      } catch (err) {
+        status.textContent = 'Could not open the design: ' + (err.message || err) + '. Open the file at the path above.';
+      } finally { button.disabled = false; }
+    } }, 'Open in UI Builder');
+    $('pane').replaceChildren(el('h2', {}, design.name), el('div', { class: 'uri' }, design.path), context, status, button);
+  }
+
+  async function openDesign(id) {
+    remember('hosted-design', id, (state.designs || []).find(d => d.id === id)?.name);
+    state.selected = id;
+    const generation = ++state.selectionGeneration;
+    renderDesigns();
+    const recent = state.recents.find(r => r.kind === 'hosted-design' && r.id === id);
+    const status = el('div', { class: 'status' }, recent?.thumb
+      ? 'Showing last successful render thumbnail (' + new Date(recent.imageAt).toLocaleString() + '); refreshing…' : 'Drawing…');
+    const stage = el('div', { class: 'stage' });
+    if (recent?.thumb) stage.append(el('img', { src: recent.thumb, alt: id }));
+    const name = (state.designs || []).find(d => d.id === id)?.name;
+    const context = shareSelection({ kind: 'hosted-design', host: state.data.host, id, name });
+    $('pane').replaceChildren(el('h2', {}, name || id), name ? el('div', { class: 'uri' }, id) : null, context, status, stage);
+    try {
+      const result = await callTool(state.data.tools.view, { designId: id, inline: true });
+      if (result?.isError) throw new Error(textOf(result));
+      if (state.selected !== id || generation !== state.selectionGeneration) return;
+      const png = imageOf(result);
+      if (png) {
+        stage.replaceChildren(el('img', { src: png, alt: id }));
+        status.textContent = 'Updated ' + new Date().toLocaleTimeString();
+        void rememberPixels('hosted-design', id, png);
+      }
+      else status.textContent = recent?.thumb ? 'No new picture returned; showing last successful render.' : 'No picture returned.';
+    } catch (err) {
+      if (state.selected === id && generation === state.selectionGeneration)
+        status.replaceChildren(el('div', { class: 'error' }, (recent?.thumb ? 'Refresh failed; showing last successful render. ' : '') + String(err.message || err)));
+    }
+  }
+
+  // ---- Wiring ---------------------------------------------------------------------------------
+  $('search').addEventListener('input', e => { state.query = e.target.value.trim().toLowerCase(); render(); });
+  $('refresh').addEventListener('click', () => state.data?.host === 'hosted' && (state.data?.mode === 'designs' || state.tab === 'designs') ? loadDesigns() : refresh());
+  function chooseTab(tab) {
+    if (state.tab !== tab) {
+      state.tab = tab;
+      clearSelection();
+    }
+    state.query = '';
+    $('search').value = '';
+    render();
+    if (tab === 'designs' && state.data?.host === 'hosted') void loadDesigns();
+  }
+  $('previews-tab').addEventListener('click', () => chooseTab('previews'));
+  $('designs-tab').addEventListener('click', () => chooseTab('designs'));
+
+  async function initialize() {
+    try {
+      const result = await request('ui/initialize', {
+        appInfo: { name: 'compose-preview-library', version: '1' },
+        appCapabilities: { availableDisplayModes: ['fullscreen', 'inline'] },
+        protocolVersion: '2026-01-26',
+      });
+      state.hostFiles = result?.hostCapabilities?.experimental?.['openai/files'] != null;
+      applyHostContext(result?.hostContext || {});
+      notify('ui/notifications/initialized', {});
+    } catch (err) {
+      $('tree').replaceChildren(el('div', { class: 'error' }, 'The host did not answer ui/initialize: ' + (err.message || err)));
+    }
+  }
+  void initialize();
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,64 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": [
+    "local>yschimke/renovate-config"
+  ],
+  "description": "The shared preset owns the release-train grouping. `platformAutomerge` hands the minor/patch/digest/pin bumps it automerges to GitHub's native auto-merge, which lands them once the `gradle` check the `Protect Main` ruleset requires reports green (yschimke/renovate-config `repo-policy/`). The two MCP App pages borrowed from compose-preview-server are not Renovate's: `.github/workflows/sync-server-assets.yml` moves them, because a move is a byte copy plus a provenance record that Renovate cannot write.",
+  "platformAutomerge": true,
+  "ignorePaths": [
+    "mcp/src/editLoopFixture/**"
+  ],
+  "packageRules": [
+    {
+      "description": "Majors are never automerged and soak for 14 days, as in compose-preview-server.",
+      "matchUpdateTypes": [
+        "major"
+      ],
+      "automerge": false,
+      "minimumReleaseAge": "14 days"
+    },
+    {
+      "description": "Update this release BOM as soon as it ships; module versions come from its constraints.",
+      "matchPackageNames": [
+        "ee.schimke.composeai:compose-ai-tools-bom"
+      ],
+      "groupName": "compose-ai-tools",
+      "rangeStrategy": "pin",
+      "schedule": [
+        "at any time"
+      ],
+      "minimumReleaseAge": null
+    },
+    {
+      "description": "Update this release BOM as soon as it ships; module versions come from its constraints.",
+      "matchPackageNames": [
+        "ee.schimke.composeai:compose-preview-contracts-bom"
+      ],
+      "groupName": "compose-preview-contracts",
+      "rangeStrategy": "pin",
+      "schedule": [
+        "at any time"
+      ],
+      "minimumReleaseAge": null
+    },
+    {
+      "description": "Update this release BOM as soon as it ships; module versions come from its constraints.",
+      "matchPackageNames": [
+        "ee.schimke.composeai:compose-preview-daemon-bom"
+      ],
+      "groupName": "compose-preview-daemon",
+      "rangeStrategy": "pin",
+      "schedule": [
+        "at any time"
+      ],
+      "minimumReleaseAge": null
+    },
+    {
+      "description": "The edit-loop fixture (mcp/src/editLoopFixture) is a pinned Android sample for the Edit loop workflow, which is not a required check, so an automerged bump can break it silently: compose-bom 2026.09.00 needs compileSdk 37 and failed that workflow on compose-preview-server's main. Its versions move only by hand, together with its compileSdk; ignorePaths above keeps Renovate out of it.",
+      "matchFileNames": [
+        "mcp/src/editLoopFixture/**"
+      ],
+      "enabled": false
+    }
+  ]
+}

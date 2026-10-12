@@ -1,11 +1,12 @@
-// The Model Context Protocol server (`compose-preview mcp serve`) as its own module. It lives here
-// per `docs/design/REPOSITORY_LAYERS.md`: it runs a Ktor server for the UI-builder Streamable HTTP
-// endpoint, which makes it layer 2. Its layer-1 dependencies (`daemon-core`, `render-session-api`,
-// `daemon-client`, `render-matrix`) are published coordinates across the repository boundary.
+// The Model Context Protocol server (`compose-preview mcp serve`). It lives in its own repository,
+// a layer-3 leaf (`docs/design/MCP_REPOSITORY.md`): it runs a Ktor server for the UI-builder
+// Streamable HTTP endpoint, and nothing depends on it as a coordinate. Its layer-1 dependencies
+// (`daemon-core`, `render-session-api`, `daemon-client`, `render-matrix`) are published
+// coordinates.
 //
-// Sources keep the `ee.schimke.composeai.mcp` package (a rename is separate). It ships in the
-// `compose-preview-mcp` distribution; the old `ee.schimke.composeai:mcp` coordinate stays at its
-// last 1.x and no replacement Maven coordinate is published.
+// Sources keep the `ee.schimke.composeai.mcp` package (a rename is separate). It ships as the
+// `compose-preview-mcp` distribution on this repository's GitHub releases; no Maven coordinate is
+// published.
 plugins {
   application
   alias(libs.plugins.kotlin.jvm)
@@ -29,8 +30,8 @@ kotlin {
 
 ktfmt { googleStyle() }
 
-// Same derivation as `:server` (`PLUGIN_VERSION` in CI, a patch-bumped SNAPSHOT from
-// `.release-please-manifest.json` locally); ships in lockstep with the server.
+// `PLUGIN_VERSION` in CI (the release tag), a patch-bumped SNAPSHOT from
+// `.release-please-manifest.json` locally. Its own version line, independent of the server's.
 version =
   providers.environmentVariable("PLUGIN_VERSION").orNull
     ?: run {
@@ -48,7 +49,7 @@ application {
 }
 
 // The version reported in `initialize`'s `serverInfo.version`, generated into a resource read by
-// `McpVersion.kt` (like `:server`'s `generateServeVersionResource`).
+// `McpVersion.kt`.
 val generateMcpVersionResource =
   tasks.register("generateMcpVersionResource") {
     val outputDir = layout.buildDirectory.dir("generated/mcp-version-resource")
@@ -65,9 +66,8 @@ val generateMcpVersionResource =
 sourceSets.main.get().resources.srcDir(generateMcpVersionResource)
 
 // The `.rc` viewer MCP App (`mcp-app/rc-viewer.html`) inlines the TypeScript Remote Compose player:
-// the same bundle `:server` serves (`remote-compose-player-js-dist` plus
-// `server/src/rc-player/inert-custom-host.js`), resolved here to avoid a project dependency for one
-// file.
+// rc-players' `remote-compose-player-js-dist` with `src/rc-player/inert-custom-host.js` appended,
+// the same bundle compose-preview-server serves (it keeps its own copy of the shim).
 val rcPlayerJsDist =
   configurations.create("rcPlayerJsDist") {
     description = "The TypeScript Remote Compose player's browser bundle."
@@ -91,7 +91,7 @@ val stageRcViewerPlayer =
       layout.file(rcPlayerJsDist.elements.map { artifacts -> artifacts.single().asFile })
     )
     shimFile.set(
-      rootProject.layout.projectDirectory.file("server/src/rc-player/inert-custom-host.js")
+      layout.projectDirectory.file("src/rc-player/inert-custom-host.js")
     )
     resourcePath.set("rc-viewer/rc-player-bundle.js")
     outputDirectory.set(layout.buildDirectory.dir("generated/rc-viewer-player"))
@@ -105,8 +105,8 @@ tasks.named<Tar>("distTar") {
   compression = Compression.GZIP
 }
 
-// The same Java floor `:server`'s distribution carries (see its build file for why it's a file).
-// Repeated rather than shared because each launcher looks beside the binary it resolved.
+// The Java floor, as a file beside the binary: the CLI's launcher reads it to preflight Java before
+// it execs the distribution.
 val writeDistributionJavaMin =
   tasks.register("writeDistributionJavaMin") {
     description = "Write the distribution's Java floor for a launcher to preflight."
@@ -131,7 +131,7 @@ val writeDistributionJavaMin =
 
 // The UI-builder editor archive, for `design_open`: its MCP App shell is
 // `ui://compose-ui-builder/editor`, with assets served from a loopback origin
-// (`UiBuilderAssetOrigin`). Resolved like `:server`'s (artifact-only from the release ivy repo, or
+// (`UiBuilderAssetOrigin`). Resolved artifact-only from compose-ui-builder's release ivy repo (or
 // `:ui-builder-web` under `-PcomposeUiBuilderDir`). Shipped as the ZIP and read in place (~12 MB vs
 // ~45 MB unpacked) under a fixed name; the served version comes from the archive's manifest. An
 // archive without `mcpApp` ships inert.
@@ -202,8 +202,8 @@ dependencies {
   testImplementation(libs.ktor.server.test.host)
 }
 
-// JUnit 4 (unlike `:server`'s JUnit 5): these tests use Truth, and converting them is a separate
-// change.
+// JUnit 4 and Truth, as when the module lived in compose-preview-server; converting them is a
+// separate change.
 tasks.withType<Test>().configureEach {
   // `-Pmcp.real=true` enables `RealMcpEndToEndTest`; `-Pmcp.workdir=<path>` points it at another
   // checkout (default: the test's working directory).
@@ -252,7 +252,7 @@ abstract class CheckMcpToolingApiBoundary : DefaultTask() {
     check(forbidden.isEmpty()) {
       ":mcp must not depend on gradle-tooling-api. Driving a build is layer-1 behaviour and this " +
         "repository asks compose-ai-tools for it across a process boundary — see AGENTS.md and " +
-        "docs/design/REPOSITORY_LAYERS.md. Found on runtimeClasspath: " +
+        "compose-ai-tools' docs/design/REPOSITORY_LAYERS.md. Found on runtimeClasspath: " +
         forbidden.joinToString(", ")
     }
   }

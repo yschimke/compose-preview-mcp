@@ -151,11 +151,28 @@ jobs:
       || needs.finish-release.result == 'success') }}
     runs-on: ubuntu-latest
     permissions:
+      actions: write
       contents: write
       pull-requests: write
     steps:
       - uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
+        id: release-pr
         with:
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
           skip-github-release: true
+
+      # A PR opened or updated with GITHUB_TOKEN starts no workflow, so the release PR would never
+      # get CI or the checks the ruleset requires. Dispatch them on its branch.
+      - name: Run the release PR's checks
+        if: ${{ steps.release-pr.outputs.pr != '' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_BRANCH: ${{ fromJSON(steps.release-pr.outputs.pr).headBranchName }}
+          RELEASE_PR: ${{ fromJSON(steps.release-pr.outputs.pr).number }}
+        run: |
+          set -euo pipefail
+          gh workflow run ci.yml --ref "$RELEASE_BRANCH"
+          gh workflow run pr-title.yml --ref "$RELEASE_BRANCH" -f pr="$RELEASE_PR"
+          gh workflow run no-agent-attribution.yml --ref "$RELEASE_BRANCH" -f pr="$RELEASE_PR"

@@ -64,3 +64,7 @@ jobs:
           # A push made with GITHUB_TOKEN raises no `pull_request` event, so ask for CI by name; its
           # checks land on the pushed commit.
           gh workflow run ci.yml --ref "$BRANCH"
+          number="$(gh pr list --head "$BRANCH" --state open --json number --jq '.[0].number')"
+          # Nor does it start the checks the ruleset requires, so dispatch those with the PR's number.
+          gh workflow run pr-title.yml --ref "$BRANCH" -f pr="$number"
+          gh workflow run no-agent-attribution.yml --ref "$BRANCH" -f pr="$number"

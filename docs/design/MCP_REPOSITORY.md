@@ -1,7 +1,7 @@
 # The MCP repository
 
-**Status: proposed.** This note decides what moves into `compose-preview-mcp`, where it sits in
-the repository layers, and the order of the move. Nothing has moved yet.
+**Status: accepted.** This note decides what moves into `compose-preview-mcp`, where it sits in
+the repository layers, and the order of the move.
 
 ## Why a repository
 
@@ -48,15 +48,20 @@ cadence from the deployments.
 | `:mcp` (`ee.schimke.composeai.mcp`, 76 Kotlin files with its tests) | server repo | **here** |
 | `compose-preview-mcp-<v>.tar.gz` release asset | server release | **here** |
 | `mcp-app/rc-viewer.html`, `mcp-app/openai-probe.html` (only `:mcp` reads them) | server repo | **here** |
+| The `.rc` viewer's Playwright spec and fixtures (`preview-harness/mcp-app-rc-viewer.spec.mjs`) | server repo | **here**, as `harness/` |
 | `mcp-app/compose-preview-viewer.html`, `mcp-app/preview-library.html` | server repo | **stay**: the hosted `/mcp` (`ServeCatalogMcp`, `ServeLibraryMcp`) serves them too |
 | The hosted `/mcp` endpoint and its deployments | server repo | stay |
 | The viewer tests (`scripts/mcp-viewer-*.test.mjs`) | server repo | stay with the viewer |
+| `preview-library.html` | server repo | stays; `:mcp` serves a copy, like the viewer |
 
 **The viewer stays in layer 2.** It is a web surface that both MCP servers serve. Moving it here
 would make the server (layer 2) depend on a leaf (layer 3), which is the cycle the rule forbids.
-Instead this repository consumes the viewer from a pinned server release and **re-publishes it as
-its own release asset, byte for byte, with the same provenance file**
-(`compose-preview-viewer.provenance.json`: release, source commit, sha256). Then compose-agent-plugins
+Instead this repository copies both pages from a pinned server release
+(`scripts/update-server-assets.py <tag>`, recorded in `mcp-app/server-assets.provenance.json` and
+checked by CI; `sync-server-assets.yml` opens the pull request when the server releases) and
+**re-publishes the viewer as its own release asset, byte for byte, with a provenance file**
+(`compose-preview-viewer.provenance.json`: this release, and the server release, source commit and
+sha256 it came from). Then compose-agent-plugins
 takes both the binary and the viewer from one release here: `scripts/update-viewer.py` changes
 repository, not shape. A viewer fix still needs a server release first, but no longer a full
 server deployment cycle.
@@ -85,7 +90,9 @@ server deployment cycle.
 
 ## Version line and launch
 
-The binary gets its own version line from here: `compose-preview-mcp` 1.0.0, not the server's 3.x.
+The binary gets its own version line from here, starting at **4.0.0**. Not 1.0.0: the CLI caches
+distributions by version, and the server already shipped this binary as 3.x, so a fresh line below
+that would sort under every cached copy.
 
 compose-ai-tools changes in step:
 - the `mcp serve` launcher (`McpCommand`) fetches `compose-preview-mcp-<v>.tar.gz` from this
@@ -102,19 +109,21 @@ Truth.
 1. **This note**, and `REPOSITORY_LAYERS.md` amended in compose-ai-tools to place the repository at
    layer 3.
 2. **Stand the module up here with history** (`git filter-repo --path mcp/ --path
-   mcp-app/rc-viewer.html --path mcp-app/openai-probe.html`, plus the build edges above).
+   mcp-app/rc-viewer.html --path mcp-app/openai-probe.html`, plus the build edges above). The
+   import has to land with a merge commit, not a squash, or the history goes.
    - Build it against the same published coordinates.
    - Pin the viewer from the current server release.
-   - Release `compose-preview-mcp` 1.0.0 with the binary and the re-published viewer.
+   - Release `compose-preview-mcp` 4.0.0 with the binary and the re-published viewer.
 3. **Point the consumers here:**
    - compose-ai-tools' `mcp serve` launcher;
    - compose-agent-plugins' MCP wiring (`src/plugins.json` `repository`) and `update-viewer.py`.
 4. **Delete `:mcp` from compose-preview-server**, along with its release asset and CI lanes. The
    server's last release that ships the binary stays fetchable, so older CLIs keep working.
 
-## Open questions
+## Settled questions
 
-- **The card helper.** Does `compose-preview-card.py` (compose-agent-plugins) move here, next to
-  the viewer it wraps? It is harness glue (Antigravity's `<agent-embed>`), which argues for staying.
-- **rc player bundle.** Copy the shim (step 2's first choice), or publish the shimmed bundle from
-  rc-players first? The second is cleaner but puts a third repository on the critical path.
+- **The card helper** (`compose-preview-card.py`) stays in compose-agent-plugins. It is harness glue
+  for Antigravity's `<agent-embed>`, not part of the server.
+- **The rc player shim** is copied (`mcp/src/rc-player/inert-custom-host.js`); compose-preview-server
+  keeps its own for the bundle it serves. Publishing a shimmed bundle from rc-players would remove
+  both copies, and can come later without blocking the move.

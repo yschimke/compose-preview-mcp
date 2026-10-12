@@ -1,0 +1,66 @@
+name: Sync server assets
+
+# `mcp-app/compose-preview-viewer.html` and `mcp-app/preview-library.html` are
+# compose-preview-server's (docs/design/MCP_REPOSITORY.md). When it releases, copy both from the new
+# tag with `scripts/update-server-assets.py` and open (or refresh) one pull request. A copy is the
+# bytes plus their provenance, which is why this is a workflow rather than a Renovate rule.
+
+on:
+  schedule:
+    - cron: "17 */6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sync-server-assets
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+      contents: write
+      pull-requests: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      BRANCH: agent/sync-server-assets
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Copy the latest compose-preview-server release's pages
+        id: sync
+        run: |
+          set -euo pipefail
+          tag="$(gh release view --repo yschimke/compose-preview-server --json tagName --jq .tagName)"
+          python3 scripts/update-server-assets.py "$tag"
+          if git diff --quiet; then
+            echo "already at $tag"
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Open or refresh the pull request
+        if: ${{ steps.sync.outputs.changed == 'true' }}
+        env:
+          TAG: ${{ steps.sync.outputs.tag }}
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -B "$BRANCH"
+          git commit -am "fix(mcp-app): take the viewer and preview library from compose-preview-server ${TAG}"
+          git push --force origin "$BRANCH"
+          if [ -z "$(gh pr list --head "$BRANCH" --state open --json number --jq '.[].number')" ]; then
+            gh pr create --head "$BRANCH" \
+              --title "fix(mcp-app): take the viewer and preview library from compose-preview-server ${TAG}" \
+              --body "Copied byte for byte by \`scripts/update-server-assets.py ${TAG}\`; the provenance records each page's source commit and sha256."
+          else
+            gh pr edit "$BRANCH" \
+              --title "fix(mcp-app): take the viewer and preview library from compose-preview-server ${TAG}"
+          fi
+          # A push made with GITHUB_TOKEN raises no `pull_request` event, so ask for CI by name; its
+          # checks land on the pushed commit.
+          gh workflow run ci.yml --ref "$BRANCH"

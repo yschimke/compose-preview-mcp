@@ -1,0 +1,52 @@
+# The subset of compose-preview-server's catalog that `:mcp` uses, carried over with the module.
+# The `composeai-*` BOMs are each a separate release train (yschimke/renovate-config groups them);
+# module versions come from their constraints.
+
+[versions]
+# The Java floor the distribution runs on (`java-min.properties`), the same as the server's.
+java-server = "17"
+kotlin = "2.4.21"
+kotlinx-coroutines = "1.11.0"
+kotlinx-serialization = "1.11.0"
+ktfmt = "0.27.0"
+ktor = "3.6.0"
+mcp-kotlin-sdk = "0.15.0"
+junit = "4.13.2"
+truth = "1.4.5"
+composeai-tools = "2.54.0"
+composeai-contracts = "3.30.0"
+composeai-preview-daemon = "3.16.0"
+composeai-ui-builder = "3.109.0"
+# The TypeScript Remote Compose player the `.rc` viewer inlines (rc-players' browser bundle).
+# `harness/stage-rc-player.mjs` reads this line too.
+remote-compose-player-js = "2.8.0"
+
+[libraries]
+kotlinx-coroutines-core = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-core", version.ref = "kotlinx-coroutines" }
+kotlinx-serialization-json = { module = "org.jetbrains.kotlinx:kotlinx-serialization-json", version.ref = "kotlinx-serialization" }
+mcp-kotlin-sdk-server = { module = "io.modelcontextprotocol:kotlin-sdk-server", version.ref = "mcp-kotlin-sdk" }
+ktor-server-cio = { module = "io.ktor:ktor-server-cio", version.ref = "ktor" }
+ktor-server-test-host = { module = "io.ktor:ktor-server-test-host", version.ref = "ktor" }
+junit = { module = "junit:junit", version.ref = "junit" }
+truth = { module = "com.google.truth:truth", version.ref = "truth" }
+
+composeai-tools-bom = { module = "ee.schimke.composeai:compose-ai-tools-bom", version.ref = "composeai-tools" }
+composeai-contracts-bom = { module = "ee.schimke.composeai:compose-preview-contracts-bom", version.ref = "composeai-contracts" }
+composeai-daemon-bom = { module = "ee.schimke.composeai:compose-preview-daemon-bom", version.ref = "composeai-preview-daemon" }
+composeai-common-io = { module = "ee.schimke.composeai:common-io" }
+composeai-agent-grant-protocol = { module = "ee.schimke.composeai:agent-grant-protocol" }
+composeai-ui-builder-protocol = { module = "ee.schimke.composeai:ui-builder-protocol" }
+composeai-daemon-core = { module = "ee.schimke.composeai:daemon-core" }
+composeai-render-session-api = { module = "ee.schimke.composeai:render-session-api" }
+composeai-daemon-client = { module = "ee.schimke.composeai:daemon-client" }
+composeai-data-layoutinspector-core = { module = "ee.schimke.composeai:data-layoutinspector-core" }
+composeai-render-matrix = { module = "ee.schimke.composeai:render-matrix" }
+composeai-design-guidelines = { module = "ee.schimke.composeai:design-guidelines" }
+composeai-design-guidelines-protocol = { module = "ee.schimke.composeai:design-guidelines-protocol" }
+composeai-ui-builder-web = { module = "ee.schimke.composeai:compose-preview-ui-builder-web", version.ref = "composeai-ui-builder" }
+remote-compose-player-js-dist = { module = "ee.schimke.composeai:remote-compose-player-js-dist", version.ref = "remote-compose-player-js" }
+
+[plugins]
+kotlin-jvm = { id = "org.jetbrains.kotlin.jvm", version.ref = "kotlin" }
+kotlin-serialization = { id = "org.jetbrains.kotlin.plugin.serialization", version.ref = "kotlin" }
+ktfmt = { id = "com.ncorti.ktfmt.gradle", version.ref = "ktfmt" }

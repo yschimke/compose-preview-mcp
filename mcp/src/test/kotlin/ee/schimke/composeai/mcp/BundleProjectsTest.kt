@@ -64,6 +64,20 @@ class BundleProjectsTest {
   }
 
   @Test
+  fun `a bundle repacked in place gets a fresh workspace, so its old extraction is not reused`() {
+    val source = bundle()
+    val before = BundleProjects.workspaceFor(source.absolutePath, cache)
+    source.writeBytes(byteArrayOf(1, 2, 3, 4))
+    source.setLastModified(source.lastModified() + 2_000)
+
+    val after = BundleProjects.workspaceFor(source.absolutePath, cache)
+
+    assertThat(after).isNotEqualTo(before)
+    assertThat(BundleProjects.sourceOf(after)).isEqualTo(source.canonicalPath)
+    assertThat(BundleProjects.workspaceFor(source.absolutePath, cache)).isEqualTo(after)
+  }
+
+  @Test
   fun `bootstrap unpacks the bundle through the CLI`() {
     val source = bundle()
     val workspace = BundleProjects.workspaceFor(source.absolutePath, cache)

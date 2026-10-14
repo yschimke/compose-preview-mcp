@@ -34,15 +34,23 @@ object BundleProjects {
     File(workspace, MARKER).takeIf { it.isFile }?.readText()?.trim()?.takeIf { it.isNotEmpty() }
 
   /**
-   * The workspace for [source], created (with its [MARKER]) when new. One per bundle location, so
-   * registering the same bundle twice reuses its workspace and its workspace id.
+   * The workspace for [source], created (with its [MARKER]) when new. One per bundle location and,
+   * for a local file, per version of it (size and modification time): registering the same bundle
+   * twice reuses its workspace and workspace id, while a bundle repacked in place gets a fresh
+   * workspace, so a new daemon renders the new classes instead of the old extraction. A URL is
+   * taken as immutable, as a versioned release URL is; serve new content from a new URL.
    */
   fun workspaceFor(source: String, cacheRoot: File = defaultCacheRoot()): File {
     val normalized =
       if (URL_SCHEMES.any { source.startsWith(it) }) source
       else runCatching { File(source).canonicalPath }.getOrDefault(File(source).absolutePath)
     val name = normalized.substringAfterLast('/').substringBefore('?').substringBeforeLast('.')
-    val key = sha256(normalized).take(12)
+    val version =
+      File(normalized)
+        .takeIf { it.isFile }
+        ?.let { "\n${it.length()}\n${it.lastModified()}" }
+        .orEmpty()
+    val key = sha256(normalized + version).take(12)
     val workspace = File(cacheRoot, "${sanitize(name).ifEmpty { "bundle" }}-$key")
     workspace.mkdirs()
     val marker = File(workspace, MARKER)

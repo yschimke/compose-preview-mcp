@@ -30,6 +30,53 @@ sealed interface SourceCompileOutcome {
 }
 
 /**
+ * Picks the compile for the build: a Bazel-family workspace ([ProjectDiscovery.isBazelWorkspace])
+ * is rebuilt by the compose-preview CLI (`compose-preview bazel prepare --target <label>`, where
+ * the daemon's module path is the Bazel label), everything else by [gradle]. Bazel writes the
+ * rebuilt jars to the same output paths, so the daemon's classloader swap on `fileChanged` loads
+ * them; the CLI also refreshes `previews.json`.
+ */
+class BuildSystemSourceCompiler(
+  private val gradle: SourceCompiler = GradleSourceCompiler(),
+  private val runner: GradleTaskRunner = GradleTaskRunner.subprocess(),
+  private val cli: () -> File? = {
+    CliInitScript.locate(System.getenv(), File(System.getProperty("user.home")))
+  },
+) : SourceCompiler {
+  override fun compile(
+    projectRoot: File,
+    modulePath: String,
+    sources: List<File>,
+  ): SourceCompileOutcome {
+    if (!ProjectDiscovery.isBazelWorkspace(projectRoot)) {
+      return gradle.compile(projectRoot, modulePath, sources)
+    }
+    val launcher =
+      cli()
+        ?: return SourceCompileOutcome.Unavailable(
+          "no compose-preview launcher to rebuild the Bazel workspace ${projectRoot.path}"
+        )
+    val started = System.nanoTime()
+    val arguments =
+      ProjectBootstrap.bazelPrepare(projectRoot) +
+        (if (modulePath.startsWith("//") || modulePath.startsWith("@"))
+          listOf("--target", modulePath)
+        else emptyList())
+    val result = runner.run(projectRoot, launcher, arguments) {}
+    val durationMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started)
+    return when {
+      result.timedOut -> SourceCompileOutcome.Failed("compose-preview bazel prepare timed out")
+      result.exitCode != 0 ->
+        SourceCompileOutcome.Failed(
+          "compose-preview bazel prepare failed: " +
+            result.output.lines().lastOrNull { it.isNotBlank() }.orEmpty()
+        )
+      else -> SourceCompileOutcome.Ok(durationMs)
+    }
+  }
+}
+
+/**
  * Stage-0 compile: `./gradlew <module>:composePreviewCompile`, the plugin's lifecycle task for the
  * save loop (Kotlin compile without discovery). For a project that doesn't apply the plugin, the
  * task only exists with the CLI's init script, which [InitScripts] locates; it is passed as the CLI

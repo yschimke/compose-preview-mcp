@@ -1686,7 +1686,7 @@ class DaemonMcpServer(
             {
               "type": "object",
               "properties": {
-                "path": {"type": "string", "description": "Absolute path to the project root."},
+                "path": {"type": "string", "description": "Absolute path to the project root, or a packed preview bundle (a local file or an http(s) URL)."},
                 "rootProjectName": {"type": "string", "description": "Optional override for the workspace's display name."},
                 "modules": {"type": "array", "items": {"type": "string"}, "description": "Optional initial set of preview-eligible Gradle module paths."}
               },
@@ -1731,7 +1731,7 @@ class DaemonMcpServer(
               "properties":{
                 "uri":{"type":"string","description":"compose-preview://<workspace>/<module>/<fqn>?config=<qualifier>"},
                 "preview":{"type":"string","description":"Alternative to uri: a @Preview function name or unique FQN suffix, e.g. 'ListScreenPreview'. With several matches (such as @WearPreviewDevices variants) the first is rendered and the rest are listed as otherMatches."},
-                "project":{"type":"string","description":"Absolute path to the project (or any folder in it). Only needed when the host sends no workspace roots."},
+                "project":{"type":"string","description":"Absolute path to the project (or any folder in it), or a packed preview bundle (a local file or an http(s) URL). Only needed when the host sends no workspace roots."},
                 "card":{"type":"boolean","description":"With inline=false, also write a self-contained viewer card (HTML) and return cardPath plus an <agent-embed> line for the reply. Implies inline=false. Default true for Antigravity."},
                 "observe":{"type":"string","enum":["png","semantics","hash"],"description":"Observation level (issue #1787). Default 'semantics' ('png' for a client that declares the MCP Apps extension, whose viewer shows the image; semantics falls back to the image when unavailable) — the compose/semantics tree + sha256 + dimensions with NO base64, the token-frugal snapshot-default for an agent loop (fetch pixels only when you need them). 'png' returns the base64 image (request it when you need to see pixels); 'hash' returns just sha256 + dimensions."},
                 "imageScale":{"type":"string","enum":["default","full"],"description":"Size of the inline image the model reads. 'default' caps the long edge at 768px (never upscales); the file on disk and the preview resource stay full size. 'full' only for pixel-level checks; costs more tokens."},
@@ -1762,7 +1762,7 @@ class DaemonMcpServer(
               "properties":{
                 "path":{"type":"string","description":"Absolute source-file path, or a path relative to the workspace root."},
                 "workspaceId":{"type":"string","description":"Optional workspace to search. Omit to search every registered workspace."},
-                "project":{"type":"string","description":"Absolute path to the project (or any folder in it). Only needed when the host sends no workspace roots."}
+                "project":{"type":"string","description":"Absolute path to the project (or any folder in it), or a packed preview bundle (a local file or an http(s) URL). Only needed when the host sends no workspace roots."}
               },
               "required":["path"]
             }
@@ -1834,7 +1834,7 @@ class DaemonMcpServer(
             {
               "type": "object",
               "properties": {
-                "path": {"type": "string", "description": "Absolute path to the project root."},
+                "path": {"type": "string", "description": "Absolute path to the project root, or a packed preview bundle (a local file or an http(s) URL)."},
                 "rootProjectName": {"type": "string", "description": "Optional override for the workspace's display name."},
                 "modules": {"type": "array", "items": {"type": "string"}, "description": "Optional initial set of preview-eligible Gradle module paths."}
               },
@@ -1909,7 +1909,7 @@ class DaemonMcpServer(
               "properties":{
                 "uri":{"type":"string","description":"compose-preview://<workspace>/<module>/<fqn>?config=<qualifier>"},
                 "preview":{"type":"string","description":"Alternative to uri: a @Preview function name or unique FQN suffix, e.g. 'ListScreenPreview'. With several matches (such as @WearPreviewDevices variants) the first is rendered and the rest are listed as otherMatches."},
-                "project":{"type":"string","description":"Absolute path to the project (or any folder in it). Only needed when the host sends no workspace roots."},
+                "project":{"type":"string","description":"Absolute path to the project (or any folder in it), or a packed preview bundle (a local file or an http(s) URL). Only needed when the host sends no workspace roots."},
                 "card":{"type":"boolean","description":"With inline=false, also write a self-contained viewer card (HTML) and return cardPath plus an <agent-embed> line for the reply. Implies inline=false. Default true for Antigravity."},
                 "observe":{"type":"string","enum":["png","semantics","hash"],"description":"Observation level (issue #1787). Default 'semantics' ('png' for a client that declares the MCP Apps extension, whose viewer shows the image; semantics falls back to the image when unavailable) returns the compose/semantics tree + sha256 + width/height with NO base64 — the token-frugal snapshot-default for a multi-step agent loop (fetch pixels only when you need them). 'png' returns the base64 image (request it when you need to see pixels); 'hash' returns just sha256 + dimensions."},
                 "imageScale":{"type":"string","enum":["default","full"],"description":"Size of the inline image the model reads. 'default' caps the long edge at 768px (never upscales); the file on disk and the preview resource stay full size. 'full' only for pixel-level checks; costs more tokens."},
@@ -2058,7 +2058,7 @@ class DaemonMcpServer(
               "properties":{
                 "path":{"type":"string","description":"Absolute source-file path, or a path relative to the workspace root."},
                 "workspaceId":{"type":"string","description":"Optional workspace to search. Omit to search every registered workspace."},
-                "project":{"type":"string","description":"Absolute path to the project (or any folder in it). Only needed when the host sends no workspace roots."}
+                "project":{"type":"string","description":"Absolute path to the project (or any folder in it), or a packed preview bundle (a local file or an http(s) URL). Only needed when the host sends no workspace roots."}
               },
               "required":["path"]
             }
@@ -2371,7 +2371,7 @@ class DaemonMcpServer(
               "properties":{
                 "uri":{"type":"string","description":"compose-preview://<workspace>/<module>/<fqn>"},
                 "preview":{"type":"string","description":"Alternative to uri: a @Preview function name or FQN suffix, e.g. 'ListScreenPreview'. Without axes, every @Preview variant it names is rendered; with axes, they apply to the first variant (named in the result)."},
-                "project":{"type":"string","description":"Absolute path to the project (or any folder in it). Only needed when the host sends no workspace roots."},
+                "project":{"type":"string","description":"Absolute path to the project (or any folder in it), or a packed preview bundle (a local file or an http(s) URL). Only needed when the host sends no workspace roots."},
                 "axes":{
                   "type":"object",
                   "description":"Optional cross-product axes. Each is a non-empty array. Omit to render the preview's own @Preview variants.",
@@ -3077,9 +3077,13 @@ class DaemonMcpServer(
     val rootName = args["rootProjectName"]?.jsonPrimitive?.contentOrNull
     val modules =
       (args["modules"] as? JsonArray)?.mapNotNull { it.jsonPrimitive.contentOrNull } ?: emptyList()
-    val file = File(path)
+    val file =
+      if (BundleProjects.isBundleSource(path)) BundleProjects.workspaceFor(path, bundleCacheRoot)
+      else File(path)
     if (!file.isDirectory)
-      return errorCallToolResult("register_project: '$path' is not a directory")
+      return errorCallToolResult(
+        "register_project: '$path' is not a directory or a preview bundle (file or URL)"
+      )
     val project = registerProjectAt(file, rootName, modules)
     warmUp(project)
     val payload = buildJsonObject {
@@ -3210,7 +3214,17 @@ class DaemonMcpServer(
    * The `project` argument: an absolute path to a build or any folder in one. Registers it so hosts
    * that send no roots need no separate register_project call.
    */
+  /** Where a `project=` bundle gets its workspace ([BundleProjects]). */
+  private val bundleCacheRoot: File
+    get() = BundleProjects.defaultCacheRoot(environment, homeDirectory)
+
   private fun registerProjectArgument(path: String): ProjectArgument {
+    if (BundleProjects.isBundleSource(path)) {
+      val project =
+        registerQuietly(BundleProjects.workspaceFor(path, bundleCacheRoot))
+          ?: return ProjectArgument.Rejected("bundle '$path' could not be registered")
+      return ProjectArgument.Registered(setOf(project.workspaceId))
+    }
     val dir = File(path)
     if (!dir.isAbsolute) {
       return ProjectArgument.Rejected("project '$path' must be an absolute path")

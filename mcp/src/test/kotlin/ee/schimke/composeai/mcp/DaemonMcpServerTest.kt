@@ -1699,6 +1699,53 @@ class DaemonMcpServerTest {
   }
 
   @Test
+  fun `a packed bundle named as project is unpacked by the CLI and rendered from`() {
+    val bundle = tmp.newFile("catalog.png").apply { writeBytes(byteArrayOf(1, 2, 3)) }
+    val launcher = tmp.newFile("compose-preview")
+    val calls = java.util.concurrent.CopyOnWriteArrayList<List<String>>()
+    // What `compose-preview bundle prepare <bundle> -o <workspace>` writes.
+    val cli = GradleTaskRunner { _, _, arguments, _ ->
+      calls += arguments
+      val dir =
+        File(arguments[arguments.indexOf("-o") + 1], "build/compose-previews").apply { mkdirs() }
+      File(dir, "daemon-launch.json")
+        .writeText(
+          """{"schemaVersion":2,"modulePath":":catalog","variant":"desktop","enabled":true,""" +
+            """"mainClass":"x","classpath":[],"jvmArgs":[],"systemProperties":{},""" +
+            """"workingDirectory":"${dir.path}","manifestPath":"previews.json"}"""
+        )
+      File(dir, "previews.json")
+        .writeText(
+          """{"previews":[{"id":"com.example.CatalogPreview","className":"com.example",""" +
+            """"functionName":"CatalogPreview"}]}"""
+        )
+      GradleTaskRunner.Result(0, "")
+    }
+    val bundleServer =
+      DaemonMcpServer(
+        supervisor,
+        workingDirectory = null,
+        homeDirectory = tmp.newFolder("home"),
+        environment = emptyMap(),
+        projectBootstrap = ProjectBootstrap(runner = cli, cli = { launcher }),
+      )
+    restartSession(bundleServer)
+    client.initialize()
+
+    client.callTool(
+      "render_preview",
+      buildJsonObject {
+        put("preview", "CatalogPreview")
+        put("project", bundle.absolutePath)
+      },
+    )
+
+    assertThat(calls.single().take(3)).containsExactly("bundle", "prepare", bundle.canonicalPath)
+    assertThat(factory.daemons.keys.map { it.second }).containsExactly(":catalog")
+    bundleServer.shutdown()
+  }
+
+  @Test
   fun `a preview lookup in a multi-module build starts only the module that lists it`() {
     // WearOAuth: one build, three modules. Rendering a preview in one started a daemon (and its
     // sandbox pool) for every module (compose-ag-plugin#64).

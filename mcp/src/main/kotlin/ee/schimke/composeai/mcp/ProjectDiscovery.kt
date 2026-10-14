@@ -10,8 +10,9 @@ import java.io.File
  * A build is a directory with `settings.gradle(.kts)`, or a Bazel-family workspace root
  * (`MODULE.bazel`, `WORKSPACE(.bazel)`, `.blazerc`) with no Gradle build of its own: the
  * compose-preview CLI prepares and rebuilds those ([isBazelWorkspace]), so this server never runs
- * Bazel itself. A repository such as wear-os-samples keeps one build per sample one level below its
- * git root, so a root that is not a build is searched up to [SEARCH_DEPTH] levels down.
+ * Bazel itself. A preview bundle's workspace ([BundleProjects]) is one too. A repository such as
+ * wear-os-samples keeps one build per sample one level below its git root, so a root that is not a
+ * build is searched up to [SEARCH_DEPTH] levels down.
  */
 object ProjectDiscovery {
 
@@ -29,7 +30,9 @@ object ProjectDiscovery {
   private val SKIPPED_DIRS = setOf("build", "node_modules")
 
   fun isBuild(dir: File): Boolean =
-    SETTINGS_FILES.any { File(dir, it).isFile } || isBazelWorkspace(dir)
+    SETTINGS_FILES.any { File(dir, it).isFile } ||
+      isBazelWorkspace(dir) ||
+      BundleProjects.isBundleWorkspace(dir)
 
   /**
    * A Bazel-family workspace root that is not also a Gradle build. Gradle wins where both exist, as
@@ -52,8 +55,7 @@ object ProjectDiscovery {
   fun buildsFor(dir: File): List<File> {
     val start = canonical(dir).let { if (it.isFile) it.parentFile ?: it else it }
     if (!start.isDirectory) return emptyList()
-    if (ROOT_BUILD_FILES.any { File(start, it).isFile } || isBazelWorkspace(start))
-      return listOf(start)
+    if (ROOT_BUILD_FILES.any { File(start, it).isFile } || isBuild(start)) return listOf(start)
     enclosingBuild(start)?.let {
       return listOf(it)
     }

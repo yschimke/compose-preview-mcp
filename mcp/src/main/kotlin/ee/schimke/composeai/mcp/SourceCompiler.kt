@@ -48,6 +48,12 @@ class BuildSystemSourceCompiler(
     modulePath: String,
     sources: List<File>,
   ): SourceCompileOutcome {
+    if (BundleProjects.isBundleWorkspace(projectRoot)) {
+      return SourceCompileOutcome.Unavailable(
+        "${BundleProjects.sourceOf(projectRoot)} is a prebuilt preview bundle with no sources to " +
+          "recompile; repack it and register it again"
+      )
+    }
     if (!ProjectDiscovery.isBazelWorkspace(projectRoot)) {
       return gradle.compile(projectRoot, modulePath, sources)
     }

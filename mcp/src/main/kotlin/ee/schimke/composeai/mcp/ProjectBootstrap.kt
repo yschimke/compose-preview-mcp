@@ -17,7 +17,8 @@ import java.util.concurrent.TimeUnit
  * A Bazel-family workspace ([ProjectDiscovery.isBazelWorkspace]) is prepared by the compose-preview
  * CLI instead (`compose-preview bazel prepare`), which owns target selection, the aspect and the
  * build; it writes the same descriptor under
- * `.compose-preview/outputs/<key>/build/compose-previews/`.
+ * `.compose-preview/outputs/<key>/build/compose-previews/`. A preview bundle's workspace
+ * ([BundleProjects]) is filled the same way, by `compose-preview bundle prepare`.
  */
 class ProjectBootstrap(
   private val initScripts: InitScripts = InitScripts(),
@@ -52,6 +53,9 @@ class ProjectBootstrap(
     synchronized(locks.computeIfAbsent(projectRoot.absolutePath) { Any() }) {
       if (isPrepared(projectRoot)) return Outcome.Ready(ran = false)
       if (ProjectDiscovery.isBazelWorkspace(projectRoot)) return prepareBazel(projectRoot, progress)
+      BundleProjects.sourceOf(projectRoot)?.let {
+        return prepareBundle(projectRoot, it, progress)
+      }
       val windows = System.getProperty("os.name").orEmpty().startsWith("Windows")
       val wrapper = File(projectRoot, if (windows) "gradlew.bat" else "gradlew")
       if (!wrapper.isFile) {
@@ -112,6 +116,8 @@ class ProjectBootstrap(
    * `compose-preview show` runs, finds it. Returns null when the build has no Gradle wrapper.
    */
   fun rediscover(projectRoot: File, progress: (String) -> Unit = {}): GradleTaskRunner.Result? {
+    // A bundle's previews are fixed when it is packed; there is nothing to rediscover.
+    if (BundleProjects.isBundleWorkspace(projectRoot)) return null
     if (ProjectDiscovery.isBazelWorkspace(projectRoot)) {
       // `bazel prepare` rebuilds and rediscovers in one step.
       synchronized(locks.computeIfAbsent(projectRoot.absolutePath) { Any() }) {
@@ -169,6 +175,36 @@ class ProjectBootstrap(
           "compose-preview bazel prepare failed: " +
             result.output.lines().lastOrNull { it.isNotBlank() }.orEmpty()
         else -> "compose-preview bazel prepare wrote no daemon launch descriptor"
+      }
+    )
+  }
+
+  /** Extracts the bundle and writes its descriptor through the CLI; the caller holds the lock. */
+  private fun prepareBundle(workspace: File, source: String, progress: (String) -> Unit): Outcome {
+    val launcher =
+      cli()
+        ?: return Outcome.NotPrepared(
+          "$source is a preview bundle, which the compose-preview CLI unpacks, and no " +
+            "compose-preview launcher was found (COMPOSE_PREVIEW_CLI, PATH or " +
+            "~/.local/bin/compose-preview)"
+        )
+    progress("preparing bundle $source: compose-preview bundle prepare")
+    val started = System.nanoTime()
+    val result =
+      runner.run(workspace, launcher, BundleProjects.prepareArguments(source, workspace), progress)
+    val durationMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started)
+    if (isPrepared(workspace)) {
+      progress("prepared bundle $source in ${durationMs}ms")
+      return Outcome.Ready(ran = true, durationMs = durationMs)
+    }
+    return Outcome.NotPrepared(
+      when {
+        result.timedOut -> "compose-preview bundle prepare timed out after ${durationMs}ms"
+        result.exitCode != 0 ->
+          "compose-preview bundle prepare failed: " +
+            result.output.lines().lastOrNull { it.isNotBlank() }.orEmpty() +
+            " (`bundle prepare` needs a compose-preview CLI newer than 2.59.0)"
+        else -> "compose-preview bundle prepare wrote no daemon launch descriptor"
       }
     )
   }

@@ -13,10 +13,19 @@ import java.util.concurrent.TimeUnit
  * compose-preview CLI's init script when the build does not apply the plugin itself: the same
  * [InitScripts] lookup (`COMPOSE_PREVIEW_INIT_SCRIPT`, else `~/.cache/composeai/init/<v>/…`) the
  * recompile uses. Until that succeeds the project is reported as "project not prepared: <reason>".
+ *
+ * A Bazel-family workspace ([ProjectDiscovery.isBazelWorkspace]) is prepared by the compose-preview
+ * CLI instead (`compose-preview bazel prepare`), which owns target selection, the aspect and the
+ * build; it writes the same descriptor under
+ * `.compose-preview/outputs/<key>/build/compose-previews/`.
  */
 class ProjectBootstrap(
   private val initScripts: InitScripts = InitScripts(),
   private val runner: GradleTaskRunner = GradleTaskRunner.subprocess(),
+  /** The compose-preview launcher for Bazel workspaces; a seam so tests need no CLI. */
+  private val cli: () -> File? = {
+    CliInitScript.locate(System.getenv(), File(System.getProperty("user.home")))
+  },
 ) {
 
   sealed interface Outcome {
@@ -42,6 +51,7 @@ class ProjectBootstrap(
     if (isPrepared(projectRoot)) return Outcome.Ready(ran = false)
     synchronized(locks.computeIfAbsent(projectRoot.absolutePath) { Any() }) {
       if (isPrepared(projectRoot)) return Outcome.Ready(ran = false)
+      if (ProjectDiscovery.isBazelWorkspace(projectRoot)) return prepareBazel(projectRoot, progress)
       val windows = System.getProperty("os.name").orEmpty().startsWith("Windows")
       val wrapper = File(projectRoot, if (windows) "gradlew.bat" else "gradlew")
       if (!wrapper.isFile) {
@@ -102,6 +112,14 @@ class ProjectBootstrap(
    * `compose-preview show` runs, finds it. Returns null when the build has no Gradle wrapper.
    */
   fun rediscover(projectRoot: File, progress: (String) -> Unit = {}): GradleTaskRunner.Result? {
+    if (ProjectDiscovery.isBazelWorkspace(projectRoot)) {
+      // `bazel prepare` rebuilds and rediscovers in one step.
+      synchronized(locks.computeIfAbsent(projectRoot.absolutePath) { Any() }) {
+        val launcher = cli() ?: return null
+        progress("rediscovering previews in ${projectRoot.name}: compose-preview bazel prepare")
+        return runner.run(projectRoot, launcher, bazelPrepare(projectRoot), progress)
+      }
+    }
     val windows = System.getProperty("os.name").orEmpty().startsWith("Windows")
     val wrapper = File(projectRoot, if (windows) "gradlew.bat" else "gradlew")
     if (!wrapper.isFile) return null
@@ -127,7 +145,42 @@ class ProjectBootstrap(
     }
   }
 
+  /** Builds, discovers and writes the descriptor through the CLI; the caller holds the lock. */
+  private fun prepareBazel(projectRoot: File, progress: (String) -> Unit): Outcome {
+    val launcher =
+      cli()
+        ?: return Outcome.NotPrepared(
+          "${projectRoot.path} is a Bazel workspace, which the compose-preview CLI prepares, and " +
+            "no compose-preview launcher was found (COMPOSE_PREVIEW_CLI, PATH or " +
+            "~/.local/bin/compose-preview)"
+        )
+    progress("preparing ${projectRoot.name}: compose-preview bazel prepare")
+    val started = System.nanoTime()
+    val result = runner.run(projectRoot, launcher, bazelPrepare(projectRoot), progress)
+    val durationMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started)
+    if (isPrepared(projectRoot)) {
+      progress("prepared ${projectRoot.name} in ${durationMs}ms")
+      return Outcome.Ready(ran = true, durationMs = durationMs)
+    }
+    return Outcome.NotPrepared(
+      when {
+        result.timedOut -> "compose-preview bazel prepare timed out after ${durationMs}ms"
+        result.exitCode != 0 ->
+          "compose-preview bazel prepare failed: " +
+            result.output.lines().lastOrNull { it.isNotBlank() }.orEmpty()
+        else -> "compose-preview bazel prepare wrote no daemon launch descriptor"
+      }
+    )
+  }
+
   companion object {
+    /**
+     * The target comes from the workspace's `.compose-preview/bazel.json` (or the CLI's own
+     * selection); the long timeout covers a first build compiling the toolchain.
+     */
+    fun bazelPrepare(projectRoot: File): List<String> =
+      listOf("bazel", "prepare", "--project", projectRoot.absolutePath, "--timeout", "1800")
+
     val TASKS = listOf("composePreviewDiscover", "composePreviewDaemonStart")
 
     const val DISCOVER_TASK = "composePreviewDiscover"

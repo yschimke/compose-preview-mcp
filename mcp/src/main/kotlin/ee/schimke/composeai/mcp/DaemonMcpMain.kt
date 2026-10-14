@@ -70,7 +70,7 @@ object DaemonMcpMain {
           supervisor,
           serverInfo = Implementation(name = "compose-preview-storybook", version = MCP_VERSION),
           profile = McpToolProfile.STORYBOOK,
-          sourceCompiler = GradleSourceCompiler(),
+          sourceCompiler = BuildSystemSourceCompiler(),
         )
       } else {
         DaemonMcpServer(
@@ -81,7 +81,7 @@ object DaemonMcpMain {
               ActiveDesignRoots.defaultDirectory(),
               scope = System.getenv(ActiveDesignRoots.SCOPE_ENV),
             ),
-          sourceCompiler = GradleSourceCompiler(),
+          sourceCompiler = BuildSystemSourceCompiler(),
         )
       }
 

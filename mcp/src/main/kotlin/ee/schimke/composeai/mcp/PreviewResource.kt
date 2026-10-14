@@ -10,7 +10,9 @@ import java.util.Base64
  *
  * `module` keeps the leading `:` from a Gradle path encoded as `_` to play well with URL parsers
  * (`:samples:android` becomes `_samples_android` on the wire). The reverse maps back when the
- * supervisor needs to invoke a Gradle path.
+ * supervisor needs to invoke a Gradle path. A Bazel label (`//app/ui:lib`, `@repo//app:lib`), the
+ * module path the compose-preview CLI writes for a Bazel workspace, holds `/`, `_` and `@`, so it
+ * is written as `~` + its unpadded base64url instead and round-trips exactly.
  */
 data class PreviewUri(
   val workspaceId: WorkspaceId,
@@ -20,8 +22,9 @@ data class PreviewUri(
   val overridesJson: String? = null,
 ) {
   init {
-    require(modulePath.startsWith(":")) {
-      "PreviewUri.modulePath must start with ':' (got '$modulePath')"
+    require(modulePath.startsWith(":") || isBazelLabel(modulePath)) {
+      "PreviewUri.modulePath must be a Gradle path starting with ':' or a Bazel label " +
+        "(got '$modulePath')"
     }
     require(!previewFqn.contains('/') && !previewFqn.contains('?')) {
       "PreviewUri.previewFqn must not contain '/' or '?' (got '$previewFqn')"
@@ -89,15 +92,36 @@ data class PreviewUri(
     fun parse(s: String): PreviewUri =
       requireNotNull(parseOrNull(s)) { "Malformed compose-preview URI: '$s'" }
 
+    private const val LABEL_PREFIX = "~"
+
+    /** `//pkg:target` or `@repo//pkg:target`: the module path of a Bazel workspace's daemon. */
+    fun isBazelLabel(modulePath: String): Boolean =
+      modulePath.startsWith("//") || (modulePath.startsWith("@") && "//" in modulePath)
+
     /**
      * `:samples:android` → `_samples_android`. Lossy iff a Gradle path contains `_`, which it
-     * can't.
+     * can't. A Bazel label is `~<base64url>`: `~` never starts a Gradle segment.
      */
-    fun encodeModule(modulePath: String): String = modulePath.replace(':', '_')
+    fun encodeModule(modulePath: String): String =
+      if (isBazelLabel(modulePath)) {
+        LABEL_PREFIX +
+          Base64.getUrlEncoder().withoutPadding().encodeToString(modulePath.encodeToByteArray())
+      } else modulePath.replace(':', '_')
 
     /** Reverse of [encodeModule]. */
-    fun decodeModule(encoded: String): String =
-      encoded.replace('_', ':').let { if (it.startsWith(":")) it else ":$it" }
+    fun decodeModule(encoded: String): String {
+      if (encoded.startsWith(LABEL_PREFIX)) {
+        runCatching {
+            Base64.getUrlDecoder().decode(encoded.removePrefix(LABEL_PREFIX)).decodeToString()
+          }
+          .getOrNull()
+          ?.takeIf(::isBazelLabel)
+          ?.let {
+            return it
+          }
+      }
+      return encoded.replace('_', ':').let { if (it.startsWith(":")) it else ":$it" }
+    }
   }
 }
 
@@ -140,7 +164,8 @@ class HistoryUri(
     private fun normalizeModulePath(modulePath: String): String {
       val trimmed = modulePath.trim()
       require(trimmed.isNotEmpty()) { "HistoryUri.modulePath must not be blank" }
-      return if (trimmed.startsWith(":")) trimmed else ":$trimmed"
+      return if (trimmed.startsWith(":") || PreviewUri.isBazelLabel(trimmed)) trimmed
+      else ":$trimmed"
     }
 
     fun parseOrNull(s: String): HistoryUri? {

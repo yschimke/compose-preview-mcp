@@ -674,8 +674,8 @@ fun interface DescriptorProvider {
 
     /**
      * Scans [projectRoot] for `build/compose-previews/daemon-launch.json` and indexes each by its
-     * recorded `modulePath`. Prunes VCS, Gradle/IDE metadata, `node_modules`, `src` and other
-     * `build/` subtrees.
+     * recorded `modulePath`. Prunes VCS, Gradle/IDE metadata, `node_modules`, `src`, Bazel output
+     * symlinks (`bazel-*`) and other `build/` subtrees.
      */
     internal fun indexDescriptorsByModulePath(
       projectRoot: File,
@@ -687,6 +687,9 @@ fun interface DescriptorProvider {
         .onEnter { dir ->
           when {
             dir.name in setOf(".git", ".gradle", ".idea", "node_modules", "src") -> false
+            // A Bazel workspace's output symlinks lead into the whole output tree; the CLI writes
+            // its descriptors under `.compose-preview/outputs/<key>/build/compose-previews/`.
+            ProjectDiscovery.isBazelOutputLink(dir) -> false
             dir.parentFile?.name == "build" && dir.name != "compose-previews" -> false
             else -> true
           }

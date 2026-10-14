@@ -3219,8 +3219,9 @@ class DaemonMcpServer(
     val builds = ProjectDiscovery.buildsFor(dir)
     if (builds.isEmpty()) {
       return ProjectArgument.Rejected(
-        "project '$path' is not in a Gradle build: no settings.gradle(.kts) there, above it, or " +
-          "up to ${ProjectDiscovery.SEARCH_DEPTH} levels below it"
+        "project '$path' is not in a Gradle build or Bazel workspace: no settings.gradle(.kts), " +
+          "MODULE.bazel or WORKSPACE there, above it, or up to ${ProjectDiscovery.SEARCH_DEPTH} " +
+          "levels below it"
       )
     }
     val ids = builds.mapNotNull { registerQuietly(it)?.workspaceId }.toSet()
@@ -3239,15 +3240,17 @@ class DaemonMcpServer(
       } else {
         val source =
           if (tried.fromRoots) "the client's workspace roots" else "the working directory"
-        "Tried ${tried.dirs.joinToString(", ") { it.path }} ($source): not Gradle builds, with " +
-          "no settings.gradle(.kts) above them or up to ${ProjectDiscovery.SEARCH_DEPTH} levels " +
-          "below."
+        "Tried ${tried.dirs.joinToString(", ") { it.path }} ($source): not Gradle builds or " +
+          "Bazel workspaces, with no settings.gradle(.kts), MODULE.bazel or WORKSPACE above them " +
+          "or up to ${ProjectDiscovery.SEARCH_DEPTH} levels below."
       }
     val candidates = candidateBuilds()
     return buildString {
       append("no project registered. ")
       append(triedText)
-      append(" Pass project=<absolute path> (the Gradle build, or any folder in it).")
+      append(
+        " Pass project=<absolute path> (the Gradle build or Bazel workspace, or any folder in it)."
+      )
       if (candidates.isNotEmpty()) append(" Candidate builds: ${candidates.joinToString(", ")}.")
     }
   }
@@ -3274,7 +3277,8 @@ class DaemonMcpServer(
         else
           "no project registered yet. Found ${builds.joinToString(", ") { it.path }} under " +
             "${tried.dirs.joinToString(", ") { it.path }}; render_preview registers it on first " +
-            "use, or pass project=<absolute path> (the Gradle build, or any folder in it).",
+            "use, or pass project=<absolute path> (the Gradle build or Bazel workspace, or any " +
+            "folder in it).",
       )
       putJsonArray("tried") { tried.dirs.forEach { add(JsonPrimitive(it.path)) } }
       put(

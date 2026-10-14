@@ -99,7 +99,7 @@ object StorybookMcp {
    * titles distinct across a multi-module catalog.
    */
   private fun deriveTitle(uri: PreviewUri): String {
-    val modulePretty = uri.modulePath.removePrefix(":").replace(':', '/')
+    val modulePretty = uri.modulePath.removePrefix(":").replace(':', '/').trimStart('/')
     val container = uri.previewFqn.substringBeforeLast('.', missingDelimiterValue = "")
     val classSimple = container.substringAfterLast('.').removeSuffix("Kt")
     val group = classSimple.ifBlank { uri.previewFqn.substringAfterLast('.') }

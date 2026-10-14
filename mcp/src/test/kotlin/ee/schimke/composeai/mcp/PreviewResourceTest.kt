@@ -35,6 +35,24 @@ class PreviewResourceTest {
   }
 
   @Test
+  fun `Bazel labels round-trip through preview and history URIs`() {
+    val ws = WorkspaceId("ws-abc12345")
+    for (label in listOf("//app/ui:lib", "//:aspect_app", "@repo//app:my_lib")) {
+      val uri = PreviewUri(ws, label, "app.ui.GreetingKt.Greeting", config = "phone")
+      val wire = uri.toUri()
+      // One path segment: no '/' from the label leaks into the URI path.
+      assertThat(wire.removePrefix("compose-preview://").split('?')[0].split('/')).hasSize(3)
+      assertThat(PreviewUri.parse(wire)).isEqualTo(uri)
+
+      val history = HistoryUri(ws, label, "app.ui.GreetingKt.Greeting", "e1")
+      assertThat(HistoryUri.parseOrNull(history.toUri())!!.modulePath).isEqualTo(label)
+    }
+    // Gradle paths keep their readable encoding.
+    assertThat(PreviewUri(ws, ":samples:android", "a.B").toUri())
+      .isEqualTo("compose-preview://ws-abc12345/_samples_android/a.B")
+  }
+
+  @Test
   fun `PreviewUri round-trip preserves all four segments`() {
     val ws = WorkspaceId("compose-ai-tools-abc12345")
     val uri =

@@ -1,5 +1,13 @@
 # Changelog
 
+## [4.1.0](https://github.com/yschimke/compose-preview-mcp/compare/v4.0.0...v4.1.0) (2026-10-14)
+
+
+### Features
+
+* accept a packed preview bundle as a project ([#8](https://github.com/yschimke/compose-preview-mcp/issues/8)) ([0b0a539](https://github.com/yschimke/compose-preview-mcp/commit/0b0a539f0240edd938bfb340cfab4de3352ee359))
+* prepare Bazel workspaces through the compose-preview CLI ([#7](https://github.com/yschimke/compose-preview-mcp/issues/7)) ([8d65ec7](https://github.com/yschimke/compose-preview-mcp/commit/8d65ec709eeb229ed1ff3ab26344d3294e86914f))
+
 ## [4.0.0](https://github.com/yschimke/compose-preview-mcp/compare/v3.132.0...v4.0.0) (2026-10-12)
 
 

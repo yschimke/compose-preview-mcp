@@ -3233,9 +3233,9 @@ class DaemonMcpServer(
     val builds = ProjectDiscovery.buildsFor(dir)
     if (builds.isEmpty()) {
       return ProjectArgument.Rejected(
-        "project '$path' is not in a Gradle build or Bazel workspace: no settings.gradle(.kts), " +
-          "MODULE.bazel or WORKSPACE there, above it, or up to ${ProjectDiscovery.SEARCH_DEPTH} " +
-          "levels below it"
+        "project '$path' is not in a Gradle build, Bazel workspace or Buck2 project: no " +
+          "settings.gradle(.kts), MODULE.bazel, WORKSPACE or .buckconfig there, above it, or up " +
+          "to ${ProjectDiscovery.SEARCH_DEPTH} levels below it"
       )
     }
     val ids = builds.mapNotNull { registerQuietly(it)?.workspaceId }.toSet()
@@ -3254,9 +3254,10 @@ class DaemonMcpServer(
       } else {
         val source =
           if (tried.fromRoots) "the client's workspace roots" else "the working directory"
-        "Tried ${tried.dirs.joinToString(", ") { it.path }} ($source): not Gradle builds or " +
-          "Bazel workspaces, with no settings.gradle(.kts), MODULE.bazel or WORKSPACE above them " +
-          "or up to ${ProjectDiscovery.SEARCH_DEPTH} levels below."
+        "Tried ${tried.dirs.joinToString(", ") { it.path }} ($source): not Gradle builds, " +
+          "Bazel workspaces or Buck2 projects, with no settings.gradle(.kts), MODULE.bazel, " +
+          "WORKSPACE or .buckconfig above them or up to ${ProjectDiscovery.SEARCH_DEPTH} " +
+          "levels below."
       }
     val candidates = candidateBuilds()
     return buildString {

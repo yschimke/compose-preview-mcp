@@ -215,7 +215,10 @@ class ProjectBootstrap(
      * selection); the long timeout covers a first build compiling the toolchain.
      */
     fun bazelPrepare(projectRoot: File): List<String> =
-      listOf("bazel", "prepare", "--project", projectRoot.absolutePath, "--timeout", "1800")
+      listOf("bazel", "prepare", "--project", projectRoot.absolutePath, "--timeout", "1800") +
+        // The explicit `bazel` command collects through Buck2's BXL script only when told to.
+        if (ProjectDiscovery.isBuckProject(projectRoot)) listOf("--build-system", "buck")
+        else emptyList()
 
     val TASKS = listOf("composePreviewDiscover", "composePreviewDaemonStart")
 

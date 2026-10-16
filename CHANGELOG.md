@@ -1,5 +1,12 @@
 # Changelog
 
+## [4.3.0](https://github.com/yschimke/compose-preview-mcp/compare/v4.2.0...v4.3.0) (2026-10-16)
+
+
+### Features
+
+* prepare and rebuild Buck2 projects through the compose-preview CLI ([#12](https://github.com/yschimke/compose-preview-mcp/issues/12)) ([be415ac](https://github.com/yschimke/compose-preview-mcp/commit/be415ac3a4dcbc725ba3cdeb2d688095b59380f9))
+
 ## [4.2.0](https://github.com/yschimke/compose-preview-mcp/compare/v4.1.0...v4.2.0) (2026-10-16)
 
 

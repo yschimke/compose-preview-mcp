@@ -94,9 +94,12 @@ data class PreviewUri(
 
     private const val LABEL_PREFIX = "~"
 
-    /** `//pkg:target` or `@repo//pkg:target`: the module path of a Bazel workspace's daemon. */
+    /**
+     * `//pkg:target`, `@repo//pkg:target`, or Buck2's cell-qualified `root//pkg:target`: the module
+     * path of a Bazel-family daemon. A Gradle path starts with `:` and never holds `//`.
+     */
     fun isBazelLabel(modulePath: String): Boolean =
-      modulePath.startsWith("//") || (modulePath.startsWith("@") && "//" in modulePath)
+      !modulePath.startsWith(":") && "//" in modulePath && '/' !in modulePath.substringBefore("//")
 
     /**
      * `:samples:android` → `_samples_android`. Lossy iff a Gradle path contains `_`, which it

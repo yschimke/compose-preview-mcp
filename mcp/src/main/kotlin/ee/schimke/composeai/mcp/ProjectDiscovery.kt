@@ -8,11 +8,12 @@ import java.io.File
  * or a `project` argument all go through [buildsFor].
  *
  * A build is a directory with `settings.gradle(.kts)`, or a Bazel-family workspace root
- * (`MODULE.bazel`, `WORKSPACE(.bazel)`, `.blazerc`) with no Gradle build of its own: the
- * compose-preview CLI prepares and rebuilds those ([isBazelWorkspace]), so this server never runs
- * Bazel itself. A preview bundle's workspace ([BundleProjects]) is one too. A repository such as
- * wear-os-samples keeps one build per sample one level below its git root, so a root that is not a
- * build is searched up to [SEARCH_DEPTH] levels down.
+ * (`MODULE.bazel`, `WORKSPACE(.bazel)`, `.blazerc`) or Buck2 project root (`.buckroot`, the
+ * outermost `.buckconfig`) with no Gradle build of its own: the compose-preview CLI prepares and
+ * rebuilds those ([isBazelWorkspace]), so this server never runs Bazel or Buck2 itself. A preview
+ * bundle's workspace ([BundleProjects]) is one too. A repository such as wear-os-samples keeps one
+ * build per sample one level below its git root, so a root that is not a build is searched up to
+ * [SEARCH_DEPTH] levels down.
  */
 object ProjectDiscovery {
 
@@ -35,16 +36,37 @@ object ProjectDiscovery {
       BundleProjects.isBundleWorkspace(dir)
 
   /**
-   * A Bazel-family workspace root that is not also a Gradle build. Gradle wins where both exist, as
-   * in the CLI: a Gradle repository that carries a `WORKSPACE` keeps its Gradle preview tasks.
+   * A workspace the CLI's Bazel-family driver prepares: a Bazel workspace root or a Buck2 project
+   * root ([isBuckProject]) that is not also a Gradle build. Gradle wins where both exist, as in the
+   * CLI: a Gradle repository that carries a `WORKSPACE` keeps its Gradle preview tasks.
    */
   fun isBazelWorkspace(dir: File): Boolean =
-    BAZEL_WORKSPACE_FILES.any { File(dir, it).isFile } &&
+    (BAZEL_WORKSPACE_FILES.any { File(dir, it).isFile } || isBuckProject(dir)) &&
       SETTINGS_FILES.none { File(dir, it).isFile } &&
       !File(dir, "gradlew").isFile
 
-  /** `bazel-bin`, `bazel-out`, … : output-tree symlinks no scan should follow. */
-  fun isBazelOutputLink(dir: File): Boolean = dir.name.startsWith("bazel-")
+  /**
+   * A Buck2 project root, as the CLI's `detectBuckRoot` reads one: `.buckroot`, or a `.buckconfig`
+   * with none above it. A cell inside the project (a vendored prelude) has its own `.buckconfig`
+   * and is not a root. The CLI drives it with `--build-system buck`
+   * ([ProjectBootstrap.bazelPrepare]).
+   */
+  fun isBuckProject(dir: File): Boolean {
+    if (File(dir, ".buckroot").isFile) return true
+    if (!File(dir, ".buckconfig").isFile) return false
+    if (File(dir, ".git").exists() || File(dir, ".hg").exists()) return true
+    var parent = dir.parentFile
+    while (parent != null) {
+      if (File(parent, ".buckroot").isFile || File(parent, ".buckconfig").isFile) return false
+      if (File(parent, ".git").exists() || File(parent, ".hg").exists()) return true
+      parent = parent.parentFile
+    }
+    return true
+  }
+
+  /** `bazel-bin`, `bazel-out`, … and Buck2's `buck-out`: output trees no scan should follow. */
+  fun isBazelOutputLink(dir: File): Boolean =
+    dir.name.startsWith("bazel-") || dir.name == "buck-out"
 
   /**
    * The builds [dir] stands for: [dir] itself when it is one; else the nearest ancestor with

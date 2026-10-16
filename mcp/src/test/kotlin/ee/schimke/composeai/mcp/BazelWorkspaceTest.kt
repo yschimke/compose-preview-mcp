@@ -130,6 +130,55 @@ class BazelWorkspaceTest {
     assertThat(compiled).isTrue()
   }
 
+  private fun buckProject(): File =
+    tmp.newFolder("buck").canonicalFile.apply {
+      File(this, ".git").mkdirs()
+      File(this, ".buckconfig").writeText("[cells]\n  root = .\n")
+      File(this, "app/src").mkdirs()
+      // A cell inside the project carries its own .buckconfig; it is not a root.
+      File(this, "prelude").mkdirs()
+      File(this, "prelude/.buckconfig").writeText("")
+    }
+
+  @Test
+  fun `a Buck2 project is a build at its outermost buckconfig, not at a cell`() {
+    val project = buckProject()
+    assertThat(ProjectDiscovery.isBuckProject(project)).isTrue()
+    assertThat(ProjectDiscovery.isBuckProject(File(project, "prelude"))).isFalse()
+    assertThat(ProjectDiscovery.isBazelWorkspace(project)).isTrue()
+    assertThat(ProjectDiscovery.buildsFor(File(project, "app/src"))).containsExactly(project)
+    File(project, "buck-out/v2/nested").mkdirs()
+    File(project, "buck-out/v2/nested/settings.gradle.kts").writeText("")
+    assertThat(ProjectDiscovery.buildsBelow(project)).isEmpty()
+  }
+
+  @Test
+  fun `a Buck2 project is prepared and rebuilt with --build-system buck`() {
+    val project = buckProject()
+    val cli = FakeCli()
+    assertThat(ProjectBootstrap(runner = cli, cli = { launcher }).ensurePrepared(project))
+      .isInstanceOf(ProjectBootstrap.Outcome.Ready::class.java)
+    assertThat(cli.calls.single().second).containsAtLeast("--build-system", "buck").inOrder()
+
+    val gradle = SourceCompiler { _, _, _ -> error("Gradle must not compile a Buck2 project") }
+    BuildSystemSourceCompiler(gradle = gradle, runner = cli, cli = { launcher })
+      .compile(project, "root//app:app", emptyList())
+    val rebuild = cli.calls.last().second
+    assertThat(rebuild[rebuild.indexOf("--target") + 1]).isEqualTo("root//app:app")
+    assertThat(rebuild).containsAtLeast("--build-system", "buck").inOrder()
+  }
+
+  @Test
+  fun `cell-qualified Buck2 labels are labels, Gradle paths are not`() {
+    assertThat(PreviewUri.isBazelLabel("root//app:app")).isTrue()
+    assertThat(PreviewUri.isBazelLabel("//app:app")).isTrue()
+    assertThat(PreviewUri.isBazelLabel("@vendor//app:lib")).isTrue()
+    assertThat(PreviewUri.isBazelLabel(":app:ui")).isFalse()
+    assertThat(PreviewUri.isBazelLabel("app/ui//x")).isFalse()
+    assertThat(PreviewUri.decodeModule(PreviewUri.encodeModule("root//app:app")))
+      .isEqualTo("root//app:app")
+  }
+
   private companion object {
     val DESCRIPTOR = Json {
       encodeDefaults = true

@@ -65,9 +65,7 @@ class BuildSystemSourceCompiler(
     val started = System.nanoTime()
     val arguments =
       ProjectBootstrap.bazelPrepare(projectRoot) +
-        (if (modulePath.startsWith("//") || modulePath.startsWith("@"))
-          listOf("--target", modulePath)
-        else emptyList())
+        (if (PreviewUri.isBazelLabel(modulePath)) listOf("--target", modulePath) else emptyList())
     val result = runner.run(projectRoot, launcher, arguments) {}
     val durationMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started)
     return when {

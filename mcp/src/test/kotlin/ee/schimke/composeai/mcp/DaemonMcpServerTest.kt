@@ -4735,6 +4735,106 @@ class DaemonMcpServerTest {
   }
 
   @Test
+  fun `record_preview maps script kinds to the extensions that advertise them`() {
+    assertThat(DaemonMcpServer.recordingScriptExtensionIds(listOf("recording.probe")))
+      .containsExactly("recording/script")
+    assertThat(
+        DaemonMcpServer.recordingScriptExtensionIds(
+          listOf("input.click", "a11y.action.click", "uia.click", "navigation.back")
+        )
+      )
+      .containsExactly("recording/script", "a11y", "uiautomator", "navigation")
+      .inOrder()
+  }
+
+  @Test
+  fun `record_preview enables the script extensions a fresh daemon starts without`() {
+    // compose-ai-tools#5945: daemons start with every extension inactive, so on a fresh (or
+    // idle-respawned) daemon `record_preview` rejected `recording.probe` as "not advertised".
+    // It now enables `recording/script` (plus `a11y` for an `a11y.` event) before validating, and
+    // skips the round-trip once the kinds are advertised.
+    val framesDir = tmp.newFolder("fresh-recording-frames")
+    writeSolidPng(framesDir.resolve("frame-00000.png"), 0xFF000000.toInt())
+    val a11yDescriptor =
+      ee.schimke.composeai.daemon.protocol.DataExtensionDescriptor(
+        id = ee.schimke.composeai.daemon.protocol.DataExtensionId("a11y"),
+        displayName = "Accessibility script actions",
+        recordingScriptEvents =
+          listOf(
+            ee.schimke.composeai.daemon.protocol.RecordingScriptEventDescriptor(
+              id = "a11y.action.click",
+              displayName = "a11y.action.click",
+              summary = "a11y click",
+              supported = true,
+            )
+          ),
+      )
+    factory.daemonConfigurer = { d ->
+      d.recordingEncodeDir = tmp.newFolder("fresh-recordings-out")
+      d.recordingStopResult =
+        ee.schimke.composeai.daemon.protocol.RecordingStopResult(
+          frameCount = 1,
+          durationMs = 100L,
+          framesDir = framesDir.absolutePath,
+          frameWidthPx = 2,
+          frameHeightPx = 2,
+        )
+      // Nothing advertised at initialize, as a real daemon.
+      d.advertisedDataExtensions = emptyList()
+      d.enableableDataExtensions =
+        mapOf(
+          "recording/script" to
+            ee.schimke.composeai.data.render.extensions.RecordingScriptDataExtensions.descriptors,
+          "a11y" to listOf(a11yDescriptor),
+        )
+    }
+    client.initialize()
+    val projectDir = tmp.newFolder("fresh-recording")
+    tmp.newFolder("fresh-recording", "module")
+    val workspaceId = registerWorkspace(projectDir, "fresh-recording")
+    val daemon = warmDaemonFor(workspaceId, ":module")
+    val previewId = "com.example.MyButton"
+    daemon.emitDiscovery(previewId)
+    client.expectNotification("notifications/resources/list_changed", 2_000)
+    val uri = PreviewUri(workspaceId, ":module", previewId).toUri()
+
+    fun record(vararg kinds: String) =
+      client.callTool(
+        "record_preview",
+        buildJsonObject {
+          put("uri", uri)
+          putJsonArray("events") {
+            kinds.forEachIndexed { index, kind ->
+              add(
+                buildJsonObject {
+                  put("tMs", index * 100)
+                  put("kind", kind)
+                }
+              )
+            }
+          }
+        },
+        timeoutMs = 10_000,
+      )
+
+    val first = record("recording.probe", "a11y.action.click")
+    assertThat(first.firstTextContent()).doesNotContain("not advertised")
+    assertThat(first.isError()).isFalse()
+    assertThat(daemon.enabledExtensionRequests.poll(2_000, TimeUnit.MILLISECONDS))
+      .containsExactly("recording/script", "a11y")
+      .inOrder()
+    val script = daemon.recordingScripts.poll(2_000, TimeUnit.MILLISECONDS)
+    assertThat(script!!.events.map { it.kind })
+      .containsExactly("recording.probe", "a11y.action.click")
+      .inOrder()
+
+    // Already advertised now: no second `extensions/enable`, and nothing is disabled.
+    val second = record("recording.probe")
+    assertThat(second.isError()).isFalse()
+    assertThat(daemon.enabledExtensionRequests).isEmpty()
+  }
+
+  @Test
   fun `record_preview drives start-script-stop-encode and returns base64 APNG inline`() {
     // End-to-end `record_preview`: drives the four daemon RPCs and asserts
     // 1. each handler saw exactly one call with the expected arguments (start, script, stop,
@@ -6332,12 +6432,14 @@ class DaemonMcpServerTest {
           .map { it.uri }
       assertThat(listBefore.any { it.contains("com.example.Initial") }).isTrue()
 
-      // Gradle's `composePreviewDiscover` re-runs and rewrites the manifest with a new id.
+      // Gradle's `composePreviewDiscover` re-runs and rewrites the manifest with a new id. The new
+      // entry carries keys newer compose-preview releases write (`widget`, `overloads`,
+      // `deprecated`); the reload reads them as JSON objects, so unknown keys must not drop it.
       manifestFile.writeText(
         """
         {"previews":[
           {"id":"com.example.Initial","className":"com.example","functionName":"Initial","displayName":"Initial"},
-          {"id":"com.example.WeatherForecast_Light","className":"com.example","functionName":"WeatherForecast","displayName":"WeatherForecast_Light"}
+          {"id":"com.example.WeatherForecast_Light","className":"com.example","functionName":"WeatherForecast","displayName":"WeatherForecast_Light","deprecated":false,"overloads":[],"widget":{"kind":"glance"}}
         ]}
         """
           .trimIndent()

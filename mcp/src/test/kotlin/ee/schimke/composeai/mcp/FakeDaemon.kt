@@ -91,6 +91,15 @@ class FakeDaemon : DaemonSpawn {
    */
   @Volatile var enableableExtensions: Map<String, List<DataProductCapability>> = emptyMap()
 
+  /**
+   * Data extensions (recording-script descriptors) `extensions/enable` adds, by extension id. An id
+   * here is known to the fake even when [enableableExtensions] doesn't list it.
+   */
+  @Volatile
+  var enableableDataExtensions:
+    Map<String, List<ee.schimke.composeai.daemon.protocol.DataExtensionDescriptor>> =
+    emptyMap()
+
   /** Ids the fake observed across every `extensions/enable` call. */
   val enabledExtensionRequests = java.util.concurrent.LinkedBlockingQueue<List<String>>()
 
@@ -653,11 +662,16 @@ class FakeDaemon : DaemonSpawn {
             ?.map { it.jsonPrimitive.content }
             .orEmpty()
         enabledExtensionRequests.add(ids)
-        val (known, unknown) = ids.partition { it in enableableExtensions }
-        val added = known.flatMap { enableableExtensions.getValue(it) }
+        val (known, unknown) =
+          ids.partition { it in enableableExtensions || it in enableableDataExtensions }
+        val added = known.flatMap { enableableExtensions[it].orEmpty() }
         advertisedDataProducts =
           advertisedDataProducts +
             added.filter { cap -> advertisedDataProducts.none { it.kind == cap.kind } }
+        val addedExtensions = known.flatMap { enableableDataExtensions[it].orEmpty() }
+        advertisedDataExtensions =
+          advertisedDataExtensions +
+            addedExtensions.filter { ext -> advertisedDataExtensions.none { it.id == ext.id } }
         sendResponse(
           id,
           json.encodeToJsonElement(

@@ -1,5 +1,12 @@
 # Changelog
 
+## [4.2.0](https://github.com/yschimke/compose-preview-mcp/compare/v4.1.0...v4.2.0) (2026-10-16)
+
+
+### Bug Fixes
+
+* enable record_preview's script extensions and consume compose-ai-tools 2.64.x ([#10](https://github.com/yschimke/compose-preview-mcp/issues/10)) ([f67efb8](https://github.com/yschimke/compose-preview-mcp/commit/f67efb8dc0a69cf3dd25374abc9c17deedc8aac9))
+
 ## [4.1.0](https://github.com/yschimke/compose-preview-mcp/compare/v4.0.0...v4.1.0) (2026-10-14)
 
 

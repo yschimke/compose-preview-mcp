@@ -6605,6 +6605,9 @@ class DaemonMcpServer(
         return errorCallToolResult("record_preview: ${violations.joinToString("; ")}")
       }
     }
+    // A fresh (or idle-respawned) daemon starts with every extension inactive, so nothing it
+    // advertises covers a script yet. Enable what the script needs before validating its kinds.
+    enableRecordingScriptExtensions(daemon, events)
     val scriptKindViolations = validateRecordingScriptKinds(events, daemon)
     if (scriptKindViolations.isNotEmpty()) {
       return errorCallToolResult("record_preview: ${scriptKindViolations.joinToString("; ")}")
@@ -6964,6 +6967,39 @@ class DaemonMcpServer(
       RecordingScriptEventStatus.UNSUPPORTED -> "unsupported"
       RecordingScriptEventStatus.FAILED -> "failed"
     }
+
+  /**
+   * Enables on [daemon] the extensions that advertise [events]' script kinds: always
+   * [RECORDING_SCRIPT_EXTENSION_ID], plus [RECORDING_SCRIPT_EXTENSIONS_BY_PREFIX]'s for `a11y.`,
+   * `uia.` and `navigation.` events. Daemons start with everything inactive (PROTOCOL.md § 3a), so
+   * without this `record_preview` on a fresh daemon rejected every kind as not advertised.
+   *
+   * Skipped when every kind is already supported. `extensions/enable` only adds to the public set,
+   * so nothing already enabled is turned off, and an id the daemon doesn't have (a desktop daemon
+   * has no `uiautomator`) comes back as `unknown`. A failure is logged; the validation that follows
+   * then reports the kinds that are still missing.
+   */
+  private fun enableRecordingScriptExtensions(
+    daemon: SupervisedDaemon,
+    events: List<RecordingScriptEvent>,
+  ) {
+    val supported =
+      daemon.dataExtensionDescriptors
+        .flatMap { it.recordingScriptEvents }
+        .filter { it.supported }
+        .map { it.id }
+        .toSet()
+    if (events.all { it.kind in supported }) return
+    val wanted = recordingScriptExtensionIds(events.map { it.kind })
+    runCatching { daemon.client.extensionsEnable(wanted) }
+      .onSuccess {
+        daemon.dataProductCapabilities = it.dataProducts
+        daemon.dataExtensionDescriptors = it.dataExtensions
+      }
+      .onFailure {
+        System.err.println("record_preview: extensions/enable $wanted failed: ${it.message}")
+      }
+  }
 
   /**
    * Validates every script event id against the resolved daemon's
@@ -7984,6 +8020,32 @@ class DaemonMcpServer(
     /** The daemon extension that produces [A11Y_FINDINGS_KIND] and [DEFAULT_OVERLAY_KIND]. */
     private const val A11Y_EXTENSION_ID: String = "a11y"
     private const val A11Y_HIERARCHY_KIND: String = "a11y/hierarchy"
+
+    /**
+     * The daemon extension carrying the recording-script event descriptors (`recording.*`,
+     * `assert.*`, `input.*`, lifecycle, state, …). `record_preview` enables it before every script
+     * that names a kind the daemon doesn't advertise yet.
+     */
+    internal const val RECORDING_SCRIPT_EXTENSION_ID: String = "recording/script"
+
+    /**
+     * Script-kind prefixes whose events come from their own daemon extension, enabled alongside
+     * [RECORDING_SCRIPT_EXTENSION_ID] when a script uses one.
+     */
+    internal val RECORDING_SCRIPT_EXTENSIONS_BY_PREFIX: Map<String, String> =
+      linkedMapOf(
+        "a11y." to A11Y_EXTENSION_ID,
+        "uia." to "uiautomator",
+        "navigation." to "navigation",
+      )
+
+    /** The extension ids a script with these event [kinds] needs, in a stable order. */
+    internal fun recordingScriptExtensionIds(kinds: Collection<String>): List<String> = buildList {
+      add(RECORDING_SCRIPT_EXTENSION_ID)
+      RECORDING_SCRIPT_EXTENSIONS_BY_PREFIX.forEach { (prefix, id) ->
+        if (kinds.any { it.startsWith(prefix) }) add(id)
+      }
+    }
 
     /**
      * Layout sources for `details: ["layout"]`, in order of preference. Each is also the id of the

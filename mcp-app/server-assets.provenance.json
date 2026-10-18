@@ -1,6 +1,6 @@
 {
   "repository": "https://github.com/yschimke/compose-preview-server",
-  "release": "v3.142.0",
+  "release": "v3.143.0",
   "files": {
     "compose-preview-viewer.html": {
       "path": "mcp-app/compose-preview-viewer.html",

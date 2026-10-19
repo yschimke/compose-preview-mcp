@@ -7,7 +7,7 @@
 java-server = "17"
 kotlin = "2.4.21"
 kotlinx-coroutines = "1.11.0"
-kotlinx-serialization = "1.11.0"
+kotlinx-serialization = "1.12.0"
 ktfmt = "0.27.0"
 ktor = "3.6.0"
 mcp-kotlin-sdk = "0.15.0"

@@ -1,5 +1,28 @@
 # Changelog
 
+## [4.4.0](https://github.com/yschimke/compose-preview-mcp/compare/v4.3.0...v4.4.0) (2026-10-19)
+
+
+### Bug Fixes
+
+* **deps:** update dependency ee.schimke.composeai:compose-ai-tools-bom to v2.68.2 ([#19](https://github.com/yschimke/compose-preview-mcp/issues/19)) ([0984a47](https://github.com/yschimke/compose-preview-mcp/commit/0984a477222fb2a662e9ee53f6dedb282e6869c4))
+* **deps:** update dependency ee.schimke.composeai:compose-ai-tools-bom to v2.68.6 ([#26](https://github.com/yschimke/compose-preview-mcp/issues/26)) ([6a9a1e1](https://github.com/yschimke/compose-preview-mcp/commit/6a9a1e1497333e187a48c2483cd94d10118c99f4))
+* **deps:** update dependency ee.schimke.composeai:compose-ai-tools-bom to v2.68.7 ([#31](https://github.com/yschimke/compose-preview-mcp/issues/31)) ([e1d1cce](https://github.com/yschimke/compose-preview-mcp/commit/e1d1cce546dbde3b6d6986e0ae82c8f77c598591))
+* **deps:** update dependency ee.schimke.composeai:compose-ai-tools-bom to v2.69.0 ([#33](https://github.com/yschimke/compose-preview-mcp/issues/33)) ([5a4e19f](https://github.com/yschimke/compose-preview-mcp/commit/5a4e19f7a2ad60b5a0655850926e6d16b29e4b93))
+* **deps:** update dependency ee.schimke.composeai:compose-ai-tools-bom to v2.69.1 ([#37](https://github.com/yschimke/compose-preview-mcp/issues/37)) ([6fc6e19](https://github.com/yschimke/compose-preview-mcp/commit/6fc6e1945c936bffffac6e03f66c63f072eec68c))
+* **deps:** update dependency ee.schimke.composeai:compose-preview-contracts-bom to v3.36.0 ([#20](https://github.com/yschimke/compose-preview-mcp/issues/20)) ([5edf41a](https://github.com/yschimke/compose-preview-mcp/commit/5edf41a67427b40d3be3fc4eb6a1a49cb861823c))
+* **deps:** update dependency ee.schimke.composeai:compose-preview-daemon-bom to v3.18.6 ([#17](https://github.com/yschimke/compose-preview-mcp/issues/17)) ([364890b](https://github.com/yschimke/compose-preview-mcp/commit/364890b3130d13082e2763ccef1d757d0864837b))
+* **deps:** update dependency ee.schimke.composeai:compose-preview-daemon-bom to v3.18.8 ([#27](https://github.com/yschimke/compose-preview-mcp/issues/27)) ([19957d0](https://github.com/yschimke/compose-preview-mcp/commit/19957d0b6b9bc86fb833f9936ad5328019c43eb4))
+* **deps:** update dependency ee.schimke.composeai:compose-preview-daemon-bom to v3.18.9 ([#32](https://github.com/yschimke/compose-preview-mcp/issues/32)) ([ca19a4c](https://github.com/yschimke/compose-preview-mcp/commit/ca19a4c7e0f2e08c0ec0b09af1a7b92e05d00b11))
+* **deps:** update dependency ee.schimke.composeai:compose-preview-daemon-bom to v3.20.0 ([#34](https://github.com/yschimke/compose-preview-mcp/issues/34)) ([3d264d5](https://github.com/yschimke/compose-preview-mcp/commit/3d264d5bdd3715d2ddd2ece712b06300781354ef))
+* **deps:** update dependency ee.schimke.composeai:remote-compose-player-js-dist to v2.13.1 ([#24](https://github.com/yschimke/compose-preview-mcp/issues/24)) ([61318dc](https://github.com/yschimke/compose-preview-mcp/commit/61318dc6a20f6653c89ccbeeffed93ddf19589ce))
+* **deps:** update dependency ee.schimke.composeai:remote-compose-player-js-dist to v2.16.1 ([#28](https://github.com/yschimke/compose-preview-mcp/issues/28)) ([b26f7b8](https://github.com/yschimke/compose-preview-mcp/commit/b26f7b8f56cec44c7937abcd26bffc2f17716e65))
+* **mcp-app:** take the viewer and preview library from compose-preview-server v3.142.0 ([#14](https://github.com/yschimke/compose-preview-mcp/issues/14)) ([13a1125](https://github.com/yschimke/compose-preview-mcp/commit/13a1125a63fa38d3ae3d2a5fe243da3af0475bc7))
+* **mcp-app:** take the viewer and preview library from compose-preview-server v3.143.0 ([#22](https://github.com/yschimke/compose-preview-mcp/issues/22)) ([f8db5d6](https://github.com/yschimke/compose-preview-mcp/commit/f8db5d646267cd6fefec2eed7b72a71e9ad62542))
+* never read a checkout of builds as a staged bazel --out directory ([#38](https://github.com/yschimke/compose-preview-mcp/issues/38)) ([7ec26c0](https://github.com/yschimke/compose-preview-mcp/commit/7ec26c00b2937f61f36b14476d990d6bc650d4e4))
+* reject a staged bazel --out directory in register_project ([#35](https://github.com/yschimke/compose-preview-mcp/issues/35)) ([0e2e295](https://github.com/yschimke/compose-preview-mcp/commit/0e2e295809769c12d0453b7fda6e364ce6f8d25f))
+* tolerate malformed cached workspace fields ([#30](https://github.com/yschimke/compose-preview-mcp/issues/30)) ([4285ad9](https://github.com/yschimke/compose-preview-mcp/commit/4285ad908c65c45f60678aa04a342d46e4016efa))
+
 ## [4.3.0](https://github.com/yschimke/compose-preview-mcp/compare/v4.2.0...v4.3.0) (2026-10-16)
 
 

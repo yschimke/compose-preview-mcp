@@ -3084,6 +3084,10 @@ class DaemonMcpServer(
       return errorCallToolResult(
         "register_project: '$path' is not a directory or a preview bundle (file or URL)"
       )
+    // A `compose-preview bazel --out` directory has renders but nothing to build or re-render.
+    ProjectDiscovery.stagedOutput(file)?.let {
+      return errorCallToolResult(ProjectDiscovery.stagedOutputError(path, it))
+    }
     val project = registerProjectAt(file, rootName, modules)
     warmUp(project)
     val payload = buildJsonObject {

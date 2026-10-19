@@ -574,6 +574,23 @@ class DaemonMcpServerTest {
   }
 
   @Test
+  fun `register_project rejects a staged bazel --out directory and names the workspace`() {
+    client.initialize()
+    val workspace = tmp.newFolder("bazel-workspace").canonicalFile
+    File(workspace, "MODULE.bazel").writeText("")
+    val out = File(workspace, "staged").apply { mkdirs() }
+    File(out, "build/compose-previews/previews.json")
+      .apply { parentFile.mkdirs() }
+      .writeText("""{"previews":[]}""")
+    val result =
+      client.callTool("register_project", buildJsonObject { put("path", out.absolutePath) })
+    assertThat(result.raw["isError"]?.jsonPrimitive?.contentOrNull).isEqualTo("true")
+    val text = result.firstTextContent()
+    assertThat(text).contains("staged `compose-preview bazel --out` directory")
+    assertThat(text).contains("register the Bazel workspace root instead: ${workspace.path}")
+  }
+
+  @Test
   fun `list_devices returns the daemon catalog projected to id widthDp heightDp density`() {
     // No daemon needs to be spawned — list_devices reads directly from the shared
     // :daemon:core DeviceDimensions catalog.

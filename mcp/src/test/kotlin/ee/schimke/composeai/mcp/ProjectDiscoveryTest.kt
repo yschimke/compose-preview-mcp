@@ -106,6 +106,23 @@ class ProjectDiscoveryTest {
   }
 
   @Test
+  fun `a checkout whose child build already rendered previews is not a staged output`() {
+    // wear-os-samples shape: a buildless git root, a sample with its own Gradle build and the
+    // previews.json its plugin wrote.
+    val repo = tmp.newFolder("samples")
+    File(repo, ".git").mkdirs()
+    staged(build(File(repo, "ComposeStarter")))
+    assertThat(ProjectDiscovery.stagedOutput(repo)).isNull()
+    // A Gradle module child (no settings of its own) and a Bazel package child count too.
+    val modules = tmp.newFolder("modules")
+    staged(File(modules, "app").apply { mkdirs() }).let { File(it, "build.gradle").writeText("") }
+    assertThat(ProjectDiscovery.stagedOutput(modules)).isNull()
+    val packages = tmp.newFolder("packages")
+    staged(File(packages, "ui").apply { mkdirs() }).let { File(it, "BUILD").writeText("") }
+    assertThat(ProjectDiscovery.stagedOutput(packages)).isNull()
+  }
+
+  @Test
   fun `a manifest directly in the directory marks it too`() {
     val out = staged(tmp.newFolder("flat"), manifest = "previews.json")
     assertThat(ProjectDiscovery.stagedOutput(out)).isNotNull()

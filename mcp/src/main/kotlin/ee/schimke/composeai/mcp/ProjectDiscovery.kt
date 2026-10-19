@@ -151,19 +151,20 @@ object ProjectDiscovery {
   fun stagedOutput(dir: File): StagedOutput? {
     val start = canonical(dir)
     if (!start.isDirectory) return null
-    if (
-      isBuild(start) ||
-        ROOT_BUILD_FILES.any { File(start, it).isFile } ||
-        PACKAGE_FILES.any { File(start, it).isFile }
-    )
-      return null
+    if (holdsBuild(start)) return null
     val manifest =
       stagedManifestIn(start)
-        ?: start
-          .listFiles { child -> child.isDirectory && !child.name.startsWith(".") }
-          .orEmpty()
-          .sortedBy { it.name }
-          .firstNotNullOfOrNull { stagedManifestIn(it) }
+        ?: run {
+          val children =
+            start
+              .listFiles { child -> child.isDirectory && !child.name.startsWith(".") }
+              .orEmpty()
+              .sortedBy { it.name }
+          // A child that is a build (a sample's own Gradle build, with its own previews.json)
+          // makes this a checkout of builds, never one `--out` shared by several targets.
+          if (children.any { holdsBuild(it) }) return null
+          children.firstNotNullOfOrNull { stagedManifestIn(it) }
+        }
         ?: return null
     var parent = start.parentFile
     while (parent != null) {
@@ -190,6 +191,12 @@ object ProjectDiscovery {
       "bundle --target <label> --output bundle.png`, run in the workspace) and serve or open " +
       "that instead; register_project accepts the bundle file as its path."
   }
+
+  /** A build, a Gradle module or a Bazel/Buck package: source, never staged output. */
+  private fun holdsBuild(dir: File): Boolean =
+    isBuild(dir) ||
+      ROOT_BUILD_FILES.any { File(dir, it).isFile } ||
+      PACKAGE_FILES.any { File(dir, it).isFile }
 
   private fun stagedManifestIn(dir: File): File? =
     STAGED_MANIFESTS.map { File(dir, it) }.firstOrNull { it.isFile }

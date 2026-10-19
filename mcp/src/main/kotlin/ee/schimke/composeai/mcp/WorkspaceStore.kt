@@ -7,9 +7,9 @@ import java.util.concurrent.ConcurrentHashMap
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
-import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.longOrNull
 import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonArray
@@ -114,12 +114,12 @@ class WorkspaceStore(private val file: File?) {
     val onDisk = HashSet<String>()
     (root["workspaces"] as? JsonArray).orEmpty().forEach { element ->
       val obj = element as? JsonObject ?: return@forEach
-      val id = obj["id"]?.jsonPrimitive?.contentOrNull ?: return@forEach
+      val id = (obj["id"] as? JsonPrimitive)?.contentOrNull ?: return@forEach
       onDisk += id
       if (id in forgotten) return@forEach
-      val path = obj["path"]?.jsonPrimitive?.contentOrNull ?: return@forEach
-      val lastUsed = obj["lastUsed"]?.jsonPrimitive?.longOrNull ?: 0L
-      val name = obj["name"]?.jsonPrimitive?.contentOrNull
+      val path = (obj["path"] as? JsonPrimitive)?.contentOrNull ?: return@forEach
+      val lastUsed = (obj["lastUsed"] as? JsonPrimitive)?.longOrNull ?: 0L
+      val name = (obj["name"] as? JsonPrimitive)?.contentOrNull
       entries.merge(id, Entry(id, path, name, lastUsed)) { mine, theirs ->
         if (theirs.lastUsed > mine.lastUsed) theirs else mine
       }

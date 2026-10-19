@@ -7,6 +7,24 @@ import org.junit.Test
 
 class WorkspaceStoreTest {
   @Test
+  fun `malformed cached entries do not stop valid workspaces from loading`() {
+    val root = createTempDirectory("cp-workspace-malformed").toFile()
+    val storeFile = File(root, "workspaces.json")
+    for (bad in
+      listOf(
+        """{"id":{},"path":"/bad"}""",
+        """{"id":"bad","path":[]}""",
+        """{"id":"other","path":"/other","lastUsed":{}}""",
+        """{"id":"another","path":"/another","name":[]}""",
+      )) {
+      storeFile.writeText("""{"workspaces":[$bad,{"id":"valid","path":"/valid","lastUsed":1}]}""")
+      val store = WorkspaceStore(storeFile)
+      assertThat(store.get("valid")?.path).isEqualTo("/valid")
+      assertThat(store.all().map { it.id }).contains("valid")
+    }
+  }
+
+  @Test
   fun `a sibling process's save does not bring back an id another process forgot`() {
     val root = createTempDirectory("cp-workspace-store").toFile()
     val storeFile = File(root, "workspaces.json")

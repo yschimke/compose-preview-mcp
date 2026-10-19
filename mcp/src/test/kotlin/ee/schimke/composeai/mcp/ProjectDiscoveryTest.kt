@@ -72,4 +72,78 @@ class ProjectDiscoveryTest {
     val plain = tmp.newFolder("plain", "a", "b")
     assertThat(ProjectDiscovery.buildsFor(plain)).isEmpty()
   }
+
+  private fun staged(dir: File, manifest: String = "build/compose-previews/previews.json"): File =
+    dir.apply {
+      File(this, manifest).apply { parentFile.mkdirs() }.writeText("""{"previews":[]}""")
+      File(this, ".compose-preview").mkdirs()
+      File(this, ".compose-preview/bazel.json").writeText("{}")
+    }
+
+  @Test
+  fun `a staged bazel --out directory outside any workspace is recognised`() {
+    val out = staged(tmp.newFolder("staged")).canonicalFile
+    val result = ProjectDiscovery.stagedOutput(out)
+    assertThat(result?.manifest).isEqualTo(File(out, "build/compose-previews/previews.json"))
+    assertThat(result?.workspaceRoot).isNull()
+  }
+
+  @Test
+  fun `a staged directory inside a bazel workspace names the workspace root`() {
+    val workspace = tmp.newFolder("ws").canonicalFile
+    File(workspace, "MODULE.bazel").writeText("")
+    val out = staged(File(workspace, "out/previews").apply { mkdirs() })
+    assertThat(ProjectDiscovery.stagedOutput(out)?.workspaceRoot).isEqualTo(workspace)
+    assertThat(ProjectDiscovery.stagedOutput(workspace)).isNull()
+  }
+
+  @Test
+  fun `an --out shared by several targets stages one manifest per target below it`() {
+    val out = tmp.newFolder("multi").canonicalFile
+    staged(File(out, "app_feature_ui_lib").apply { mkdirs() })
+    assertThat(ProjectDiscovery.stagedOutput(out)?.manifest)
+      .isEqualTo(File(out, "app_feature_ui_lib/build/compose-previews/previews.json"))
+  }
+
+  @Test
+  fun `a manifest directly in the directory marks it too`() {
+    val out = staged(tmp.newFolder("flat"), manifest = "previews.json")
+    assertThat(ProjectDiscovery.stagedOutput(out)).isNotNull()
+  }
+
+  @Test
+  fun `builds, gradle modules and plain directories are never staged outputs`() {
+    assertThat(ProjectDiscovery.stagedOutput(tmp.newFolder("empty"))).isNull()
+    // A Gradle module: build.gradle.kts beside the build/ the plugin writes previews.json into.
+    val gradle = build(tmp.newFolder("gradle"))
+    val module = staged(File(gradle, "app").apply { mkdirs() })
+    File(module, "build.gradle.kts").writeText("")
+    assertThat(ProjectDiscovery.stagedOutput(module)).isNull()
+    // Its output directory, under a Gradle build.
+    assertThat(ProjectDiscovery.stagedOutput(File(module, "build"))).isNull()
+    // A Bazel package and a Bazel workspace root that happen to hold a manifest.
+    val workspace = tmp.newFolder("bazel-ws")
+    File(workspace, "WORKSPACE").writeText("")
+    staged(workspace)
+    assertThat(ProjectDiscovery.stagedOutput(workspace)).isNull()
+    val pkg = staged(File(workspace, "app").apply { mkdirs() })
+    File(pkg, "BUILD.bazel").writeText("")
+    assertThat(ProjectDiscovery.stagedOutput(pkg)).isNull()
+  }
+
+  @Test
+  fun `the error names the workspace root, or says what to look for, and the bundle route`() {
+    val manifest = File("/w/out/build/compose-previews/previews.json")
+    val inside =
+      ProjectDiscovery.stagedOutputError(
+        "/w/out",
+        ProjectDiscovery.StagedOutput(manifest, File("/w")),
+      )
+    assertThat(inside).contains("staged `compose-preview bazel --out` directory")
+    assertThat(inside).contains("register the Bazel workspace root instead: /w.")
+    assertThat(inside).contains("compose-preview bazel bundle")
+    val outside =
+      ProjectDiscovery.stagedOutputError("/tmp/out", ProjectDiscovery.StagedOutput(manifest, null))
+    assertThat(outside).contains("the directory with MODULE.bazel or WORKSPACE")
+  }
 }

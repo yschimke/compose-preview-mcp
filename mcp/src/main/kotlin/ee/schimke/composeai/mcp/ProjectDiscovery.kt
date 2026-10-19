@@ -128,6 +128,72 @@ object ProjectDiscovery {
     return found
   }
 
+  /**
+   * A directory `compose-preview bazel … --out <dir>` staged: a previews manifest and renders, but
+   * no project to build. [manifest] is the `previews.json` that marks it; [workspaceRoot] is the
+   * Bazel-family workspace it sits inside, when it sits inside one.
+   */
+  data class StagedOutput(val manifest: File, val workspaceRoot: File?)
+
+  /** Where `--out` puts the manifest: under the normal build surface, or directly in the dir. */
+  private val STAGED_MANIFESTS = listOf("build/compose-previews/previews.json", "previews.json")
+
+  /** Bazel/Buck package files: a directory holding one is source, never a staged output. */
+  private val PACKAGE_FILES = listOf("BUILD", "BUILD.bazel", "BUCK")
+
+  /**
+   * [dir] as a staged `--out` directory, or null when it is not one. It is one when it holds a
+   * previews manifest (its own, or, for an `--out` shared by several targets, one per target one
+   * level below) and no build: no Gradle or Bazel-family file in it, and no Gradle build or preview
+   * bundle at or above it. A Gradle module (`build.gradle.kts` beside its `build/` output) or a
+   * bundle workspace is therefore never mistaken for one.
+   */
+  fun stagedOutput(dir: File): StagedOutput? {
+    val start = canonical(dir)
+    if (!start.isDirectory) return null
+    if (
+      isBuild(start) ||
+        ROOT_BUILD_FILES.any { File(start, it).isFile } ||
+        PACKAGE_FILES.any { File(start, it).isFile }
+    )
+      return null
+    val manifest =
+      stagedManifestIn(start)
+        ?: start
+          .listFiles { child -> child.isDirectory && !child.name.startsWith(".") }
+          .orEmpty()
+          .sortedBy { it.name }
+          .firstNotNullOfOrNull { stagedManifestIn(it) }
+        ?: return null
+    var parent = start.parentFile
+    while (parent != null) {
+      if (isBazelWorkspace(parent)) return StagedOutput(manifest, parent)
+      if (isBuild(parent)) return null
+      parent = parent.parentFile
+    }
+    return StagedOutput(manifest, workspaceRoot = null)
+  }
+
+  /**
+   * Why `register_project` refuses [staged], and what to register instead: the Bazel workspace the
+   * renders came from, or a bundle packed from it to view them on their own.
+   */
+  fun stagedOutputError(path: String, staged: StagedOutput): String {
+    val workspace =
+      staged.workspaceRoot?.let { "register the Bazel workspace root instead: ${it.path}" }
+        ?: "register the Bazel workspace root instead (the directory with MODULE.bazel or " +
+          "WORKSPACE that `compose-preview bazel` ran in)"
+    return "register_project: '$path' is a staged `compose-preview bazel --out` directory " +
+      "(${staged.manifest.path} and its renders, but no Gradle or Bazel project to build), so " +
+      "its previews cannot be rendered from here. To render them, $workspace. To view the " +
+      "renders without the workspace, pack them as a preview bundle (`compose-preview bazel " +
+      "bundle --target <label> --output bundle.png`, run in the workspace) and serve or open " +
+      "that instead; register_project accepts the bundle file as its path."
+  }
+
+  private fun stagedManifestIn(dir: File): File? =
+    STAGED_MANIFESTS.map { File(dir, it) }.firstOrNull { it.isFile }
+
   /** The `.claude/worktrees/<name>` directory [dir] lies in, if any. */
   private fun worktreeRoot(dir: File?): File? {
     var current = dir

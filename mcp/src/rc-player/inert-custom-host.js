@@ -17,9 +17,15 @@
   "use strict";
   var Player = window.RcdPlayer || (window.RC && window.RC.RcdPlayer);
   if (typeof Player !== "function") return;
-  // The whole surface the player and the layout-custom operation call on a host.
+  // The whole surface the player and the layout-custom operation call on a host. Since player
+  // 2.16 the player also assigns `customHost.inputs` (the canvas input widgets); the slot stays
+  // null so no input component is created, and the setter keeps the frozen host from throwing.
   var INERT_HOST = Object.freeze({
     pending: 0,
+    get inputs() {
+      return null;
+    },
+    set inputs(_) {},
     retire: function () {},
     setResolver: function () {},
     drawCustom: function () {},

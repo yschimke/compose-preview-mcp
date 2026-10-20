@@ -1510,6 +1510,39 @@ class DaemonMcpServerTest {
   }
 
   @Test
+  fun `an edit in a staged directory's origin workspace stays with the staged project`() {
+    client.initialize()
+    val workspace =
+      tmp.newFolder("bazel-workspace").apply { File(this, "MODULE.bazel").writeText("") }
+    val staged = tmp.newFolder("staged")
+    File(staged, ProjectDiscovery.STAGED_PREPARE_ORIGIN).apply {
+      parentFile.mkdirs()
+      writeText("""{"workspace":"${workspace.absolutePath}","args":["--out","$staged"]}""")
+    }
+    val workspaceId = registerWorkspace(staged, "staged")
+    val daemon = warmDaemonFor(workspaceId, ":app")
+    val source = File(workspace, "ui/Screen.kt").apply { parentFile.mkdirs() }
+    source.writeText("fun Screen() {}")
+    fun notify(withWorkspace: Boolean) =
+      client.callTool(
+        "notify_file_changed",
+        buildJsonObject {
+          put("path", source.absolutePath)
+          put("kind", "resource")
+          if (withWorkspace) put("workspaceId", workspaceId.value)
+        },
+      )
+    for (withWorkspace in listOf(false, true)) {
+      val result = notify(withWorkspace)
+      assertThat(result.isError()).isFalse()
+      // Neither unresolved nor handed to the origin workspace as another build.
+      assertThat(result.firstTextContent()).doesNotContain("is not in registered project")
+      assertThat(daemon.fileChanges.poll(2_000, TimeUnit.MILLISECONDS)).isNotNull()
+    }
+    assertThat(supervisor.listProjects().map { it.workspaceId }).containsExactly(workspaceId)
+  }
+
+  @Test
   fun `initialize sends short local instructions naming render_preview preview`() {
     val instructions = client.initialize()["instructions"]?.jsonPrimitive?.contentOrNull
     assertThat(instructions).contains("render_preview preview=<FunctionName>")

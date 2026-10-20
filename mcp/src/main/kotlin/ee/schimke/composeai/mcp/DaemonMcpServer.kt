@@ -7114,15 +7114,18 @@ class DaemonMcpServer(
   /**
    * The Gradle build [file] belongs to when it is neither [project] nor another registered build:
    * the nearest ancestor with a settings file, when [file] is outside [project]'s root or under a
-   * hidden directory in it (`.claude/worktrees/<name>/…`). Null otherwise, and for a file in the
-   * workspace a staged [project] was prepared from ([ProjectDiscovery.stagedOrigin]), whose refresh
-   * replays that prepare.
+   * hidden directory in it (`.claude/worktrees/<name>/…`). Null otherwise. A staged [project]'s
+   * root is, for this, also the workspace it was prepared from ([ProjectDiscovery.stagedOrigin]),
+   * whose refresh replays that prepare; a worktree under that workspace is still a build of its
+   * own.
    */
   private fun otherBuildFor(file: File, project: RegisteredProject): File? {
     val canonical = runCatching { file.absoluteFile.canonicalFile }.getOrDefault(file.absoluteFile)
-    val origin = ProjectDiscovery.stagedOrigin(project.path)
-    if (origin != null && canonical.startsWith(canonicalOf(origin))) return null
-    val root = runCatching { project.path.canonicalFile }.getOrDefault(project.path)
+    val origin =
+      ProjectDiscovery.stagedOrigin(project.path)?.let(::canonicalOf)?.takeIf {
+        canonical.startsWith(it)
+      }
+    val root = origin ?: runCatching { project.path.canonicalFile }.getOrDefault(project.path)
     val inside = canonical.startsWith(root)
     val hidden =
       inside &&
@@ -7131,7 +7134,7 @@ class DaemonMcpServer(
     val build = canonical.parentFile?.let(ProjectDiscovery::enclosingBuild) ?: return null
     val registered =
       supervisor.listProjects().map { runCatching { it.path.canonicalFile }.getOrDefault(it.path) }
-    return build.takeIf { it !in registered }
+    return build.takeIf { it !in registered && it != origin }
   }
 
   /**

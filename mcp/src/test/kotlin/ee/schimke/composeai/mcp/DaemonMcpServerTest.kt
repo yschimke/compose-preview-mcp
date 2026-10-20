@@ -1540,6 +1540,24 @@ class DaemonMcpServerTest {
       assertThat(daemon.fileChanges.poll(2_000, TimeUnit.MILLISECONDS)).isNotNull()
     }
     assertThat(supervisor.listProjects().map { it.workspaceId }).containsExactly(workspaceId)
+
+    // A worktree under the origin is a checkout of its own, not the staged project's sources.
+    val worktree =
+      File(workspace, ".claude/worktrees/fix").apply {
+        mkdirs()
+        File(this, "MODULE.bazel").writeText("")
+      }
+    val worktreeSource = File(worktree, "ui/Screen.kt").apply { parentFile.mkdirs() }
+    worktreeSource.writeText("fun Screen() {}")
+    val rerouted =
+      client.callTool(
+        "notify_file_changed",
+        buildJsonObject {
+          put("path", worktreeSource.absolutePath)
+          put("workspaceId", workspaceId.value)
+        },
+      )
+    assertThat(rerouted.firstTextContent()).contains("rendering from ${worktree.canonicalPath}")
   }
 
   @Test

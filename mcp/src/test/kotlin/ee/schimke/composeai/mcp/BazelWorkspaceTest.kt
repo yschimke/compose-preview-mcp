@@ -54,6 +54,23 @@ class BazelWorkspaceTest {
   }
 
   @Test
+  fun `a staged bazel prepare --out directory is a Bazel-family build`() {
+    val staged = tmp.newFolder("staged")
+    File(staged, "build/compose-previews").mkdirs()
+    assertThat(ProjectDiscovery.isBazelWorkspace(staged)).isFalse()
+    File(staged, ProjectDiscovery.STAGED_PREPARE_ORIGIN).apply {
+      parentFile.mkdirs()
+      writeText("""{"workspace":"/ws","args":["prepare"]}""")
+    }
+    assertThat(ProjectDiscovery.isBazelWorkspace(staged)).isTrue()
+    assertThat(ProjectDiscovery.isBuild(staged)).isTrue()
+    // Refreshed by handing the CLI the staged directory, which replays the recorded prepare.
+    assertThat(ProjectBootstrap.bazelPrepare(staged))
+      .containsAtLeast("bazel", "prepare", "--project", staged.absolutePath)
+      .inOrder()
+  }
+
+  @Test
   fun `a Gradle build with a WORKSPACE file stays a Gradle build`() {
     val ws = workspace()
     File(ws, "settings.gradle.kts").writeText("")

@@ -1,5 +1,19 @@
 # Changelog
 
+## [4.5.0](https://github.com/yschimke/compose-preview-mcp/compare/v4.4.0...v4.5.0) (2026-10-20)
+
+
+### Bug Fixes
+
+* **deps:** update dependency ee.schimke.composeai:compose-ai-tools-bom to v2.70.2 ([#41](https://github.com/yschimke/compose-preview-mcp/issues/41)) ([664bd8e](https://github.com/yschimke/compose-preview-mcp/commit/664bd8e0096f0175bcdb4c1114a75c99648bbdd3))
+* **deps:** update dependency ee.schimke.composeai:compose-preview-contracts-bom to v3.37.0 ([#42](https://github.com/yschimke/compose-preview-mcp/issues/42)) ([2fc1493](https://github.com/yschimke/compose-preview-mcp/commit/2fc1493988e841e27ee862090c4cdbf905b727d2))
+* **deps:** update dependency ee.schimke.composeai:compose-preview-daemon-bom to v3.21.1 ([#43](https://github.com/yschimke/compose-preview-mcp/issues/43)) ([ca9f724](https://github.com/yschimke/compose-preview-mcp/commit/ca9f724b3abcbad67ee57f6893dd3998496ecae0))
+* **deps:** update dependency ee.schimke.composeai:remote-compose-player-js-dist to v2.17.0 ([#44](https://github.com/yschimke/compose-preview-mcp/issues/44)) ([ff57574](https://github.com/yschimke/compose-preview-mcp/commit/ff575742eab3b4704e70dd52031d871b69c1df10))
+* **deps:** update dependency org.jetbrains.kotlinx:kotlinx-serialization-json to v1.12.0 ([#39](https://github.com/yschimke/compose-preview-mcp/issues/39)) ([d0b403a](https://github.com/yschimke/compose-preview-mcp/commit/d0b403a064fa995e2222a4175052916378ea70fb))
+* keep a worktree under a staged origin routed as its own build ([#47](https://github.com/yschimke/compose-preview-mcp/issues/47)) ([505762c](https://github.com/yschimke/compose-preview-mcp/commit/505762cc5cd1a3993aeb386680d2378b9160bd13))
+* route edits in a staged directory's origin workspace to the staged project ([#46](https://github.com/yschimke/compose-preview-mcp/issues/46)) ([bab714b](https://github.com/yschimke/compose-preview-mcp/commit/bab714b222ab32f888c739b17e9fd8c76ac1b355))
+* treat a staged bazel prepare --out directory as a Bazel-family build ([#45](https://github.com/yschimke/compose-preview-mcp/issues/45)) ([e9711fd](https://github.com/yschimke/compose-preview-mcp/commit/e9711fd89f822a24c3ee06657367c4e25ad1ca3d))
+
 ## [4.4.0](https://github.com/yschimke/compose-preview-mcp/compare/v4.3.0...v4.4.0) (2026-10-19)
 
 

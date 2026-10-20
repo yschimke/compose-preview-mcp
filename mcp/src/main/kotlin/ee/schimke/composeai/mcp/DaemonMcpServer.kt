@@ -7114,10 +7114,14 @@ class DaemonMcpServer(
   /**
    * The Gradle build [file] belongs to when it is neither [project] nor another registered build:
    * the nearest ancestor with a settings file, when [file] is outside [project]'s root or under a
-   * hidden directory in it (`.claude/worktrees/<name>/…`). Null otherwise.
+   * hidden directory in it (`.claude/worktrees/<name>/…`). Null otherwise, and for a file in the
+   * workspace a staged [project] was prepared from ([ProjectDiscovery.stagedOrigin]), whose refresh
+   * replays that prepare.
    */
   private fun otherBuildFor(file: File, project: RegisteredProject): File? {
     val canonical = runCatching { file.absoluteFile.canonicalFile }.getOrDefault(file.absoluteFile)
+    val origin = ProjectDiscovery.stagedOrigin(project.path)
+    if (origin != null && canonical.startsWith(canonicalOf(origin))) return null
     val root = runCatching { project.path.canonicalFile }.getOrDefault(project.path)
     val inside = canonical.startsWith(root)
     val hidden =
@@ -7133,7 +7137,9 @@ class DaemonMcpServer(
   /**
    * The workspace a `notify_file_changed` without `workspaceId` means: the registered project whose
    * root holds [path] (deepest, when builds nest), else the only registered project for a relative
-   * [path].
+   * [path]. A staged `bazel prepare --out` project also holds its origin workspace's files
+   * ([ProjectDiscovery.stagedOrigin]); the project registered at a root wins over one staged from
+   * it.
    */
   private fun workspaceForPath(path: String): WorkspaceId? {
     val projects = supervisor.listProjects()
@@ -7141,13 +7147,26 @@ class DaemonMcpServer(
     if (!file.isAbsolute) return projects.singleOrNull()?.workspaceId
     val canonical = runCatching { file.canonicalFile }.getOrDefault(file.absoluteFile)
     return projects
-      .filter { project ->
-        val root = runCatching { project.path.canonicalFile }.getOrDefault(project.path)
-        canonical.toPath().startsWith(root.toPath())
+      .mapNotNull { project ->
+        val own = canonicalOf(project.path).takeIf { canonical.startsWith(it) }
+        val origin =
+          ProjectDiscovery.stagedOrigin(project.path)?.let(::canonicalOf)?.takeIf {
+            canonical.startsWith(it)
+          }
+        when {
+          own != null -> project to own.path.length * 2 + 1
+          origin != null -> project to origin.path.length * 2
+          else -> null
+        }
       }
-      .maxByOrNull { it.path.absolutePath.length }
+      .maxByOrNull { it.second }
+      ?.first
       ?.workspaceId
   }
+
+  private fun canonicalOf(file: File): File = runCatching {
+    file.canonicalFile
+  }.getOrDefault(file.absoluteFile)
 
   private fun toolNotifyFileChanged(args: JsonObject): CallToolResult {
     val path =

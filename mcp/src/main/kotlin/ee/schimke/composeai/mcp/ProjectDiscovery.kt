@@ -1,6 +1,10 @@
 package ee.schimke.composeai.mcp
 
 import java.io.File
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.jsonPrimitive
 
 /**
  * Finds the Gradle builds a directory stands for, so one global `compose-preview mcp serve` entry
@@ -41,6 +45,22 @@ object ProjectDiscovery {
    * directory as `--project` (compose-ai-tools#6160).
    */
   const val STAGED_PREPARE_ORIGIN = ".compose-preview/prepare-origin.json"
+
+  /**
+   * The workspace a staged `bazel prepare --out` directory was prepared from: the `workspace` its
+   * [STAGED_PREPARE_ORIGIN] record names, or null for any other directory. Its sources live there,
+   * outside the staged directory, so an edit under it belongs to the staged registration.
+   */
+  fun stagedOrigin(dir: File): File? = runCatching {
+    val record = File(dir, STAGED_PREPARE_ORIGIN).takeIf { it.isFile } ?: return null
+    (Json.parseToJsonElement(record.readText()) as? JsonObject)
+      ?.get("workspace")
+      ?.jsonPrimitive
+      ?.contentOrNull
+      ?.let(::File)
+      ?.takeIf { it.isAbsolute }
+  }
+    .getOrNull()
 
   /**
    * A workspace the CLI's Bazel-family driver prepares: a Bazel workspace root, a Buck2 project

@@ -36,12 +36,27 @@ object ProjectDiscovery {
       BundleProjects.isBundleWorkspace(dir)
 
   /**
-   * A workspace the CLI's Bazel-family driver prepares: a Bazel workspace root or a Buck2 project
-   * root ([isBuckProject]) that is not also a Gradle build. Gradle wins where both exist, as in the
-   * CLI: a Gradle repository that carries a `WORKSPACE` keeps its Gradle preview tasks.
+   * The record `compose-preview bazel prepare --out <dir>` leaves in `<dir>` (newer CLIs): how to
+   * prepare that staged directory again from its own workspace, which the CLI does when handed the
+   * directory as `--project` (compose-ai-tools#6160).
+   */
+  const val STAGED_PREPARE_ORIGIN = ".compose-preview/prepare-origin.json"
+
+  /**
+   * A workspace the CLI's Bazel-family driver prepares: a Bazel workspace root, a Buck2 project
+   * root ([isBuckProject]), or a staged `bazel prepare --out` directory ([STAGED_PREPARE_ORIGIN]),
+   * that is not also a Gradle build. Gradle wins where both exist, as in the CLI: a Gradle
+   * repository that carries a `WORKSPACE` keeps its Gradle preview tasks.
+   *
+   * A staged directory counts so it can be registered as it is, and refreshed through
+   * [ProjectBootstrap.bazelPrepare] after a source edit: the CLI replays the recorded prepare in
+   * the original workspace. Before the record, a staged directory needed a hand-placed `WORKSPACE`
+   * marker, and the CLI then ran the default `bazel` there, with no build to find.
    */
   fun isBazelWorkspace(dir: File): Boolean =
-    (BAZEL_WORKSPACE_FILES.any { File(dir, it).isFile } || isBuckProject(dir)) &&
+    (BAZEL_WORKSPACE_FILES.any { File(dir, it).isFile } ||
+      isBuckProject(dir) ||
+      File(dir, STAGED_PREPARE_ORIGIN).isFile) &&
       SETTINGS_FILES.none { File(dir, it).isFile } &&
       !File(dir, "gradlew").isFile
 

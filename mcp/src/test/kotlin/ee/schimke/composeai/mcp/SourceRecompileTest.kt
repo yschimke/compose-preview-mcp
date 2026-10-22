@@ -232,6 +232,135 @@ class SourceRecompileTest {
     assertThat(changes["removed"]?.jsonArray.orEmpty()).isEmpty()
   }
 
+  /** Writes [moduleDir]'s launch descriptor publishing [sourceDir] as its `sourceWatch`. */
+  private fun publishSourceDir(moduleDir: File, modulePath: String, sourceDir: File) {
+    File(moduleDir, "build/compose-previews/daemon-launch.json").apply {
+      parentFile.mkdirs()
+      writeText(
+        """
+        {"schemaVersion":2,"modulePath":"$modulePath","variant":"debug","enabled":true,
+         "mainClass":"M","classpath":[],"jvmArgs":[],"systemProperties":{},
+         "workingDirectory":"${moduleDir.absolutePath}","manifestPath":"${moduleDir.absolutePath}/p.json",
+         "sourceWatch":{"sourceDirs":["${sourceDir.absolutePath}"]}}
+        """
+          .trimIndent()
+      )
+    }
+  }
+
+  /**
+   * #57: the Build Tools API compiles exactly the `sources` it is given, so an edit that uses a
+   * sibling file only resolves when the whole module is there. The change set still names only the
+   * edit, which is what the warm compiler compiles.
+   */
+  @Test
+  fun `an in-process compile sends every module source and names only the edit as changed`() {
+    lateinit var fixture: Fixture
+    start(fakeCompiler { fixture.classes })
+    fixture = fixture()
+    val app = File(fixture.source.path.substringBefore("/src/"))
+    val sourceDir = File(app, "src/main/kotlin")
+    val sibling = File(sourceDir, "com/example/Theme.kt").apply { writeText("val accent = 1") }
+    publishSourceDir(app, ":app", sourceDir)
+    val params = CopyOnWriteArrayList<kotlinx.serialization.json.JsonObject?>()
+    daemon.onCompileSourcesParams = { params += it }
+    daemon.onCompileSources = { _ ->
+      fixture.classes.writeText(fixture.source.readText())
+      CompileSourcesResult(result = CompileResultKind.OK, durationMs = 5)
+    }
+    render(fixture)
+    params.clear()
+
+    edit(fixture, """@Preview fun Header() { Text("Whole module") }""")
+    assertThat(render(fixture).bytes).contains("Whole module")
+
+    val sent = params.single()!!
+    assertThat(sent["sources"]!!.jsonArray.map { it.jsonPrimitive.content })
+      .containsExactly(fixture.source.absolutePath, sibling.absolutePath)
+    assertThat(
+        sent["changes"]!!.jsonObject["modified"]!!.jsonArray.map { it.jsonPrimitive.content }
+      )
+      .containsExactly(fixture.source.absolutePath)
+  }
+
+  /**
+   * #57: after an in-process compile the daemon has already swapped onto the new classes, so a
+   * `fileChanged` per edited file would only swap it again before the render.
+   */
+  @Test
+  fun `a daemon that compiled in process is not sent fileChanged as well`() {
+    lateinit var fixture: Fixture
+    start(fakeCompiler { fixture.classes })
+    fixture = fixture()
+    daemon.onCompileSources = { _ ->
+      fixture.classes.writeText(fixture.source.readText())
+      CompileSourcesResult(result = CompileResultKind.OK, durationMs = 5)
+    }
+    render(fixture)
+    val before = daemon.fileChanges.size
+
+    edit(fixture, """@Preview fun Header() { Text("One swap") }""")
+    assertThat(render(fixture).bytes).contains("One swap")
+    assertThat(daemon.fileChanges).hasSize(before)
+  }
+
+  /**
+   * #57: one module's edit used to reach every module's in-process compile, where it fails against
+   * the wrong classpath, Gradle succeeds, and that module never compiled in process again.
+   */
+  @Test
+  fun `another module's edit is left to Gradle and does not switch the in-process compile off`() {
+    val gradle = CopyOnWriteArrayList<String>()
+    start(
+      SourceCompiler { _, modulePath, _ ->
+        gradle += modulePath
+        SourceCompileOutcome.Ok(durationMs = 1, work = nextWork)
+      }
+    )
+    val projectDir = tmp.newFolder("workspace")
+    fun module(name: String): File {
+      File(projectDir, "$name/build.gradle.kts").apply { parentFile.mkdirs() }.writeText("")
+      return File(projectDir, "$name/src/main/kotlin/com/example/Shared.kt").apply {
+        parentFile.mkdirs()
+        writeText("val $name = 1")
+      }
+    }
+    val appSource = module("app")
+    val featureSource = module("feature")
+    val workspaceId = registerWorkspace(projectDir)
+    val asked = mutableMapOf<String, CopyOnWriteArrayList<List<String>>>()
+    for (modulePath in listOf(":app", ":feature")) {
+      supervisor.daemonFor(workspaceId, modulePath)
+      val calls = CopyOnWriteArrayList<List<String>>().also { asked[modulePath] = it }
+      factory.daemons.getValue(workspaceId to modulePath).onCompileSources = { sources ->
+        calls += sources
+        CompileSourcesResult(result = CompileResultKind.OK, durationMs = 1)
+      }
+    }
+    fun notify(file: File) {
+      file.setLastModified(file.lastModified() + 2_000)
+      client.callTool(
+        "notify_file_changed",
+        buildJsonObject {
+          put("workspaceId", workspaceId.value)
+          put("path", file.absolutePath)
+        },
+        timeoutMs = 10_000,
+      )
+    }
+
+    // No preview names the file, so every module recompiles; only :app compiles it in process.
+    appSource.writeText("val app = 2")
+    notify(appSource)
+    assertThat(asked.getValue(":app")).containsExactly(listOf(appSource.absolutePath))
+    assertThat(asked.getValue(":feature")).isEmpty()
+    assertThat(gradle).containsExactly(":feature")
+
+    featureSource.writeText("val feature = 2")
+    notify(featureSource)
+    assertThat(asked.getValue(":feature")).containsExactly(listOf(featureSource.absolutePath))
+  }
+
   /**
    * `source_watch` shows the starting list (what the build published in its launch descriptor) and
    * narrows the pre-render check to the files an agent names, which still recompile.

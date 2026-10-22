@@ -983,7 +983,7 @@ class DaemonMcpServer(
             "workspace ${daemon.workspaceId.value} is not registered"
           )
         } else {
-          val inProcess = compileInProcess(daemon, sources)
+          val inProcess = compileInProcess(daemon, sources, moduleSourcesOf(daemon, sources))
           if (inProcess is SourceCompileOutcome.Ok) inProcess
           else {
             val gradle = runCatching {
@@ -1024,8 +1024,12 @@ class DaemonMcpServer(
       // drop the broken file's previews from discovery. Keeping the last good classloader renders
       // the last good image, with a stale note. A compile that could not run at all still forwards,
       // so externally built classes are picked up.
+      // A daemon that compiled in process already swapped its classloader; only its replicas, which
+      // load the same output directory, still need telling.
+      val compiledInProcess =
+        outcome is SourceCompileOutcome.Ok && outcome.work?.task == IN_PROCESS_COMPILE_TASK
       if (outcome !is SourceCompileOutcome.Failed)
-        daemon.allClients().forEach { client ->
+        daemon.allClients().drop(if (compiledInProcess) 1 else 0).forEach { client ->
           sources.forEach { path ->
             runCatching {
               client.fileChanged(
@@ -1039,6 +1043,29 @@ class DaemonMcpServer(
       return outcome
     }
   }
+
+  /**
+   * [daemon]'s module as the source tree sees it: every Kotlin source it builds from, when its
+   * build published them ([SourceTree.kotlinSourcesOf]), and which of the [edited] files belong to
+   * another module. `null` when the module isn't one the tree knows, as for a Bazel target that
+   * published nothing.
+   */
+  private fun moduleSourcesOf(daemon: SupervisedDaemon, edited: List<String>): ModuleSources? {
+    val tree = sourceTrees[daemon.workspaceId] ?: return null
+    val root = supervisor.project(daemon.workspaceId)?.path ?: return null
+    val dir =
+      sequenceOf(daemon.moduleProjectDirPath?.let(::File), moduleDir(root, daemon.modulePath))
+        .filterNotNull()
+        .firstOrNull(tree::knowsModule) ?: return null
+    val normalized = dir.absoluteFile.normalize()
+    return ModuleSources(
+      all = tree.kotlinSourcesOf(normalized).orEmpty().map { it.absolutePath },
+      foreign =
+        edited.filter { path -> tree.moduleOf(File(path)).let { it != null && it != normalized } },
+    )
+  }
+
+  private class ModuleSources(val all: List<String>, val foreign: List<String>)
 
   /**
    * The change set for an in-process compile of the edited [sources]. Without one the daemon cannot
@@ -1061,15 +1088,24 @@ class DaemonMcpServer(
   private fun compileInProcess(
     daemon: SupervisedDaemon,
     sources: List<String>,
+    module: ModuleSources?,
   ): SourceCompileOutcome? {
     if (!compileInProcess) return null
     if (sources.any { !it.endsWith(".kt") }) return null
+    // Another module's file can't compile against this module's classpath, and its own build has
+    // to run anyway for this daemon to see it: leave it all to Gradle.
+    if (module != null && module.foreign.isNotEmpty()) return null
     val client = daemon.allClients().firstOrNull() ?: return null
     if (inProcessDeclined.contains(client)) return null
     val startedAt = System.nanoTime()
     val result = runCatching {
       client.compileSources(
-        CompileSourcesParams(sources = sources, changes = changeSetOf(sources)),
+        CompileSourcesParams(
+          // The Build Tools API compiles exactly `sources`, so a module's other files have to be
+          // there for the edit to resolve them; the change set says which ones changed.
+          sources = (module?.all.orEmpty() + sources).distinct(),
+          changes = changeSetOf(sources),
+        ),
         timeout = IN_PROCESS_COMPILE_TIMEOUT,
       )
     }

@@ -183,6 +183,7 @@ class DaemonMcpServerTest {
         "watch",
         "unwatch",
         "list_watches",
+        "source_watch",
         "notify_file_changed",
         "set_visible",
         "set_focus",

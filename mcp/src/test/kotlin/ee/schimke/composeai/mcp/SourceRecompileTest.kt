@@ -232,6 +232,63 @@ class SourceRecompileTest {
     assertThat(changes["removed"]?.jsonArray.orEmpty()).isEmpty()
   }
 
+  /**
+   * `source_watch` shows the starting list (what the build published in its launch descriptor) and
+   * narrows the pre-render check to the files an agent names, which still recompile.
+   */
+  @Test
+  fun `source_watch lists the published source dirs and keeps a focused edit fresh`() {
+    lateinit var fixture: Fixture
+    start(fakeCompiler { fixture.classes }, compileInProcess = false)
+    fixture = fixture()
+    val app = fixture.source.parentFile.parentFile.parentFile.parentFile.parentFile.parentFile
+    val sourceDir = File(app, "src/main/kotlin")
+    File(app, "build/compose-previews/daemon-launch.json").apply {
+      parentFile.mkdirs()
+      writeText(
+        """
+        {"schemaVersion":2,"modulePath":":app","variant":"debug","enabled":true,
+         "mainClass":"M","classpath":[],"jvmArgs":[],"systemProperties":{},
+         "workingDirectory":"${app.absolutePath}","manifestPath":"${app.absolutePath}/p.json",
+         "sourceWatch":{"sourceDirs":["${sourceDir.absolutePath}"]}}
+        """
+          .trimIndent()
+      )
+    }
+    fun sourceWatch(paths: List<String>?) =
+      json
+        .parseToJsonElement(
+          client
+            .callTool(
+              "source_watch",
+              buildJsonObject {
+                put("workspaceId", fixture.workspaceId.value)
+                if (paths != null)
+                  putJsonArray("paths") { paths.forEach { add(JsonPrimitive(it)) } }
+              },
+              timeoutMs = 10_000,
+            )
+            .firstTextContent()
+        )
+        .jsonObject
+
+    val listed = sourceWatch(null)
+    val published = listed["published"]!!.jsonArray.single().jsonObject
+    assertThat(published["moduleDir"]!!.jsonPrimitive.content).isEqualTo(app.absolutePath)
+    assertThat(published["sourceDirs"]!!.jsonArray.map { it.jsonPrimitive.content })
+      .containsExactly(sourceDir.absolutePath)
+    assertThat(listed["focus"]!!.jsonArray).isEmpty()
+
+    render(fixture)
+    val focused = sourceWatch(listOf(fixture.source.absolutePath))
+    assertThat(focused["focus"]!!.jsonArray.map { it.jsonPrimitive.content })
+      .containsExactly(fixture.source.absolutePath)
+    edit(fixture, """@Preview fun Header() { Text("Focused") }""")
+    assertThat(render(fixture).bytes).contains("Focused")
+
+    assertThat(sourceWatch(emptyList())["focus"]!!.jsonArray).isEmpty()
+  }
+
   /** On unless `COMPOSE_PREVIEW_COMPILE_IN_PROCESS` says otherwise. */
   @Test
   fun `the in-process compile is on by default and the environment can turn it off`() {

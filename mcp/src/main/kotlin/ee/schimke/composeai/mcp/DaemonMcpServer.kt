@@ -202,11 +202,14 @@ class DaemonMcpServer(
    */
   private val sourceCompiler: SourceCompiler? = null,
   /**
-   * Whether a recompile first tries the daemon's in-process `compileSources`. Off by default:
-   * measured slower than a warm incremental Gradle `composePreviewCompile`, since it shares the
-   * render daemon's heap and CPU. `COMPOSE_PREVIEW_COMPILE_IN_PROCESS=1` turns it on.
+   * Whether a recompile first tries the daemon's in-process `compileSources` before Gradle. On by
+   * default: with the daemon's warm compiler an edit reaches new pixels in a few hundred
+   * milliseconds, against seconds for `composePreviewCompile`; without it the in-process compile
+   * costs about what Gradle does. A daemon that can't compile in process declines and the edit goes
+   * to Gradle, as does a compile error Gradle doesn't reproduce.
+   * `COMPOSE_PREVIEW_COMPILE_IN_PROCESS=0` turns it off; see [compileInProcessEnabled].
    */
-  private val compileInProcess: Boolean = environment[COMPILE_IN_PROCESS_ENV] == "1",
+  private val compileInProcess: Boolean = compileInProcessEnabled(environment),
   /** OpenAI MCP Extensions probe tools, only with `COMPOSE_PREVIEW_MCP_OPENAI_PROBE=1`. */
   private val openAiProbe: OpenAiProbe? = OpenAiProbe.fromEnvironment(environment),
   /** The `openai/settings` defaults file, shared with the CLI. */
@@ -7998,8 +8001,16 @@ class DaemonMcpServer(
     /** [CompileWork.task] of an in-process (Build Tools API) compile inside the daemon. */
     const val IN_PROCESS_COMPILE_TASK = "daemon:compileSources"
 
-    /** Set to `1` to try the daemon's in-process compile before Gradle; see `compileInProcess`. */
+    /** Set to `0` to always compile through Gradle; see `compileInProcess`. */
     const val COMPILE_IN_PROCESS_ENV = "COMPOSE_PREVIEW_COMPILE_IN_PROCESS"
+
+    /**
+     * Whether [COMPILE_IN_PROCESS_ENV] leaves the in-process compile on: anything but `0`, `false`
+     * or `off` (any case), including unset.
+     */
+    internal fun compileInProcessEnabled(environment: Map<String, String>): Boolean =
+      environment[COMPILE_IN_PROCESS_ENV]?.trim()?.lowercase() !in setOf("0", "false", "off")
+
     private val IN_PROCESS_COMPILE_TIMEOUT = 120.seconds
 
     const val MCP_APP_VIEWER_URI: String = "ui://compose-preview/viewer"

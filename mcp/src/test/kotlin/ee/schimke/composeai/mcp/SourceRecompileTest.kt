@@ -418,9 +418,22 @@ class SourceRecompileTest {
     assertThat(sourceWatch(emptyList())["focus"]!!.jsonArray).isEmpty()
   }
 
-  /** The in-process compile is opt-in; by default the daemon is never asked. */
+  /** On unless `COMPOSE_PREVIEW_COMPILE_IN_PROCESS` says otherwise. */
   @Test
-  fun `the in-process compile is off unless enabled`() {
+  fun `the in-process compile is on by default and the environment can turn it off`() {
+    val env = DaemonMcpServer.COMPILE_IN_PROCESS_ENV
+    assertThat(DaemonMcpServer.compileInProcessEnabled(emptyMap())).isTrue()
+    for (on in listOf("1", "true", "")) {
+      assertThat(DaemonMcpServer.compileInProcessEnabled(mapOf(env to on))).isTrue()
+    }
+    for (off in listOf("0", "false", "OFF", " 0 ")) {
+      assertThat(DaemonMcpServer.compileInProcessEnabled(mapOf(env to off))).isFalse()
+    }
+  }
+
+  /** Turned off, the daemon is never asked and every edit compiles through Gradle. */
+  @Test
+  fun `a disabled in-process compile leaves every edit to Gradle`() {
     lateinit var fixture: Fixture
     start(fakeCompiler { fixture.classes }, compileInProcess = false)
     fixture = fixture()

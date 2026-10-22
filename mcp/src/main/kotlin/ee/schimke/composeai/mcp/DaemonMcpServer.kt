@@ -7,6 +7,7 @@ import ee.schimke.composeai.daemon.protocol.AmbientOverride
 import ee.schimke.composeai.daemon.protocol.ChangeType
 import ee.schimke.composeai.daemon.protocol.CompileResultKind
 import ee.schimke.composeai.daemon.protocol.CompileSourcesParams
+import ee.schimke.composeai.daemon.protocol.DaemonLaunchDescriptor
 import ee.schimke.composeai.daemon.protocol.FileKind
 import ee.schimke.composeai.daemon.protocol.FocusOverride
 import ee.schimke.composeai.daemon.protocol.KeyboardOverride
@@ -1099,13 +1100,16 @@ class DaemonMcpServer(
    * whether or not `notify_file_changed` was called (host edit tools never call it). A stat pass
    * over [SourceTree]'s cache.
    */
-  private fun detectSourceChanges(daemon: SupervisedDaemon) {
+  private fun detectSourceChanges(daemon: SupervisedDaemon, focused: Boolean = true) {
     if (sourceCompiler == null) return
     val root = supervisor.project(daemon.workspaceId)?.path ?: return
     val addr = DaemonAddr(daemon.workspaceId, daemon.modulePath)
-    val tree = sourceTrees.computeIfAbsent(daemon.workspaceId) { SourceTree(root) }
+    val tree =
+      sourceTrees.computeIfAbsent(daemon.workspaceId) {
+        SourceTree(root, declared = { declaredModules(root) })
+      }
     val refresh = runCatching {
-      tree.refresh()
+      tree.refresh(if (focused) sourceFocus[daemon.workspaceId] else null)
     }
       .getOrElse {
         return
@@ -1119,6 +1123,29 @@ class DaemonMcpServer(
     pendingSources.computeIfAbsent(addr) { ConcurrentHashMap.newKeySet() }.addAll(changed)
     pendingTrigger.putIfAbsent(addr, TRIGGER_DETECTED)
   }
+
+  /**
+   * Paths `source_watch` narrowed each workspace's pre-render source check to. The background poll
+   * still checks the whole tree, so an edit outside the focus is found, just later.
+   */
+  private val sourceFocus = ConcurrentHashMap<WorkspaceId, SourceTree.Focus>()
+
+  /**
+   * The modules under [root] whose launch descriptor publishes a `sourceWatch`: where the build
+   * says each is built from, which [SourceTree] watches in place of the `src/` convention.
+   */
+  private fun declaredModules(root: File): List<SourceTree.DeclaredModule> =
+    DescriptorProvider.indexDescriptorsByModulePath(root).values.mapNotNull { file ->
+      val descriptor =
+        runCatching { DaemonLaunchDescriptor.parse(file.readText()) }.getOrNull()
+          ?: return@mapNotNull null
+      val watch = descriptor.sourceWatch ?: return@mapNotNull null
+      SourceTree.DeclaredModule(
+        moduleDir = File(descriptor.workingDirectory),
+        sourceDirs = watch.sourceDirs.map(::File),
+        resourceDirs = watch.resourceDirs.map(::File),
+      )
+    }
 
   /** One line for a render result when [uri]'s module may be showing code older than its source. */
   private fun staleRenderLine(uri: PreviewUri): String? =
@@ -1155,6 +1182,8 @@ class DaemonMcpServer(
       freshnessMetrics.pollingCycles.incrementAndGet()
       supervisor.listProjects().forEach { project ->
         project.daemons.forEach { (modulePath, daemon) ->
+          // The whole source tree, focus or not: what `source_watch` leaves out is found here.
+          runCatching { detectSourceChanges(daemon, focused = false) }
           // Manifest first: a `composePreviewDiscover` re-run rewrites `previews.json`, and picking
           // it up here makes new preview ids renderable without restarting the server.
           runCatching { reloadManifestIfChanged(daemon) }
@@ -2119,6 +2148,24 @@ class DaemonMcpServer(
           ),
       ),
       ToolDef(
+        name = "source_watch",
+        description =
+          "Optional. Narrow the source check that runs before every render to the files you are about to edit, for a large build. Call with no `paths` to see the starting list: each module's source and resource directories as its build published them (or the `src/` convention where it published none). `paths` entries are files, directories or globs (absolute, or relative to the project root); `[]` clears the focus. Files outside the focus are still checked in the background, so they are never missed, only noticed later.",
+        inputSchema =
+          parseSchema(
+            """
+            {
+              "type": "object",
+              "properties": {
+                "workspaceId": {"type": "string", "description": "Defaults to the only registered project."},
+                "paths": {"type": "array", "items": {"type": "string"}}
+              }
+            }
+            """
+              .trimIndent()
+          ),
+      ),
+      ToolDef(
         name = "list_watches",
         description = "List the watches registered by the current session.",
         inputSchema = parseSchema("""{"type":"object","properties":{}}"""),
@@ -2732,6 +2779,7 @@ class DaemonMcpServer(
       "watch" -> toolWatch(session, args)
       "unwatch" -> toolUnwatch(session, args)
       "list_watches" -> toolListWatches(session)
+      "source_watch" -> toolSourceWatch(args)
       "notify_file_changed" -> toolNotifyFileChanged(args)
       "set_visible" -> toolSetVisible(args)
       "set_focus" -> toolSetFocus(args)
@@ -5663,6 +5711,53 @@ class DaemonMcpServer(
       project.daemons.values.forEach { watchPropagator.recompute(it) }
     }
     return textCallToolResult("unwatched $removed entries")
+  }
+
+  private fun toolSourceWatch(args: JsonObject): CallToolResult {
+    val projects = supervisor.listProjects()
+    val project =
+      args["workspaceId"]?.jsonPrimitive?.contentOrNull?.let { supervisor.project(WorkspaceId(it)) }
+        ?: projects.singleOrNull()
+        ?: return errorCallToolResult(
+          "source_watch: pass 'workspaceId' (list_projects shows them); " +
+            "${projects.size} projects are registered"
+        )
+    val paths =
+      (args["paths"] as? kotlinx.serialization.json.JsonArray)?.map { it.jsonPrimitive.content }
+    if (paths != null) {
+      val focus = SourceTree.Focus(paths, project.path)
+      if (focus.isEmpty) sourceFocus.remove(project.workspaceId)
+      else sourceFocus[project.workspaceId] = focus
+    }
+    val declared = declaredModules(project.path)
+    val payload = buildJsonObject {
+      put("workspaceId", project.workspaceId.value)
+      putJsonArray("focus") {
+        if (sourceFocus.containsKey(project.workspaceId))
+          paths.orEmpty().forEach { add(JsonPrimitive(it)) }
+      }
+      putJsonArray("published") {
+        declared.forEach { module ->
+          add(
+            buildJsonObject {
+              put("moduleDir", module.moduleDir.path)
+              putJsonArray("sourceDirs") {
+                module.sourceDirs.forEach { add(JsonPrimitive(it.path)) }
+              }
+              putJsonArray("resourceDirs") {
+                module.resourceDirs.forEach { add(JsonPrimitive(it.path)) }
+              }
+            }
+          )
+        }
+      }
+      put(
+        "conventions",
+        "modules without a published list are watched under their src/ (*.kt, *.java, res/, " +
+          "composeResources/)",
+      )
+    }
+    return CallToolResult(content = listOf(ContentBlock.Text(payload.toString())))
   }
 
   private fun toolListWatches(session: Session): CallToolResult {

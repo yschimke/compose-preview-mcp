@@ -24,7 +24,63 @@ import java.util.concurrent.TimeUnit
  * edit made before the server first looked would otherwise become the baseline and render stale
  * (the first-render-after-edit case the per-file probe missed).
  */
-class SourceTree(val root: File, private val budgetMs: Long = DEFAULT_BUDGET_MS) {
+class SourceTree(
+  val root: File,
+  private val budgetMs: Long = DEFAULT_BUDGET_MS,
+  /**
+   * Modules whose build published where they're built from (the launch descriptor's `sourceWatch`),
+   * read on the first walk. Each replaces the `src/` convention for its module, and one the
+   * convention can't find (a Bazel or Buck2 target) is watched all the same.
+   */
+  private val declared: () -> List<DeclaredModule> = { emptyList() },
+) {
+
+  /** A module's published source and resource directories; see [SourceTree.declared]. */
+  data class DeclaredModule(
+    val moduleDir: File,
+    val sourceDirs: List<File>,
+    val resourceDirs: List<File>,
+  )
+
+  /**
+   * Paths an agent said it will edit: a [refresh] with a focus checks only what's in (or leads to)
+   * them, and the rest waits for an unfocused one. Each entry is a file or directory prefix, or a
+   * glob (`*`, `**`, `?`) matched against absolute paths.
+   */
+  class Focus(entries: List<String>, root: File) {
+    private val prefixes = mutableListOf<String>()
+    private val globs = mutableListOf<java.nio.file.PathMatcher>()
+
+    init {
+      for (raw in entries.map { it.trim() }.filter { it.isNotEmpty() }) {
+        val absolute = if (File(raw).isAbsolute) raw else File(root, raw).path
+        if (raw.any { it == '*' || it == '?' }) {
+          globs += java.nio.file.FileSystems.getDefault().getPathMatcher("glob:$absolute")
+        } else {
+          prefixes += File(absolute).normalize().path
+        }
+      }
+    }
+
+    val isEmpty: Boolean
+      get() = prefixes.isEmpty() && globs.isEmpty()
+
+    /** Whether [file] is inside the focus. */
+    fun covers(file: File): Boolean {
+      val path = file.path
+      return prefixes.any { path == it || path.startsWith("$it${File.separator}") } ||
+        globs.any { it.matches(file.toPath()) }
+    }
+
+    /** Whether [dir] holds focused files or leads to them, so its listing matters. */
+    fun reaches(dir: File): Boolean {
+      val path = dir.path
+      return covers(dir) ||
+        prefixes.any { it.startsWith("$path${File.separator}") } ||
+        // A glob may match anywhere below: keep every directory under its literal head.
+        globs.isNotEmpty()
+    }
+  }
 
   data class Refresh(
     /** Files that changed since the previous refresh, in the order they were seen. */
@@ -55,10 +111,19 @@ class SourceTree(val root: File, private val budgetMs: Long = DEFAULT_BUDGET_MS)
   /** Which [generation] each changed file was last seen changing in. */
   private val changedAt = LinkedHashMap<File, Long>()
 
+  /** Root directories whose files all count as sources: published resource directories. */
+  private val resourceRoots = mutableListOf<String>()
+
+  /**
+   * Stats the cached entries for changes. With a [focus], only entries inside it (and directories
+   * that lead to it) are checked, so a large build pays for what the agent is editing; an unfocused
+   * refresh later checks everything else. The first walk always covers the whole tree.
+   */
   @Synchronized
-  fun refresh(): Refresh {
+  fun refresh(focus: Focus? = null): Refresh {
     val startedAt = System.nanoTime()
     if (!initialized) return initialWalk(startedAt)
+    val scoped = focus?.takeUnless { it.isEmpty }
     val deadline = startedAt + TimeUnit.MILLISECONDS.toNanos(budgetMs)
     val changed = LinkedHashSet<File>()
     var statted = 0
@@ -67,6 +132,7 @@ class SourceTree(val root: File, private val budgetMs: Long = DEFAULT_BUDGET_MS)
     // Directories first: a moved directory mtime is how additions, deletions and atomic renames
     // show up, and a re-list is the only walk an unchanged tree never does.
     for ((dir, known) in dirs.entries.toList()) {
+      if (scoped != null && !scoped.reaches(dir)) continue
       statted++
       val now = dir.lastModified()
       if (now == known) continue
@@ -93,8 +159,21 @@ class SourceTree(val root: File, private val budgetMs: Long = DEFAULT_BUDGET_MS)
         .filter { it.isDirectory && watched(dir, it) && it !in dirs }
         .forEach { sub -> listed += register(sub) { changed += it } }
     }
-    val entries = files.entries.toList()
-    if (entries.isNotEmpty()) {
+    val entries =
+      if (scoped == null) files.entries.toList() else files.entries.filter { scoped.covers(it.key) }
+    if (scoped != null) {
+      for ((file, known) in entries) {
+        statted++
+        val now = stamp(file)
+        if (now.modifiedMs == 0L) {
+          files.remove(file)
+          changed += file
+        } else if (now != known) {
+          files[file] = now
+          changed += file
+        }
+      }
+    } else if (entries.isNotEmpty()) {
       if (fileCursor >= entries.size) fileCursor = 0
       var index = fileCursor
       var checked = 0
@@ -139,7 +218,7 @@ class SourceTree(val root: File, private val budgetMs: Long = DEFAULT_BUDGET_MS)
 
   private fun initialWalk(startedAt: Long): Refresh {
     var listed = 0
-    sourceRoots().forEach { src -> listed += register(src) {} }
+    watchRoots().forEach { src -> listed += register(src) {} }
     initialized = true
     val compiledAt = newestClassOutput()
     val pending =
@@ -177,6 +256,29 @@ class SourceTree(val root: File, private val budgetMs: Long = DEFAULT_BUDGET_MS)
       }
     }
     return listed
+  }
+
+  /**
+   * What the first walk registers: each published module's source and resource directories, and the
+   * `src/` of every module that published none.
+   */
+  private fun watchRoots(): List<File> {
+    val published = runCatching(declared).getOrDefault(emptyList())
+    val publishedModules = published.map { it.moduleDir.absoluteFile.normalize() }.toSet()
+    resourceRoots.clear()
+    published
+      .flatMap { it.resourceDirs }
+      .forEach { resourceRoots += it.absoluteFile.normalize().path }
+    val roots = LinkedHashSet<File>()
+    sourceRoots()
+      .filter { it.parentFile.absoluteFile.normalize() !in publishedModules }
+      .forEach { roots += it }
+    published
+      .flatMap { it.sourceDirs + it.resourceDirs }
+      .map { it.absoluteFile.normalize() }
+      .filter { it.isDirectory }
+      .forEach { roots += it }
+    return roots.toList()
   }
 
   /**
@@ -225,6 +327,7 @@ class SourceTree(val root: File, private val budgetMs: Long = DEFAULT_BUDGET_MS)
 
   private fun isSource(file: File): Boolean {
     if (file.extension in SOURCE_EXTENSIONS) return true
+    if (resourceRoots.any { file.path.startsWith("$it${File.separator}") }) return true
     val path = file.invariantSeparatorsPath
     return RESOURCE_SEGMENTS.any { path.contains(it) }
   }

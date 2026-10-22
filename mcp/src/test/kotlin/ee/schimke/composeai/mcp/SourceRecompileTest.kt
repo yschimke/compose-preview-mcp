@@ -205,6 +205,33 @@ class SourceRecompileTest {
     assertThat(fresh.work.toString()).contains(DaemonMcpServer.IN_PROCESS_COMPILE_TASK)
   }
 
+  /**
+   * The daemon's warm compiler compiles only what the change set names, and defers every compile
+   * without one to the Build Tools API, so the edited file has to arrive as `changes.modified`.
+   */
+  @Test
+  fun `an in-process compile names the edited file in its change set`() {
+    lateinit var fixture: Fixture
+    start(fakeCompiler { fixture.classes })
+    fixture = fixture()
+    val params = CopyOnWriteArrayList<kotlinx.serialization.json.JsonObject?>()
+    daemon.onCompileSourcesParams = { params += it }
+    daemon.onCompileSources = { sources ->
+      fixture.classes.writeText(File(sources.single()).readText())
+      CompileSourcesResult(result = CompileResultKind.OK, durationMs = 5)
+    }
+    render(fixture)
+    params.clear()
+
+    edit(fixture, """@Preview fun Header() { Text("Change set") }""")
+    assertThat(render(fixture).bytes).contains("Change set")
+
+    val changes = params.single()!!["changes"]!!.jsonObject
+    assertThat(changes["modified"]!!.jsonArray.map { it.jsonPrimitive.content })
+      .containsExactly(fixture.source.absolutePath)
+    assertThat(changes["removed"]?.jsonArray.orEmpty()).isEmpty()
+  }
+
   /** On unless `COMPOSE_PREVIEW_COMPILE_IN_PROCESS` says otherwise. */
   @Test
   fun `the in-process compile is on by default and the environment can turn it off`() {

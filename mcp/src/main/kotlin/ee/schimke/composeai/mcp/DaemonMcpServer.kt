@@ -23,6 +23,7 @@ import ee.schimke.composeai.daemon.protocol.RemoteComposeOverride
 import ee.schimke.composeai.daemon.protocol.RenderTier
 import ee.schimke.composeai.daemon.protocol.SemanticsDelta
 import ee.schimke.composeai.daemon.protocol.SemanticsInputTarget
+import ee.schimke.composeai.daemon.protocol.SourceChangeSet
 import ee.schimke.composeai.daemon.protocol.UiMode
 import ee.schimke.composeai.daemon.protocol.WallpaperOverride
 import ee.schimke.composeai.data.layoutinspector.ComposeSemanticsNode
@@ -1039,6 +1040,16 @@ class DaemonMcpServer(
   }
 
   /**
+   * The change set for an in-process compile of the edited [sources]. Without one the daemon cannot
+   * tell an edit from a full build, so its warm compiler always defers to the slower Build Tools
+   * API compile. A path that no longer exists is reported as removed.
+   */
+  private fun changeSetOf(sources: List<String>): SourceChangeSet {
+    val (present, removed) = sources.partition { File(it).exists() }
+    return SourceChangeSet(modified = present, removed = removed)
+  }
+
+  /**
    * Asks the daemon to compile [sources] in process (Kotlin Build Tools API) into the directory its
    * classloader loads, instead of Gradle. Only with [compileInProcess].
    *
@@ -1057,7 +1068,7 @@ class DaemonMcpServer(
     val startedAt = System.nanoTime()
     val result = runCatching {
       client.compileSources(
-        CompileSourcesParams(sources = sources),
+        CompileSourcesParams(sources = sources, changes = changeSetOf(sources)),
         timeout = IN_PROCESS_COMPILE_TIMEOUT,
       )
     }

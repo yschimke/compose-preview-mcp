@@ -101,6 +101,11 @@ class SourceTree(
   private val dirs = LinkedHashMap<File, Long>()
   private val files = LinkedHashMap<File, Stamp>()
   private var initialized = false
+
+  private data class Module(val dir: File, val published: Boolean)
+
+  /** Each watched root's path, with the module it belongs to; set by the first walk. */
+  private val moduleRoots = mutableListOf<Pair<String, Module>>()
   private var fileCursor = 0
 
   /** Bumped on every refresh that saw a change; callers compare it with what they compiled. */
@@ -211,6 +216,38 @@ class SourceTree(
     )
   }
 
+  /**
+   * The module directory [file] belongs to: the module whose watched root holds it, the deepest
+   * when roots nest. `null` before the first walk, or for a file outside every module.
+   */
+  @Synchronized
+  fun moduleOf(file: File): File? {
+    val path = file.absoluteFile.normalize().path
+    return moduleRoots
+      .filter { (root, _) -> path.startsWith("$root${File.separator}") }
+      .maxByOrNull { (root, _) -> root.length }
+      ?.second
+      ?.dir
+  }
+
+  /** Whether [moduleDir] is a module this tree watches. */
+  @Synchronized
+  fun knowsModule(moduleDir: File): Boolean = moduleRoots.any { (_, module) ->
+    module.dir == moduleDir.absoluteFile.normalize()
+  }
+
+  /**
+   * Every Kotlin source of [moduleDir], when its build published where it is built from, else
+   * `null`. A `src/` found by convention also holds other targets' and variants' source sets
+   * (`iosMain`, `release`), which no single compilation reads, so it has no answer here.
+   */
+  @Synchronized
+  fun kotlinSourcesOf(moduleDir: File): List<File>? {
+    val dir = moduleDir.absoluteFile.normalize()
+    if (moduleRoots.none { (_, module) -> module.dir == dir && module.published }) return null
+    return files.keys.filter { it.extension == "kt" && moduleOf(it) == dir }.sorted()
+  }
+
   /** Files that changed after [generation], for the compile's source list. */
   @Synchronized
   fun changedSince(generation: Long): List<File> =
@@ -270,14 +307,23 @@ class SourceTree(
       .flatMap { it.resourceDirs }
       .forEach { resourceRoots += it.absoluteFile.normalize().path }
     val roots = LinkedHashSet<File>()
+    moduleRoots.clear()
     sourceRoots()
       .filter { it.parentFile.absoluteFile.normalize() !in publishedModules }
-      .forEach { roots += it }
-    published
-      .flatMap { it.sourceDirs + it.resourceDirs }
-      .map { it.absoluteFile.normalize() }
-      .filter { it.isDirectory }
-      .forEach { roots += it }
+      .forEach { src ->
+        roots += src
+        val module = Module(src.parentFile.absoluteFile.normalize(), published = false)
+        moduleRoots += src.absoluteFile.normalize().path to module
+      }
+    published.forEach { declared ->
+      val module = Module(declared.moduleDir.absoluteFile.normalize(), published = true)
+      (declared.sourceDirs + declared.resourceDirs)
+        .map { it.absoluteFile.normalize() }
+        .forEach { dir ->
+          moduleRoots += dir.path to module
+          if (dir.isDirectory) roots += dir
+        }
+    }
     return roots.toList()
   }
 

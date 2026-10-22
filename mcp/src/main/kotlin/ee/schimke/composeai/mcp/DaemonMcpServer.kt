@@ -416,6 +416,16 @@ class DaemonMcpServer(
     }
 
   /**
+   * Waits out each daemon's `compileWarmUp`, seconds each. Two threads, so a workspace of many
+   * modules does not warm them all at once against the CPU its renders need; long-lived, since a
+   * thread that writes a request and exits breaks a piped transport's reader.
+   */
+  private val compileWarmUpExecutor: java.util.concurrent.ExecutorService =
+    java.util.concurrent.Executors.newFixedThreadPool(2) { r ->
+      Thread(r, "mcp-compile-warm-up").apply { isDaemon = true }
+    }
+
+  /**
    * Worker for follow-up render dispatches. `renderFinished` runs on the daemon client's reader
    * thread, and a synchronous `renderNow` from there would deadlock waiting on that same thread.
    */
@@ -537,6 +547,7 @@ class DaemonMcpServer(
   fun shutdown() {
     runCatching { freshnessExecutor.shutdownNow() }
     runCatching { renderDispatchExecutor.shutdownNow() }
+    runCatching { compileWarmUpExecutor.shutdownNow() }
     runCatching { budgetedCallScope.cancel() }
     runCatching { activeDesignRoots.close() }
     runCatching { rcViewer.shutdown() }
@@ -846,7 +857,49 @@ class DaemonMcpServer(
         if (work.compile != null) {
           System.err.println("compose-preview-mcp: edit cycle ${uri.previewFqn}: ${work.toJson()}")
         }
+        // After the first image, so warming does not compete with it.
+        startCompileWarmUp(daemon)
         outcome
+      }
+    }
+  }
+
+  /** Daemon clients asked to warm their in-process compiler; each is asked once. */
+  private val compileWarmUpAsked: MutableSet<Any> =
+    java.util.Collections.synchronizedSet(
+      java.util.Collections.newSetFromMap(java.util.WeakHashMap())
+    )
+
+  /**
+   * Asks [daemon] to warm its in-process compiler in the background (`compileWarmUp`), once per
+   * daemon client. Without it the first in-process compile pays seconds for a cold compiler (5.7 s
+   * against 0.3 s on a one-preview desktop module). An edit made before the daemon answers still
+   * compiles in process, and the daemon has it wait for the warm-up: measured faster than compiling
+   * it through Gradle meanwhile, which competes with the warm-up for the CPU (5.2 s became 9.0 s)
+   * and rewrites the classes the warmed state was built from.
+   */
+  private fun startCompileWarmUp(daemon: SupervisedDaemon) {
+    if (!compileInProcess || sourceCompiler == null) return
+    val client = daemon.allClients().firstOrNull() ?: return
+    if (inProcessDeclined.contains(client) || !compileWarmUpAsked.add(client)) return
+    runCatching {
+      compileWarmUpExecutor.execute {
+        val outcome = runCatching {
+          client.compileWarmUp(timeout = COMPILE_WARM_UP_TIMEOUT)
+        }
+          .fold(
+            { result ->
+              when {
+                result == null -> "the daemon predates compileWarmUp"
+                result.ready -> "ready in ${result.durationMs} ms"
+                else -> "nothing to warm (${result.message})"
+              }
+            },
+            { "failed: ${it.message ?: it.javaClass.simpleName}" },
+          )
+        System.err.println(
+          "compose-preview-mcp: compile warm-up for ${daemon.modulePath}: $outcome"
+        )
       }
     }
   }
@@ -8012,6 +8065,9 @@ class DaemonMcpServer(
       environment[COMPILE_IN_PROCESS_ENV]?.trim()?.lowercase() !in setOf("0", "false", "off")
 
     private val IN_PROCESS_COMPILE_TIMEOUT = 120.seconds
+
+    /** How long a daemon may take to warm its compiler; it only logs if it takes longer. */
+    private val COMPILE_WARM_UP_TIMEOUT = 300.seconds
 
     const val MCP_APP_VIEWER_URI: String = "ui://compose-preview/viewer"
     const val MCP_APP_MIME_TYPE: String = "text/html;profile=mcp-app"

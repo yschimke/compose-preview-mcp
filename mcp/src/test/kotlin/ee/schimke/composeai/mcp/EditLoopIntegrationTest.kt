@@ -144,8 +144,11 @@ class EditLoopIntegrationTest {
           .isEqualTo(
             if (notifies) DaemonMcpServer.TRIGGER_NOTIFY else DaemonMcpServer.TRIGGER_DETECTED
           )
-        assertThat(compile.initScript).isTrue()
-        assertThat(compile.taskPaths).contains(":app:${GradleSourceCompiler.TASK}")
+        // The daemon compiles the edit itself by default (#55); Gradle runs only when it can't. A
+        // fallback here means the in-process path quietly stopped working, as it did when one
+        // compile error switched it off for good (#57).
+        assertThat(compile.task).isEqualTo(DaemonMcpServer.IN_PROCESS_COMPILE_TASK)
+        assertThat(compile.initScript).isFalse()
         assertThat(compile.disallowedTasks(allowedModules = setOf(":app"))).isEmpty()
 
         // The daemon's own trace of the render (#1181): every warm render reports what it ran,

@@ -188,6 +188,9 @@ class FakeDaemon : DaemonSpawn {
     ((List<String>) -> ee.schimke.composeai.daemon.protocol.CompileSourcesResult)? =
     null
 
+  /** Captures each `compileSources` params object, e.g. to assert its `changes`. */
+  @Volatile var onCompileSourcesParams: (JsonObject?) -> Unit = {}
+
   /**
    * Outcome the fake's `data/fetch` returns; mirrors `DataProductRegistry.Outcome` without
    * depending on it.
@@ -688,6 +691,7 @@ class FakeDaemon : DaemonSpawn {
         )
       }
       "compileSources" -> {
+        onCompileSourcesParams(params)
         val handler = onCompileSources
         if (handler == null) {
           // A daemon without the in-process compiler, as before compileSources existed.

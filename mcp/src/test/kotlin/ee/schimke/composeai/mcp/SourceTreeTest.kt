@@ -372,4 +372,73 @@ class SourceTreeTest {
     assertThat(tree.refresh().changed.map { it.canonicalFile })
       .containsExactly(debugOnly.canonicalFile)
   }
+
+  /**
+   * #80: the root module's directory holds every subproject's, so a subproject built after an edit
+   * to the root module used to make that edit look built.
+   */
+  @Test
+  fun `a nested module's classes do not count for the module around it`() {
+    val root = createTempDirectory("cp-source-tree-nested").toFile()
+    val rootSource = File(root, "src/main/kotlin/App.kt").edit("fun app() {}")
+    val rootClasses = File(root, "build/tmp/kotlin-classes/debug/AppKt.class").edit("")
+    val libClasses = File(root, "lib/build/tmp/kotlin-classes/debug/LibKt.class").edit("")
+    val libSource = File(root, "lib/src/main/kotlin/Lib.kt").edit("fun lib() {}")
+    rootClasses.setLastModified(rootSource.lastModified() - 60_000)
+    libClasses.setLastModified(rootSource.lastModified() + 60_000)
+    libSource.setLastModified(libClasses.lastModified() - 60_000)
+    val lib = File(root, "lib")
+    val tree =
+      SourceTree(root, budgetMs = 10_000) {
+        listOf(
+          SourceTree.DeclaredModule(
+            root,
+            listOf(rootSource.parentFile),
+            emptyList(),
+            ":",
+            classOutputs = listOf(rootClasses.parentFile, libClasses.parentFile),
+          ),
+          SourceTree.DeclaredModule(
+            lib,
+            listOf(libSource.parentFile),
+            emptyList(),
+            ":lib",
+            classOutputs = listOf(libClasses.parentFile),
+          ),
+        )
+      }
+
+    assertThat(tree.refresh().changed.map { it.canonicalFile })
+      .containsExactly(rootSource.canonicalFile)
+  }
+
+  /**
+   * #80: a Bazel target's class dirs are its whole transitive runtime classpath, so a dependency
+   * built after an edit used to make it look built. Its manifest, which `prepare` rewrites, says.
+   */
+  @Test
+  fun `a Bazel target's dependency jars do not count as its build`() {
+    val root = createTempDirectory("cp-source-tree-bazel-deps").toFile()
+    val screen = File(root, "a/ScreenA.kt").edit("fun a() {}")
+    val manifest = File(root, ".compose-preview/outputs/a/previews.json").edit("{}")
+    val dependency = File(root, "bazel-out/k8/bin/b/b.jar").edit("")
+    manifest.setLastModified(screen.lastModified() - 60_000)
+    dependency.setLastModified(screen.lastModified() + 60_000)
+    val tree =
+      SourceTree(root, budgetMs = 10_000) {
+        listOf(
+          SourceTree.DeclaredModule(
+            root,
+            listOf(screen.parentFile),
+            emptyList(),
+            "//a:a",
+            outputs = listOf(manifest),
+            classOutputs = listOf(dependency),
+          )
+        )
+      }
+
+    assertThat(tree.refresh().changed.map { it.canonicalFile })
+      .containsExactly(screen.canonicalFile)
+  }
 }

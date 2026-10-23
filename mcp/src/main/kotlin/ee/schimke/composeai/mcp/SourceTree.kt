@@ -444,16 +444,25 @@ class SourceTree(
   private fun watchRoots(): List<File> {
     val published = runCatching(declared).getOrDefault(emptyList())
     val publishedModules = published.map { it.moduleDir.absoluteFile.normalize() }.toSet()
+    val conventionRoots = sourceRoots()
+    // Every module directory the tree knows, so a module's outputs exclude its nested modules'.
+    val moduleDirs =
+      publishedModules + conventionRoots.map { it.parentFile.absoluteFile.normalize() }
     buildFileOwners.clear()
     declaredOutputs.clear()
     published.forEach { declared ->
       val dir = declared.moduleDir.absoluteFile.normalize()
-      // A dependency module's classes say nothing about this one's edits; a Bazel target's
-      // outputs all live in the output tree, so none is under its directory, the workspace root.
+      val nested = moduleDirs.filter { it != dir && it.startsWith(dir) }
+      // Only the module's own classes say it was built: a dependency's, under another module's
+      // directory (a nested one, for `:` or `:feature`), say nothing about this one's edits. A
+      // Bazel or Buck2 target's class dirs are its whole transitive runtime classpath in the
+      // output tree, so none is its own; `prepare` rewrites its manifest, which says instead.
       val classOutputs =
-        declared.classOutputs
-          .map { it.absoluteFile.normalize() }
-          .filter { dir == root.absoluteFile.normalize() || it.startsWith(dir) }
+        if (declared.modulePath?.let(PreviewUri::isBazelLabel) == true) emptyList()
+        else
+          declared.classOutputs
+            .map { it.absoluteFile.normalize() }
+            .filter { output -> output.startsWith(dir) && nested.none { output.startsWith(it) } }
       declaredOutputs[declared.modulePath ?: dir.path] = declared.outputs to classOutputs
     }
     resourceRoots.clear()
@@ -462,7 +471,7 @@ class SourceTree(
       .forEach { resourceRoots += it.absoluteFile.normalize().path }
     val roots = LinkedHashSet<File>()
     moduleRoots.clear()
-    sourceRoots()
+    conventionRoots
       .filter { it.parentFile.absoluteFile.normalize() !in publishedModules }
       .forEach { src ->
         roots += src

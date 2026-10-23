@@ -277,4 +277,39 @@ class SourceTreeTest {
     assertThat(tree.kotlinSourcesOf(":android")!!.map { it.canonicalFile })
       .containsExactly(common.canonicalFile, android.canonicalFile)
   }
+
+  /** #74 review: one module's later build must not hide another module's unbuilt edit. */
+  @Test
+  fun `each source is compared with its own module's output`() {
+    val root = createTempDirectory("cp-source-tree-own-outputs").toFile()
+    val a = File(root, "a/A.kt").edit("fun a() {}")
+    val b = File(root, "b/B.kt").edit("fun b() {}")
+    val aManifest = File(root, "out/a/previews.json").edit("{}")
+    val bManifest = File(root, "out/b/previews.json").edit("{}")
+    // A was edited after A was built, then B was built.
+    a.setLastModified(aManifest.lastModified() + 10_000)
+    bManifest.setLastModified(aManifest.lastModified() + 20_000)
+    b.setLastModified(aManifest.lastModified())
+    val tree =
+      SourceTree(root, budgetMs = 10_000) {
+        listOf(
+          SourceTree.DeclaredModule(
+            root,
+            listOf(a.parentFile),
+            emptyList(),
+            "//a:a",
+            outputs = listOf(aManifest),
+          ),
+          SourceTree.DeclaredModule(
+            root,
+            listOf(b.parentFile),
+            emptyList(),
+            "//b:b",
+            outputs = listOf(bManifest),
+          ),
+        )
+      }
+
+    assertThat(tree.refresh().changed.map { it.canonicalFile }).containsExactly(a.canonicalFile)
+  }
 }

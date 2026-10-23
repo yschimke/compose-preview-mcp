@@ -152,8 +152,8 @@ class SourceTree(
   /** Each published build file's path, with the modules that published it. */
   private val buildFileOwners = LinkedHashMap<String, MutableSet<Module>>()
 
-  /** Every published module's [DeclaredModule.outputs]. */
-  private val declaredOutputs = mutableListOf<File>()
+  /** Each published module's [DeclaredModule.outputs], by module key. */
+  private val declaredOutputs = LinkedHashMap<String, List<File>>()
 
   /** Root directories whose files all count as sources: published resource directories. */
   private val resourceRoots = mutableListOf<String>()
@@ -339,10 +339,12 @@ class SourceTree(
     registerBuildFiles {}
     modulesScannedAt = startedAt
     initialized = true
-    val compiledAt = newestClassOutput()
+    val built = builtAt()
     val pending =
-      if (compiledAt == null) emptyList()
-      else files.filter { (_, stamp) -> stamp.modifiedMs > compiledAt }.keys.toList()
+      files
+        .filter { (file, stamp) -> built(file)?.let { stamp.modifiedMs > it } == true }
+        .keys
+        .toList()
     if (pending.isNotEmpty()) {
       generation++
       pending.forEach { changedAt[it] = generation }
@@ -370,9 +372,9 @@ class SourceTree(
     val fresh = roots.filter { it !in dirs }
     val freshBuildFiles = buildFileOwners.keys.map(::File).filter { it !in files && it.isFile }
     if (fresh.isEmpty() && freshBuildFiles.isEmpty()) return 0
-    val compiledAt = newestClassOutput()
+    val built = builtAt()
     val report = { file: File ->
-      if (compiledAt != null && file.lastModified() > compiledAt) onChanged(file)
+      if (built(file)?.let { file.lastModified() > it } == true) onChanged(file)
     }
     var listed = 0
     fresh.forEach { dir -> listed += register(dir, report) }
@@ -439,7 +441,10 @@ class SourceTree(
     val publishedModules = published.map { it.moduleDir.absoluteFile.normalize() }.toSet()
     buildFileOwners.clear()
     declaredOutputs.clear()
-    published.forEach { declared -> declaredOutputs += declared.outputs }
+    published.forEach { declared ->
+      declaredOutputs[declared.modulePath ?: declared.moduleDir.absoluteFile.normalize().path] =
+        declared.outputs
+    }
     resourceRoots.clear()
     published
       .flatMap { it.resourceDirs }
@@ -497,11 +502,24 @@ class SourceTree(
   }
 
   /**
-   * The time the build last wrote anything this tree knows of: Gradle class outputs found by
-   * convention, and each published module's [DeclaredModule.outputs].
+   * When the build last built each file, as a function of the file: the oldest of its owning
+   * modules' latest [DeclaredModule.outputs], so an edit newer than any owner's last build counts
+   * as unbuilt, and one module's later build doesn't hide another's unbuilt edit. A file no
+   * published output covers falls back to the newest Gradle class output the `build/` convention
+   * finds. `null` when neither says.
    */
+  private fun builtAt(): (File) -> Long? {
+    val convention by lazy { newestClassOutput() }
+    val byModule = declaredOutputs.mapValues { (_, outputs) ->
+      outputs.filter(File::isFile).maxOfOrNull(File::lastModified)
+    }
+    return { file ->
+      modulesOfPath(file.path).mapNotNull { byModule[it.key] }.minOrNull() ?: convention
+    }
+  }
+
   private fun newestClassOutput(): Long? {
-    var newest: Long? = declaredOutputs.filter(File::isFile).maxOfOrNull(File::lastModified)
+    var newest: Long? = null
     val moduleDirs = sourceRoots().map { it.parentFile }
     moduleDirs.forEach { module ->
       CLASS_OUTPUTS.map { File(module, it) }

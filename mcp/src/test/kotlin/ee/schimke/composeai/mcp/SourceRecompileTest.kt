@@ -232,6 +232,104 @@ class SourceRecompileTest {
     assertThat(changes["removed"]?.jsonArray.orEmpty()).isEmpty()
   }
 
+  /**
+   * The first in-process compile of a daemon pays seconds for a cold compiler, so the server asks
+   * it to warm up — once, and after the first image, so warming does not compete with it.
+   */
+  @Test
+  fun `the server asks a daemon to warm its compiler once, after the first render`() {
+    lateinit var fixture: Fixture
+    start(fakeCompiler { fixture.classes })
+    fixture = fixture()
+    val asked = java.util.concurrent.atomic.AtomicInteger()
+    val warmedWith = java.util.concurrent.CopyOnWriteArrayList<List<String>>()
+    daemon.onCompileWarmUp = { sources ->
+      asked.incrementAndGet()
+      warmedWith += sources
+      java.util.concurrent.CompletableFuture.completedFuture(warmUpResult(ready = true))
+    }
+    daemon.onCompileSources = { sources ->
+      fixture.classes.writeText(File(sources.single()).readText())
+      CompileSourcesResult(result = CompileResultKind.OK, durationMs = 5)
+    }
+    assertThat(asked.get()).isEqualTo(0)
+    render(fixture)
+    edit(fixture, """@Preview fun Header() { Text("Warm") }""")
+    val fresh = render(fixture)
+
+    assertThat(fresh.bytes).contains("Warm")
+    assertThat(fresh.work.toString()).contains(DaemonMcpServer.IN_PROCESS_COMPILE_TASK)
+    assertThat(asked.get()).isEqualTo(1)
+    // It warms with the rendered preview's own file, the one about to be edited.
+    assertThat(warmedWith.single().map { File(it).canonicalPath })
+      .containsExactly(fixture.source.canonicalPath)
+  }
+
+  /** A daemon with nothing to warm says so at once, and the next edit compiles in process. */
+  @Test
+  fun `a daemon with nothing to warm still compiles the next edit in process`() {
+    lateinit var fixture: Fixture
+    start(fakeCompiler { fixture.classes })
+    fixture = fixture()
+    daemon.onCompileWarmUp = {
+      java.util.concurrent.CompletableFuture.completedFuture(warmUpResult(ready = false))
+    }
+    daemon.onCompileSources = { sources ->
+      fixture.classes.writeText(File(sources.single()).readText())
+      CompileSourcesResult(result = CompileResultKind.OK, durationMs = 5)
+    }
+    render(fixture)
+    val gradleBefore = compiles.size
+
+    edit(fixture, """@Preview fun Header() { Text("Cold") }""")
+    val fresh = render(fixture)
+
+    assertThat(fresh.bytes).contains("Cold")
+    assertThat(fresh.work.toString()).contains(DaemonMcpServer.IN_PROCESS_COMPILE_TASK)
+    assertThat(compiles).hasSize(gradleBefore)
+  }
+
+  /**
+   * An edit made while the daemon warms up still goes to the daemon, which has it wait for the
+   * warm-up; Gradle would compete with the warm-up for the CPU and rewrite its classes.
+   */
+  @Test
+  fun `an edit during the warm-up compiles in process, not through Gradle`() {
+    lateinit var fixture: Fixture
+    start(fakeCompiler { fixture.classes })
+    fixture = fixture()
+    val warmUp =
+      java.util.concurrent.CompletableFuture<
+        ee.schimke.composeai.daemon.protocol.CompileWarmUpResult
+      >()
+    daemon.onCompileWarmUp = { _ -> warmUp }
+    val inProcess = CopyOnWriteArrayList<List<String>>()
+    daemon.onCompileSources = { sources ->
+      inProcess += sources
+      fixture.classes.writeText(File(sources.single()).readText())
+      CompileSourcesResult(result = CompileResultKind.OK, durationMs = 5)
+    }
+    try {
+      render(fixture)
+      val gradleBefore = compiles.size
+
+      edit(fixture, """@Preview fun Header() { Text("While warming") }""")
+      val during = render(fixture)
+
+      assertThat(warmUp.isDone).isFalse()
+      assertThat(during.bytes).contains("While warming")
+      assertThat(inProcess).containsExactly(listOf(fixture.source.absolutePath))
+      assertThat(compiles).hasSize(gradleBefore)
+    } finally {
+      warmUp.complete(warmUpResult(ready = true))
+    }
+  }
+
+  private fun warmUpResult(ready: Boolean) =
+    ee.schimke.composeai.daemon.protocol.CompileWarmUpResult.Builder(ready)
+      .also { if (!ready) it.message = "no warm compiler is bundled for Kotlin 2.4.20" }
+      .build()
+
   /** Writes [moduleDir]'s launch descriptor publishing [sourceDir] as its `sourceWatch`. */
   private fun publishSourceDir(moduleDir: File, modulePath: String, sourceDir: File) {
     File(moduleDir, "build/compose-previews/daemon-launch.json").apply {

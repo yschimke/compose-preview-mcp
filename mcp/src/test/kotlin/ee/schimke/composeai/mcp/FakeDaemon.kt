@@ -188,6 +188,18 @@ class FakeDaemon : DaemonSpawn {
     ((List<String>) -> ee.schimke.composeai.daemon.protocol.CompileSourcesResult)? =
     null
 
+  /**
+   * Answers `compileWarmUp`, given the request's sources, when the future completes, so a test can
+   * hold a warm-up in flight; null answers "method not found" like a daemon that predates the
+   * request.
+   */
+  @Volatile
+  var onCompileWarmUp:
+    ((List<String>) -> java.util.concurrent.CompletableFuture<
+        ee.schimke.composeai.daemon.protocol.CompileWarmUpResult
+      >)? =
+    null
+
   /** Captures each `compileSources` params object, e.g. to assert its `changes`. */
   @Volatile var onCompileSourcesParams: (JsonObject?) -> Unit = {}
 
@@ -689,6 +701,29 @@ class FakeDaemon : DaemonSpawn {
               .build(),
           ),
         )
+      }
+      "compileWarmUp" -> {
+        val handler = onCompileWarmUp
+        if (handler == null) {
+          sendError(id, -32601, "method not found: $method")
+        } else {
+          val sources =
+            json
+              .decodeFromJsonElement(
+                ee.schimke.composeai.daemon.protocol.CompileWarmUpParams.serializer(),
+                params ?: kotlinx.serialization.json.JsonObject(emptyMap()),
+              )
+              .sources
+          handler(sources).thenAccept { result ->
+            sendResponse(
+              id,
+              json.encodeToJsonElement(
+                ee.schimke.composeai.daemon.protocol.CompileWarmUpResult.serializer(),
+                result,
+              ),
+            )
+          }
+        }
       }
       "compileSources" -> {
         onCompileSourcesParams(params)

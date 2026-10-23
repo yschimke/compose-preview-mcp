@@ -1,5 +1,15 @@
 # Changelog
 
+## [4.7.0](https://github.com/yschimke/compose-preview-mcp/compare/v4.6.0...v4.7.0) (2026-10-23)
+
+
+### Bug Fixes
+
+* **deps:** update dependency ee.schimke.composeai:compose-ai-tools-bom to v2.72.0 ([#69](https://github.com/yschimke/compose-preview-mcp/issues/69)) ([f0e61ca](https://github.com/yschimke/compose-preview-mcp/commit/f0e61cac6f2b4a6c13d3b28098fb15f285dd3d7c))
+* **deps:** update dependency ee.schimke.composeai:compose-preview-contracts-bom to v3.39.0 ([#65](https://github.com/yschimke/compose-preview-mcp/issues/65)) ([45ab8cb](https://github.com/yschimke/compose-preview-mcp/commit/45ab8cb426f3fa82a116144f7e06897d98065e70))
+* keep dependency edits and drop superseded source roots ([#70](https://github.com/yschimke/compose-preview-mcp/issues/70)) ([e5e31e2](https://github.com/yschimke/compose-preview-mcp/commit/e5e31e236e046cc200770b5143ff7dd54c5dbde2))
+* key source-watch modules by module path and keep in-process compiles complete ([#68](https://github.com/yschimke/compose-preview-mcp/issues/68)) ([0d89df4](https://github.com/yschimke/compose-preview-mcp/commit/0d89df4494a1a0a91e3bd3da2f4da077cd599e97))
+
 ## [4.6.0](https://github.com/yschimke/compose-preview-mcp/compare/v4.5.0...v4.6.0) (2026-10-23)
 
 

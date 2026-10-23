@@ -333,7 +333,7 @@ class SourceTree(
   private fun rescanModules(onChanged: (File) -> Unit): Int {
     modulesScannedAt = System.nanoTime()
     val roots = watchRoots()
-    prune(roots)
+    prune()
     val fresh = roots.filter { it !in dirs }
     if (fresh.isEmpty()) return 0
     val compiledAt = newestClassOutput()
@@ -348,12 +348,13 @@ class SourceTree(
   }
 
   /**
-   * Forgets every cached directory and file outside [roots]: a `src/` the first walk found by
-   * convention stops being watched once its module publishes narrower directories, and an edit to a
-   * source set the build no longer compiles must not reach a compile.
+   * Forgets every cached directory and file outside every declared root: a `src/` the first walk
+   * found by convention stops being watched once its module publishes narrower directories, and an
+   * edit to a source set the build no longer compiles must not reach a compile. A declared root
+   * that no longer exists is kept, so the refresh still reports its files as deleted.
    */
-  private fun prune(roots: List<File>) {
-    val prefixes = roots.map { it.path }
+  private fun prune() {
+    val prefixes = moduleRoots.map { (root, _) -> root }
     fun inside(file: File): Boolean {
       val path = file.path
       return prefixes.any { path == it || path.startsWith("$it${File.separator}") }

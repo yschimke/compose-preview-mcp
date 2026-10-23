@@ -167,4 +167,20 @@ class SourceTreeTest {
     assertThat(tree.kotlinSourcesOf(":app")!!.map { it.canonicalFile })
       .containsExactly(main.canonicalFile)
   }
+
+  /** #70 review: a published directory that is deleted still reports its files as deleted. */
+  @Test
+  fun `deleting a published directory reports its files`() {
+    val root = createTempDirectory("cp-source-tree-deleted").toFile()
+    val generated = File(root, "out/gen")
+    val gen = File(generated, "Gen.kt").edit("fun gen() {}")
+    val tree =
+      SourceTree(root, budgetMs = 10_000, moduleRescanMs = 0) {
+        listOf(SourceTree.DeclaredModule(root, listOf(generated), emptyList(), "//gen:gen"))
+      }
+    tree.refresh()
+
+    generated.deleteRecursively()
+    assertThat(tree.refresh().changed.map { it.path }).containsExactly(gen.path)
+  }
 }

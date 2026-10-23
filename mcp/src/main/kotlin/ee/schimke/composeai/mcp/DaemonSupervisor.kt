@@ -254,9 +254,9 @@ class DaemonSupervisor(
 
   /**
    * Whether [daemon]'s launch descriptor on disk now launches a different process from the one
-   * running: another classpath, JVM arguments, system properties, main class or launcher. A daemon
-   * swaps its user classes in place, but none of these. `true` when either descriptor is unknown,
-   * so the caller restarts rather than guess.
+   * running: another classpath, JVM arguments, system properties, main class, launcher, working
+   * directory, jail command or lifetime. A daemon swaps its user classes in place, but none of
+   * these. `true` when either descriptor is unknown, so the caller restarts rather than guess.
    */
   fun launchChanged(daemon: SupervisedDaemon): Boolean {
     val project = projects[daemon.workspaceId] ?: return true

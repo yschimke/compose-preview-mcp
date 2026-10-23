@@ -268,6 +268,11 @@ class DaemonSupervisor(
       }
     val supervised = SupervisedDaemon(workspaceId = project.workspaceId, modulePath = modulePath)
     val descriptorWorkingDirectory = File(descriptor.workingDirectory)
+    supervised.classpathEntries =
+      (descriptor.classpath +
+          descriptor.systemProperties[USER_CLASS_DIRS_PROP].orEmpty().split(File.pathSeparator))
+        .filter { it.isNotEmpty() }
+        .map { File(it).absoluteFile.normalize().path }
     supervised.moduleProjectDirPath =
       runCatching {
         (if (descriptorWorkingDirectory.isAbsolute) descriptorWorkingDirectory
@@ -414,6 +419,10 @@ class DaemonSupervisor(
      * Older daemons ignore it.
      */
     const val ON_DEMAND_WORKER_BOOT_PROP: String = "composeai.daemon.onDemandWorkerBoot"
+    /**
+     * The daemon's user class directories, path-separated; see [SupervisedDaemon.classpathEntries].
+     */
+    const val USER_CLASS_DIRS_PROP: String = "composeai.daemon.userClassDirs"
   }
 }
 
@@ -530,6 +539,12 @@ class SupervisedDaemon(val workspaceId: WorkspaceId, val modulePath: String) {
    * against it.
    */
   @Volatile internal var moduleProjectDirPath: String? = null
+
+  /**
+   * Every classpath entry the launch descriptor gives the daemon, its user class directories
+   * included: which other modules' outputs it loads, so which modules' edits it depends on.
+   */
+  @Volatile internal var classpathEntries: List<String> = emptyList()
 
   /**
    * Notification fan-out for [session] listeners

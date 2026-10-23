@@ -42,8 +42,9 @@ class SourceRecompileTest {
 
   private val json = Json { ignoreUnknownKeys = true }
   private val factory = FakeDaemonClientFactory()
+  private val descriptors = FakeDescriptorProvider()
   private val supervisor =
-    DaemonSupervisor(descriptorProvider = FakeDescriptorProvider(), clientFactory = factory)
+    DaemonSupervisor(descriptorProvider = descriptors, clientFactory = factory)
   private lateinit var server: DaemonMcpServer
   private lateinit var client: McpTestClient
   private lateinit var session: McpSession
@@ -702,12 +703,12 @@ class SourceRecompileTest {
   }
 
   /**
-   * #67: an edit to a file another module declares a preview in is that module's leaf. A sibling
-   * daemon that picked it up from the source tree used to run Gradle for it, and could no longer
-   * compile its own edit in process.
+   * Two modules, each declaring a preview in its own `Screen.kt`, both edited before either
+   * renders. Returns each module's in-process compiles and the modules Gradle compiled.
    */
-  @Test
-  fun `another module's preview file does not recompile this module`() {
+  private fun twoModulesEditedTogether(
+    appDependsOnFeature: Boolean
+  ): Pair<Map<String, List<List<String>>>, List<String>> {
     val gradle = CopyOnWriteArrayList<String>()
     start(
       SourceCompiler { _, modulePath, _ ->
@@ -725,6 +726,9 @@ class SourceRecompileTest {
     }
     val appSource = module("app")
     val featureSource = module("feature")
+    if (appDependsOnFeature) {
+      descriptors.classpaths[":app"] = listOf(File(projectDir, "feature/build/classes").path)
+    }
     val workspaceId = registerWorkspace(projectDir)
     val asked = mutableMapOf<String, CopyOnWriteArrayList<List<String>>>()
     val png = tmp.newFile("render.png").apply { writeText("png") }
@@ -758,10 +762,36 @@ class SourceRecompileTest {
     appSource.writeText("""@Preview fun Header() { Text("app 2") }""")
     appSource.setLastModified(appSource.lastModified() + 2_000)
     render(":app")
-    assertThat(asked.getValue(":app")).containsExactly(listOf(appSource.absolutePath))
     render(":feature")
-    assertThat(asked.getValue(":feature")).containsExactly(listOf(featureSource.absolutePath))
+    return asked to gradle
+  }
+
+  /**
+   * #67: an edit to a file another module declares a preview in is that module's leaf. A sibling
+   * daemon that picked it up from the source tree used to run Gradle for it, and could no longer
+   * compile its own edit in process.
+   */
+  @Test
+  fun `another module's preview file does not recompile this module`() {
+    val (asked, gradle) = twoModulesEditedTogether(appDependsOnFeature = false)
+    assertThat(asked.getValue(":app").single().single())
+      .endsWith("app/src/main/kotlin/com/example/Screen.kt")
+    assertThat(asked.getValue(":feature").single().single())
+      .endsWith("feature/src/main/kotlin/com/example/Screen.kt")
     assertThat(gradle).isEmpty()
+  }
+
+  /**
+   * #68 review: a module whose classpath carries another module's output depends on it, so that
+   * module's preview file may declare a composable this one's previews call. It is still compiled.
+   */
+  @Test
+  fun `a preview file in a module this one depends on still recompiles it`() {
+    val (asked, gradle) = twoModulesEditedTogether(appDependsOnFeature = true)
+    assertThat(asked.getValue(":app")).isEmpty()
+    assertThat(gradle).containsExactly(":app")
+    assertThat(asked.getValue(":feature").single().single())
+      .endsWith("feature/src/main/kotlin/com/example/Screen.kt")
   }
 
   @Test

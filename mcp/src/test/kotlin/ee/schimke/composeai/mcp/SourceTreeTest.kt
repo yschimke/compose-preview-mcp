@@ -141,4 +141,46 @@ class SourceTreeTest {
       .containsExactly(a.canonicalFile)
     assertThat(tree.moduleKey("//other:ui", listOf(root))).isNull()
   }
+
+  /**
+   * #68 review: a `src/` the first walk found by convention stops being watched once its module
+   * publishes narrower directories, so an edit to a source set the build no longer compiles is not
+   * reported.
+   */
+  @Test
+  fun `a module that publishes later stops watching the rest of its src`() {
+    val root = createTempDirectory("cp-source-tree-narrowed").toFile()
+    val app = File(root, "app").apply { mkdirs() }
+    File(app, "build.gradle.kts").writeText("")
+    val main = File(app, "src/main/kotlin/Main.kt").edit("fun main() {}")
+    val release = File(app, "src/release/kotlin/Release.kt").edit("fun release() {}")
+    val published = mutableListOf<SourceTree.DeclaredModule>()
+    val tree = SourceTree(root, budgetMs = 10_000, moduleRescanMs = 0) { published.toList() }
+    tree.refresh()
+
+    published +=
+      SourceTree.DeclaredModule(app, listOf(File(app, "src/main/kotlin")), emptyList(), ":app")
+    tree.refresh()
+    release.edit("fun release() = 1")
+    main.edit("fun main() = Unit")
+    assertThat(tree.refresh().changed.map { it.canonicalFile }).containsExactly(main.canonicalFile)
+    assertThat(tree.kotlinSourcesOf(":app")!!.map { it.canonicalFile })
+      .containsExactly(main.canonicalFile)
+  }
+
+  /** #70 review: a published directory that is deleted still reports its files as deleted. */
+  @Test
+  fun `deleting a published directory reports its files`() {
+    val root = createTempDirectory("cp-source-tree-deleted").toFile()
+    val generated = File(root, "out/gen")
+    val gen = File(generated, "Gen.kt").edit("fun gen() {}")
+    val tree =
+      SourceTree(root, budgetMs = 10_000, moduleRescanMs = 0) {
+        listOf(SourceTree.DeclaredModule(root, listOf(generated), emptyList(), "//gen:gen"))
+      }
+    tree.refresh()
+
+    generated.deleteRecursively()
+    assertThat(tree.refresh().changed.map { it.path }).containsExactly(gen.path)
+  }
 }

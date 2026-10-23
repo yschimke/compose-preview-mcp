@@ -781,10 +781,13 @@ class DaemonMcpServer(
     progressToken: JsonElement? = null,
     overrides: PreviewOverrides? = null,
   ): RenderOutcome.Finished {
+    supervisor.daemonFor(uri.workspaceId, uri.modulePath).let { daemon ->
+      ensureSourceFreshBeforeRender(uri, daemon)
+      detectSourceChanges(daemon)
+      recompilePendingSources(daemon)
+    }
+    // A build file's edit restarts the daemon: render on the live one.
     val daemon = supervisor.daemonFor(uri.workspaceId, uri.modulePath)
-    ensureSourceFreshBeforeRender(uri, daemon)
-    detectSourceChanges(daemon)
-    recompilePendingSources(daemon)
     val key = PreviewIdKey(uri.workspaceId, uri.modulePath, uri.previewFqn)
     val renderStartedAt = System.nanoTime()
     val future = java.util.concurrent.CompletableFuture<RenderOutcome>()
@@ -1042,6 +1045,10 @@ class DaemonMcpServer(
       // Whatever the outcome, this compile answers every change seen so far: a failure is reported
       // as stale until the next edit, not retried on every render.
       sourceTrees[daemon.workspaceId]?.let { compiledGeneration[addr] = it.generation }
+      // A build file's edit may change the classpath the daemon started with: it is rebuilt with
+      // its launch descriptor, and restarted from it below.
+      val tree = sourceTrees[daemon.workspaceId]
+      val buildChanged = tree != null && sources.any { tree.isBuildFile(File(it)) }
       val root = supervisor.project(daemon.workspaceId)?.path
       val outcome =
         if (root == null) {
@@ -1054,7 +1061,9 @@ class DaemonMcpServer(
           if (inProcess is SourceCompileOutcome.Ok) inProcess
           else {
             val gradle = runCatching {
-              compiler.compile(root, daemon.modulePath, sources.map(::File))
+              if (buildChanged)
+                compiler.compileAndRelaunch(root, daemon.modulePath, sources.map(::File))
+              else compiler.compile(root, daemon.modulePath, sources.map(::File))
             }
               .getOrElse { SourceCompileOutcome.Failed(it.message ?: it.javaClass.simpleName) }
             // Confirm an in-process compile error with Gradle; if Gradle succeeds, the in-process
@@ -1108,18 +1117,17 @@ class DaemonMcpServer(
       // load the same output directory, still need telling.
       val compiledInProcess =
         outcome is SourceCompileOutcome.Ok && outcome.work?.task == IN_PROCESS_COMPILE_TASK
-      // A build file's edit can change the classpath, which the daemon checks against the
-      // fingerprint it started with; a source's swaps the classloader.
-      val tree = sourceTrees[daemon.workspaceId]
+      if (buildChanged && outcome is SourceCompileOutcome.Ok) {
+        relaunchDaemon(daemon)
+        return outcome
+      }
       if (outcome !is SourceCompileOutcome.Failed)
         daemon.allClients().drop(if (compiledInProcess) 1 else 0).forEach { client ->
           sources.forEach { path ->
             runCatching {
               client.fileChanged(
                 path = path,
-                kind =
-                  if (tree?.isBuildFile(File(path)) == true) FileKind.CLASSPATH
-                  else FileKind.SOURCE,
+                kind = FileKind.SOURCE,
                 changeType = ChangeType.MODIFIED,
               )
             }
@@ -1127,6 +1135,41 @@ class DaemonMcpServer(
         }
       return outcome
     }
+  }
+
+  /**
+   * Restarts [daemon] from its launch descriptor, which a build file's compile just rewrote. The
+   * running process keeps the classpath it started with: a classloader swap doesn't reach a new
+   * dependency, and its classpath fingerprint covers only the jars it already had (a Bazel daemon
+   * has none). Synchronous, so the render that follows reaches the new process; renders already
+   * queued on the old one fail, as on `classpathDirty`.
+   */
+  private fun relaunchDaemon(daemon: SupervisedDaemon) {
+    val workspaceId = daemon.workspaceId
+    val modulePath = daemon.modulePath
+    System.err.println(
+      "compose-preview-mcp: a build file of $modulePath changed; restarting its daemon from the " +
+        "rewritten launch descriptor"
+    )
+    previewQueues.keys
+      .filter { it.workspaceId == workspaceId && it.modulePath == modulePath }
+      .forEach { key ->
+        val drained = previewQueues.remove(key) ?: return@forEach
+        val outcome = RenderOutcome.Failed("relaunch", "daemon restarting after a build file edit")
+        drained.forEach { group -> group.futures.forEach { it.complete(outcome) } }
+      }
+    supervisor.forgetDaemon(workspaceId, modulePath)
+    catalog.remove(DaemonAddr(workspaceId, modulePath))
+    evictDataProductsForDaemon(workspaceId, modulePath)
+    watchPropagator.forget(daemon)
+    runCatching { supervisor.daemonFor(workspaceId, modulePath) }
+      .onFailure {
+        System.err.println(
+          "compose-preview-mcp: restarting $modulePath after a build file edit failed: " +
+            "${it.message}"
+        )
+      }
+    sessions.forEach { it.notifyResourceListChanged() }
   }
 
   /**

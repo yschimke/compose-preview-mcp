@@ -312,4 +312,33 @@ class SourceTreeTest {
 
     assertThat(tree.refresh().changed.map { it.canonicalFile }).containsExactly(a.canonicalFile)
   }
+
+  /**
+   * #76: discovery writes the preview manifest, and a compile or IDE build since leaves it behind
+   * the module's classes. A source older than those classes is built, however old the manifest.
+   */
+  @Test
+  fun `a module's class outputs count as built even when its manifest is older`() {
+    val root = createTempDirectory("cp-source-tree-classes").toFile()
+    val app = File(root, "app")
+    val source = File(app, "src/main/kotlin/Main.kt").edit("fun main() {}")
+    val manifest = File(app, "build/compose-previews/previews.json").edit("{}")
+    val classes = File(app, "build/tmp/kotlin-classes/debug/MainKt.class").edit("")
+    manifest.setLastModified(source.lastModified() - 60_000)
+    classes.setLastModified(source.lastModified() + 60_000)
+    val tree =
+      SourceTree(root, budgetMs = 10_000) {
+        listOf(
+          SourceTree.DeclaredModule(
+            app,
+            listOf(source.parentFile),
+            emptyList(),
+            ":app",
+            outputs = listOf(manifest),
+          )
+        )
+      }
+
+    assertThat(tree.refresh().changed).isEmpty()
+  }
 }

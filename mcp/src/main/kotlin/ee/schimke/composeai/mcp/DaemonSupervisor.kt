@@ -268,7 +268,10 @@ class DaemonSupervisor(
       current.jvmArgs != running.jvmArgs ||
       current.systemProperties != running.systemProperties ||
       current.mainClass != running.mainClass ||
-      current.javaLauncher != running.javaLauncher
+      current.javaLauncher != running.javaLauncher ||
+      current.workingDirectory != running.workingDirectory ||
+      current.jailCommand != running.jailCommand ||
+      current.hardTtlSeconds != running.hardTtlSeconds
   }
 
   /** Returns the [NotificationRouter] so callers can register handlers. */

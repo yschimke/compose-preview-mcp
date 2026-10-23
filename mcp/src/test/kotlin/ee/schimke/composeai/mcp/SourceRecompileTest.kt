@@ -629,6 +629,8 @@ class SourceRecompileTest {
     lateinit var fixture: Fixture
     start(fakeCompiler { fixture.classes })
     fixture = fixture()
+    val app = File(fixture.source.path.substringBefore("/src/"))
+    publishSourceDir(app, ":app", File(app, "src/main/kotlin"))
     val asked = java.util.concurrent.atomic.AtomicInteger()
     daemon.onCompileSources = inProcessCompileError(asked)
     render(fixture)
@@ -642,6 +644,124 @@ class SourceRecompileTest {
     edit(fixture, """@Preview fun Header() { Text("again") }""")
     assertThat(render(fixture).bytes).contains("again")
     assertThat(asked.get()).isAtMost(askedBefore + 1)
+  }
+
+  /**
+   * #67: a module that published no source list is sent only its edits, which can fail on an edit
+   * that needs the rest of the module. Gradle compiling it says nothing about the next edit.
+   */
+  @Test
+  fun `an edits-only compile error Gradle does not reproduce keeps the in-process compiler`() {
+    lateinit var fixture: Fixture
+    start(fakeCompiler { fixture.classes })
+    fixture = fixture()
+    val asked = java.util.concurrent.atomic.AtomicInteger()
+    daemon.onCompileSources = inProcessCompileError(asked)
+    render(fixture)
+    val askedBefore = asked.get()
+
+    edit(fixture, """@Preview fun Header() { Text("Gradle is right") }""")
+    assertThat(render(fixture).bytes).contains("Gradle is right")
+    edit(fixture, """@Preview fun Header() { Text("again") }""")
+    assertThat(render(fixture).bytes).contains("again")
+    assertThat(asked.get()).isEqualTo(askedBefore + 2)
+  }
+
+  /**
+   * #67: a deleted file is only in the change set. Sent as a source too, the compile failed on the
+   * missing path and switched the in-process compiler off for good.
+   */
+  @Test
+  fun `a deleted file is reported as removed and not sent as a source`() {
+    lateinit var fixture: Fixture
+    start(fakeCompiler { fixture.classes })
+    fixture = fixture()
+    val app = File(fixture.source.path.substringBefore("/src/"))
+    val sourceDir = File(app, "src/main/kotlin")
+    val sibling = File(sourceDir, "com/example/Theme.kt").apply { writeText("val accent = 1") }
+    publishSourceDir(app, ":app", sourceDir)
+    val params = CopyOnWriteArrayList<kotlinx.serialization.json.JsonObject?>()
+    daemon.onCompileSourcesParams = { params += it }
+    daemon.onCompileSources = { _ ->
+      fixture.classes.writeText(fixture.source.readText())
+      CompileSourcesResult(result = CompileResultKind.OK, durationMs = 5)
+    }
+    render(fixture)
+    params.clear()
+
+    sibling.delete()
+    sibling.parentFile.setLastModified(sibling.parentFile.lastModified() + 2_000)
+    edit(fixture, """@Preview fun Header() { Text("No theme") }""")
+    assertThat(render(fixture).bytes).contains("No theme")
+
+    val sent = params.single()!!
+    assertThat(sent["sources"]!!.jsonArray.map { it.jsonPrimitive.content })
+      .containsExactly(fixture.source.absolutePath)
+    assertThat(sent["changes"]!!.jsonObject["removed"]!!.jsonArray.map { it.jsonPrimitive.content })
+      .containsExactly(sibling.absolutePath)
+  }
+
+  /**
+   * #67: an edit to a file another module declares a preview in is that module's leaf. A sibling
+   * daemon that picked it up from the source tree used to run Gradle for it, and could no longer
+   * compile its own edit in process.
+   */
+  @Test
+  fun `another module's preview file does not recompile this module`() {
+    val gradle = CopyOnWriteArrayList<String>()
+    start(
+      SourceCompiler { _, modulePath, _ ->
+        gradle += modulePath
+        SourceCompileOutcome.Ok(durationMs = 1, work = nextWork)
+      }
+    )
+    val projectDir = tmp.newFolder("workspace")
+    fun module(name: String): File {
+      File(projectDir, "$name/build.gradle.kts").apply { parentFile.mkdirs() }.writeText("")
+      return File(projectDir, "$name/src/main/kotlin/com/example/Screen.kt").apply {
+        parentFile.mkdirs()
+        writeText("""@Preview fun Header() { Text("$name") }""")
+      }
+    }
+    val appSource = module("app")
+    val featureSource = module("feature")
+    val workspaceId = registerWorkspace(projectDir)
+    val asked = mutableMapOf<String, CopyOnWriteArrayList<List<String>>>()
+    val png = tmp.newFile("render.png").apply { writeText("png") }
+    for ((modulePath, name) in listOf(":app" to "app", ":feature" to "feature")) {
+      supervisor.daemonFor(workspaceId, modulePath)
+      val fake = factory.daemons.getValue(workspaceId to modulePath)
+      val calls = CopyOnWriteArrayList<List<String>>().also { asked[modulePath] = it }
+      fake.onCompileSources = { sources ->
+        calls += sources
+        CompileSourcesResult(result = CompileResultKind.OK, durationMs = 1)
+      }
+      fake.emitDiscovery(PREVIEW_ID, sourceFile = "$name/src/main/kotlin/com/example/Screen.kt")
+      client.expectNotification("notifications/resources/list_changed", 2_000)
+      fake.autoRenderPngPath = { png.absolutePath }
+    }
+    fun render(modulePath: String) =
+      client.callTool(
+        "render_preview",
+        buildJsonObject {
+          put("uri", PreviewUri(workspaceId, modulePath, PREVIEW_ID).toUri())
+          put("inline", false)
+        },
+        timeoutMs = 10_000,
+      )
+    render(":app")
+    render(":feature")
+    asked.values.forEach { it.clear() }
+
+    featureSource.writeText("""@Preview fun Header() { Text("feature 2") }""")
+    featureSource.setLastModified(featureSource.lastModified() + 2_000)
+    appSource.writeText("""@Preview fun Header() { Text("app 2") }""")
+    appSource.setLastModified(appSource.lastModified() + 2_000)
+    render(":app")
+    assertThat(asked.getValue(":app")).containsExactly(listOf(appSource.absolutePath))
+    render(":feature")
+    assertThat(asked.getValue(":feature")).containsExactly(listOf(featureSource.absolutePath))
+    assertThat(gradle).isEmpty()
   }
 
   @Test

@@ -92,4 +92,53 @@ class SourceTreeTest {
     assertThat(tree.refresh(SourceTree.Focus(listOf("**/ui/*.kt"), module)).changed).isEmpty()
     assertThat(tree.refresh().changed.map { it.canonicalFile }).containsExactly(other.canonicalFile)
   }
+
+  /** #67: a launch descriptor written after the first walk is read by a later unfocused one. */
+  @Test
+  fun `a module published after the first walk is watched by a later refresh`() {
+    val root = createTempDirectory("cp-source-tree-late").toFile()
+    val target = File(root, "ui/Screen.kt").edit("fun screen() {}")
+    val published = mutableListOf<SourceTree.DeclaredModule>()
+    val tree = SourceTree(root, budgetMs = 10_000, moduleRescanMs = 0) { published.toList() }
+    tree.refresh()
+    assertThat(tree.moduleOf(target)).isNull()
+
+    // A generated directory the build only creates later is picked up the same way.
+    val generated = File(root, "out/gen")
+    published +=
+      SourceTree.DeclaredModule(root, listOf(target.parentFile, generated), emptyList(), "//ui:ui")
+    tree.refresh()
+    assertThat(tree.moduleOf(target)).isEqualTo("//ui:ui")
+    target.edit("fun screen() = 1")
+    assertThat(tree.refresh().changed.map { it.canonicalFile })
+      .containsExactly(target.canonicalFile)
+
+    val made = File(generated, "Gen.kt").edit("fun gen() {}")
+    tree.refresh()
+    assertThat(tree.kotlinSourcesOf("//ui:ui")!!.map { it.canonicalFile })
+      .containsExactly(target.canonicalFile, made.canonicalFile)
+  }
+
+  /** #67: every Bazel target of a workspace has the workspace root as its module directory. */
+  @Test
+  fun `targets that share a module directory are told apart by module path`() {
+    val root = createTempDirectory("cp-source-tree-bazel").toFile()
+    val a = File(root, "feature-a/A.kt").edit("fun a() {}")
+    val b = File(root, "feature-b/B.kt").edit("fun b() {}")
+    val tree =
+      SourceTree(root, budgetMs = 10_000) {
+        listOf(
+          SourceTree.DeclaredModule(root, listOf(a.parentFile), emptyList(), "//feature-a:ui"),
+          SourceTree.DeclaredModule(root, listOf(b.parentFile), emptyList(), "//feature-b:ui"),
+        )
+      }
+    tree.refresh()
+
+    assertThat(tree.moduleOf(a)).isEqualTo("//feature-a:ui")
+    assertThat(tree.moduleOf(b)).isEqualTo("//feature-b:ui")
+    assertThat(tree.moduleKey("//feature-b:ui", listOf(root))).isEqualTo("//feature-b:ui")
+    assertThat(tree.kotlinSourcesOf("//feature-a:ui")!!.map { it.canonicalFile })
+      .containsExactly(a.canonicalFile)
+    assertThat(tree.moduleKey("//other:ui", listOf(root))).isNull()
+  }
 }

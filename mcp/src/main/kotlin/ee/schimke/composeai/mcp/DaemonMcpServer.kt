@@ -1046,7 +1046,8 @@ class DaemonMcpServer(
             "workspace ${daemon.workspaceId.value} is not registered"
           )
         } else {
-          val inProcess = compileInProcess(daemon, sources, moduleSourcesOf(daemon, sources))
+          val module = moduleSourcesOf(daemon, sources)
+          val inProcess = compileInProcess(daemon, sources, module)
           if (inProcess is SourceCompileOutcome.Ok) inProcess
           else {
             val gradle = runCatching {
@@ -1054,8 +1055,14 @@ class DaemonMcpServer(
             }
               .getOrElse { SourceCompileOutcome.Failed(it.message ?: it.javaClass.simpleName) }
             // Confirm an in-process compile error with Gradle; if Gradle succeeds, the in-process
-            // compiler is misconfigured for this module and later edits skip it.
-            if (inProcess is SourceCompileOutcome.Failed && gradle is SourceCompileOutcome.Ok) {
+            // compiler is misconfigured for this module and later edits skip it. Not when it was
+            // only sent the edits (a module that published no source list): that compile can fail
+            // on an edit that needs the rest of the module, which says nothing about the next one.
+            if (
+              inProcess is SourceCompileOutcome.Failed &&
+                gradle is SourceCompileOutcome.Ok &&
+                module?.all != null
+            ) {
               daemon.allClients().firstOrNull()?.let(inProcessDeclined::add)
             }
             gradle
@@ -1116,19 +1123,19 @@ class DaemonMcpServer(
   private fun moduleSourcesOf(daemon: SupervisedDaemon, edited: List<String>): ModuleSources? {
     val tree = sourceTrees[daemon.workspaceId] ?: return null
     val root = supervisor.project(daemon.workspaceId)?.path ?: return null
-    val dir =
-      sequenceOf(daemon.moduleProjectDirPath?.let(::File), moduleDir(root, daemon.modulePath))
-        .filterNotNull()
-        .firstOrNull(tree::knowsModule) ?: return null
-    val normalized = dir.absoluteFile.normalize()
+    val key =
+      tree.moduleKey(
+        daemon.modulePath,
+        listOfNotNull(daemon.moduleProjectDirPath?.let(::File), moduleDir(root, daemon.modulePath)),
+      ) ?: return null
     return ModuleSources(
-      all = tree.kotlinSourcesOf(normalized).orEmpty().map { it.absolutePath },
-      foreign =
-        edited.filter { path -> tree.moduleOf(File(path)).let { it != null && it != normalized } },
+      all = tree.kotlinSourcesOf(key)?.map { it.absolutePath },
+      foreign = edited.filter { path -> tree.moduleOf(File(path)).let { it != null && it != key } },
     )
   }
 
-  private class ModuleSources(val all: List<String>, val foreign: List<String>)
+  /** [all] is `null` when the module published no source list, so only the edits are known. */
+  private class ModuleSources(val all: List<String>?, val foreign: List<String>)
 
   /**
    * The change set for an in-process compile of the edited [sources]. Without one the daemon cannot
@@ -1160,15 +1167,16 @@ class DaemonMcpServer(
     if (module != null && module.foreign.isNotEmpty()) return null
     val client = daemon.allClients().firstOrNull() ?: return null
     if (inProcessDeclined.contains(client)) return null
+    val changes = changeSetOf(sources)
+    // The Build Tools API compiles exactly `sources`, so a module's other files have to be there
+    // for the edit to resolve them; the change set says which ones changed. A deleted file is only
+    // in the change set: passed as a source, the compile fails on the missing path.
+    val compileSources = (module?.all.orEmpty() + changes.modified).distinct()
+    if (compileSources.isEmpty()) return null
     val startedAt = System.nanoTime()
     val result = runCatching {
       client.compileSources(
-        CompileSourcesParams(
-          // The Build Tools API compiles exactly `sources`, so a module's other files have to be
-          // there for the edit to resolve them; the change set says which ones changed.
-          sources = (module?.all.orEmpty() + sources).distinct(),
-          changes = changeSetOf(sources),
-        ),
+        CompileSourcesParams(sources = compileSources, changes = changes),
         timeout = IN_PROCESS_COMPILE_TIMEOUT,
       )
     }
@@ -1219,11 +1227,32 @@ class DaemonMcpServer(
     lastScan[addr] = refresh
     val compiled = compiledGeneration.getOrPut(addr) { 0L }
     if (tree.generation <= compiled) return
-    val changed = tree.changedSince(compiled).map { it.absolutePath }
+    val changed =
+      tree
+        .changedSince(compiled)
+        .map { it.absolutePath }
+        .filterNot { leafOfAnotherModule(addr, it) }
     if (changed.isEmpty()) return
     changed.forEach(previewActivity::sourceChanged)
     pendingSources.computeIfAbsent(addr) { ConcurrentHashMap.newKeySet() }.addAll(changed)
     pendingTrigger.putIfAbsent(addr, TRIGGER_DETECTED)
+  }
+
+  /**
+   * Whether [path] is a file another module's catalog declares a preview in and [addr]'s doesn't: a
+   * leaf of that module, which [addr] has no reason to recompile for. `notify_file_changed` targets
+   * its compile the same way.
+   */
+  private fun leafOfAnotherModule(addr: DaemonAddr, path: String): Boolean {
+    val canonical = runCatching { File(path).canonicalPath }.getOrDefault(path)
+    val declaring =
+      catalog
+        .filter { (other, previews) ->
+          other.workspaceId == addr.workspaceId &&
+            previews.values.any { it.resolvedSourcePath == canonical }
+        }
+        .keys
+    return declaring.isNotEmpty() && addr !in declaring
   }
 
   /**
@@ -1246,6 +1275,7 @@ class DaemonMcpServer(
         moduleDir = File(descriptor.workingDirectory),
         sourceDirs = watch.sourceDirs.map(::File),
         resourceDirs = watch.resourceDirs.map(::File),
+        modulePath = descriptor.modulePath,
       )
     }
 
@@ -5842,6 +5872,7 @@ class DaemonMcpServer(
         declared.forEach { module ->
           add(
             buildJsonObject {
+              module.modulePath?.let { put("modulePath", it) }
               put("moduleDir", module.moduleDir.path)
               putJsonArray("sourceDirs") {
                 module.sourceDirs.forEach { add(JsonPrimitive(it.path)) }

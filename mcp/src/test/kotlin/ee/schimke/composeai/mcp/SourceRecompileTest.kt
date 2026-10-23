@@ -241,28 +241,30 @@ class SourceRecompileTest {
     lateinit var fixture: Fixture
     start(fakeCompiler { fixture.classes })
     fixture = fixture()
-    val asked = java.util.concurrent.atomic.AtomicInteger()
-    val warmedWith = java.util.concurrent.CopyOnWriteArrayList<List<String>>()
+    // The warm-up is sent from an executor, so the test waits for it rather than racing it.
+    val warmedWith = java.util.concurrent.LinkedBlockingQueue<List<String>>()
     daemon.onCompileWarmUp = { sources ->
-      asked.incrementAndGet()
-      warmedWith += sources
+      warmedWith.put(sources)
       java.util.concurrent.CompletableFuture.completedFuture(warmUpResult(ready = true))
     }
     daemon.onCompileSources = { sources ->
       fixture.classes.writeText(File(sources.single()).readText())
       CompileSourcesResult(result = CompileResultKind.OK, durationMs = 5)
     }
-    assertThat(asked.get()).isEqualTo(0)
+    assertThat(warmedWith).isEmpty()
     render(fixture)
+    // It warms with the rendered preview's own file, the one about to be edited.
+    val sources = warmedWith.poll(10, java.util.concurrent.TimeUnit.SECONDS)
+    assertThat(sources).isNotNull()
+    assertThat(sources!!.map { File(it).canonicalPath })
+      .containsExactly(fixture.source.canonicalPath)
     edit(fixture, """@Preview fun Header() { Text("Warm") }""")
     val fresh = render(fixture)
 
     assertThat(fresh.bytes).contains("Warm")
     assertThat(fresh.work.toString()).contains(DaemonMcpServer.IN_PROCESS_COMPILE_TASK)
-    assertThat(asked.get()).isEqualTo(1)
-    // It warms with the rendered preview's own file, the one about to be edited.
-    assertThat(warmedWith.single().map { File(it).canonicalPath })
-      .containsExactly(fixture.source.canonicalPath)
+    // Asked once: the second render does not ask again.
+    assertThat(warmedWith.poll(500, java.util.concurrent.TimeUnit.MILLISECONDS)).isNull()
   }
 
   /** A daemon with nothing to warm says so at once, and the next edit compiles in process. */

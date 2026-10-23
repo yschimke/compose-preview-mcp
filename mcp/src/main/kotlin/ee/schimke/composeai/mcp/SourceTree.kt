@@ -58,11 +58,16 @@ class SourceTree(
      */
     val buildFiles: List<File> = emptyList(),
     /**
-     * Files the build writes when it builds the module (its preview manifest): with the class
-     * outputs the `build/` convention finds, the time a source newer than every one of them was
-     * edited after the last build. A Bazel or Buck2 target has no `build/` to find.
+     * Files the build writes when it builds the module (its preview manifest): with [classOutputs],
+     * the time a source newer than every one of them was edited after the last build. A Bazel or
+     * Buck2 target has no `build/` to find.
      */
     val outputs: List<File> = emptyList(),
+    /**
+     * The class directories and jars the daemon loads the module's classes from (its
+     * `userClassDirs`): the compilation it renders, not the module's other variants or targets.
+     */
+    val classOutputs: List<File> = emptyList(),
   )
 
   /**
@@ -152,8 +157,8 @@ class SourceTree(
   /** Each published build file's path, with the modules that published it. */
   private val buildFileOwners = LinkedHashMap<String, MutableSet<Module>>()
 
-  /** Each published module's [DeclaredModule.outputs], by module key. */
-  private val declaredOutputs = LinkedHashMap<String, List<File>>()
+  /** Each published module's [DeclaredModule.outputs] and [DeclaredModule.classOutputs]. */
+  private val declaredOutputs = LinkedHashMap<String, Pair<List<File>, List<File>>>()
 
   /** Root directories whose files all count as sources: published resource directories. */
   private val resourceRoots = mutableListOf<String>()
@@ -442,8 +447,14 @@ class SourceTree(
     buildFileOwners.clear()
     declaredOutputs.clear()
     published.forEach { declared ->
-      declaredOutputs[declared.modulePath ?: declared.moduleDir.absoluteFile.normalize().path] =
-        declared.outputs
+      val dir = declared.moduleDir.absoluteFile.normalize()
+      // A dependency module's classes say nothing about this one's edits; a Bazel target's
+      // outputs all live in the output tree, so none is under its directory, the workspace root.
+      val classOutputs =
+        declared.classOutputs
+          .map { it.absoluteFile.normalize() }
+          .filter { dir == root.absoluteFile.normalize() || it.startsWith(dir) }
+      declaredOutputs[declared.modulePath ?: dir.path] = declared.outputs to classOutputs
     }
     resourceRoots.clear()
     published
@@ -505,25 +516,25 @@ class SourceTree(
    * When the build last built each file, as a function of the file: the oldest of its owning
    * modules' last builds, so an edit newer than any owner's last build counts as unbuilt, and one
    * module's later build doesn't hide another's unbuilt edit. A published module's last build is
-   * the newest of its [DeclaredModule.outputs] and the class outputs under its directory: the
-   * preview manifest is written only by discovery, and a compile or IDE build since then leaves it
-   * behind its classes. A file no published module covers falls back to the newest Gradle class
-   * output the `build/` convention finds. `null` when none of them says.
+   * the newest of its [DeclaredModule.outputs] and [DeclaredModule.classOutputs]: the preview
+   * manifest is written only by discovery, and a compile or IDE build since then leaves it behind
+   * its classes. Only the compilation the daemon loads counts: a release or other-target build says
+   * nothing about a debug-only edit. A file no published module covers falls back to the newest
+   * Gradle class output the `build/` convention finds. `null` when none of them says.
    */
   private fun builtAt(): (File) -> Long? {
     val convention by lazy { newestClassOutput() }
     val byModule = HashMap<String, Long?>()
     fun built(module: Module): Long? {
       if (module.key in byModule) return byModule[module.key]
-      val outputs = declaredOutputs[module.key]
       val built =
-        if (outputs == null) null
-        else
+        declaredOutputs[module.key]?.let { (outputs, classOutputs) ->
           listOfNotNull(
               outputs.filter(File::isFile).maxOfOrNull(File::lastModified),
-              newestClassOutputIn(module.dir),
+              classOutputs.mapNotNull(::newestClassIn).maxOrNull(),
             )
             .maxOrNull()
+        }
       byModule[module.key] = built
       return built
     }
@@ -532,6 +543,18 @@ class SourceTree(
 
   private fun newestClassOutput(): Long? =
     sourceRoots().mapNotNull { newestClassOutputIn(it.parentFile) }.maxOrNull()
+
+  /** The newest class under a class directory, or a jar's own time. */
+  private fun newestClassIn(output: File): Long? =
+    when {
+      output.isFile -> output.lastModified()
+      output.isDirectory ->
+        output
+          .walkTopDown()
+          .filter { it.isFile && it.extension == "class" }
+          .maxOfOrNull(File::lastModified)
+      else -> null
+    }
 
   /** The newest class file under [module]'s Gradle class output directories. */
   private fun newestClassOutputIn(module: File): Long? {

@@ -335,10 +335,41 @@ class SourceTreeTest {
             emptyList(),
             ":app",
             outputs = listOf(manifest),
+            classOutputs = listOf(File(app, "build/tmp/kotlin-classes/debug")),
           )
         )
       }
 
     assertThat(tree.refresh().changed).isEmpty()
+  }
+
+  /**
+   * #77 review: only the compilation the daemon loads says a source was built. A release build
+   * newer than a debug-only edit does not.
+   */
+  @Test
+  fun `another variant's newer classes do not make an edit look built`() {
+    val root = createTempDirectory("cp-source-tree-variants").toFile()
+    val app = File(root, "app")
+    val debugOnly = File(app, "src/debug/kotlin/Debug.kt").edit("fun debug() {}")
+    val debugClasses = File(app, "build/tmp/kotlin-classes/debug/MainKt.class").edit("")
+    val releaseClasses = File(app, "build/tmp/kotlin-classes/release/MainKt.class").edit("")
+    debugClasses.setLastModified(debugOnly.lastModified() - 60_000)
+    releaseClasses.setLastModified(debugOnly.lastModified() + 60_000)
+    val tree =
+      SourceTree(root, budgetMs = 10_000) {
+        listOf(
+          SourceTree.DeclaredModule(
+            app,
+            listOf(debugOnly.parentFile),
+            emptyList(),
+            ":app",
+            classOutputs = listOf(debugClasses.parentFile),
+          )
+        )
+      }
+
+    assertThat(tree.refresh().changed.map { it.canonicalFile })
+      .containsExactly(debugOnly.canonicalFile)
   }
 }

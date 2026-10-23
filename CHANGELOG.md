@@ -1,5 +1,12 @@
 # Changelog
 
+## [4.8.0](https://github.com/yschimke/compose-preview-mcp/compare/v4.7.0...v4.8.0) (2026-10-23)
+
+
+### Bug Fixes
+
+* warn once when a module's in-process compile sees only its edits ([#71](https://github.com/yschimke/compose-preview-mcp/issues/71)) ([453b679](https://github.com/yschimke/compose-preview-mcp/commit/453b679fcf145694c9292b9422287b7d7736f874))
+
 ## [4.7.0](https://github.com/yschimke/compose-preview-mcp/compare/v4.6.0...v4.7.0) (2026-10-23)
 
 

@@ -242,8 +242,10 @@ class SourceRecompileTest {
     start(fakeCompiler { fixture.classes })
     fixture = fixture()
     val asked = java.util.concurrent.atomic.AtomicInteger()
-    daemon.onCompileWarmUp = {
+    val warmedWith = java.util.concurrent.CopyOnWriteArrayList<List<String>>()
+    daemon.onCompileWarmUp = { sources ->
       asked.incrementAndGet()
+      warmedWith += sources
       java.util.concurrent.CompletableFuture.completedFuture(warmUpResult(ready = true))
     }
     daemon.onCompileSources = { sources ->
@@ -258,6 +260,9 @@ class SourceRecompileTest {
     assertThat(fresh.bytes).contains("Warm")
     assertThat(fresh.work.toString()).contains(DaemonMcpServer.IN_PROCESS_COMPILE_TASK)
     assertThat(asked.get()).isEqualTo(1)
+    // It warms with the rendered preview's own file, the one about to be edited.
+    assertThat(warmedWith.single().map { File(it).canonicalPath })
+      .containsExactly(fixture.source.canonicalPath)
   }
 
   /** A daemon with nothing to warm says so at once, and the next edit compiles in process. */
@@ -297,7 +302,7 @@ class SourceRecompileTest {
       java.util.concurrent.CompletableFuture<
         ee.schimke.composeai.daemon.protocol.CompileWarmUpResult
       >()
-    daemon.onCompileWarmUp = { warmUp }
+    daemon.onCompileWarmUp = { _ -> warmUp }
     val inProcess = CopyOnWriteArrayList<List<String>>()
     daemon.onCompileSources = { sources ->
       inProcess += sources

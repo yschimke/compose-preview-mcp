@@ -858,7 +858,7 @@ class DaemonMcpServer(
           System.err.println("compose-preview-mcp: edit cycle ${uri.previewFqn}: ${work.toJson()}")
         }
         // After the first image, so warming does not compete with it.
-        startCompileWarmUp(daemon)
+        startCompileWarmUp(daemon, uri)
         outcome
       }
     }
@@ -877,21 +877,31 @@ class DaemonMcpServer(
    * compiles in process, and the daemon has it wait for the warm-up: measured faster than compiling
    * it through Gradle meanwhile, which competes with the warm-up for the CPU (5.2 s became 9.0 s)
    * and rewrites the classes the warmed state was built from.
+   *
+   * The daemon warms with the module's own preview files, [uri]'s first: the files an agent is
+   * about to edit, so the first edit of one finds its library symbols loaded (103-120 ms against
+   * 177-196 ms warming with other files, Material 3 screen).
    */
-  private fun startCompileWarmUp(daemon: SupervisedDaemon) {
+  private fun startCompileWarmUp(daemon: SupervisedDaemon, uri: PreviewUri) {
     if (!compileInProcess || sourceCompiler == null) return
     val client = daemon.allClients().firstOrNull() ?: return
     if (inProcessDeclined.contains(client) || !compileWarmUpAsked.add(client)) return
+    val previews = catalog[DaemonAddr(uri.workspaceId, uri.modulePath)]
+    val sources =
+      (listOfNotNull(previews?.get(uri.previewFqn)?.resolvedSourcePath) +
+          previews?.values?.mapNotNull { it.resolvedSourcePath }.orEmpty())
+        .distinct()
+        .take(COMPILE_WARM_UP_MAX_SOURCES)
     runCatching {
       compileWarmUpExecutor.execute {
         val outcome = runCatching {
-          client.compileWarmUp(timeout = COMPILE_WARM_UP_TIMEOUT)
+          client.compileWarmUp(sources, timeout = COMPILE_WARM_UP_TIMEOUT)
         }
           .fold(
             { result ->
               when {
                 result == null -> "the daemon predates compileWarmUp"
-                result.ready -> "ready in ${result.durationMs} ms"
+                result.ready -> "ready in ${result.durationMs} ms (${result.message})"
                 else -> "nothing to warm (${result.message})"
               }
             },
@@ -8068,6 +8078,12 @@ class DaemonMcpServer(
 
     /** How long a daemon may take to warm its compiler; it only logs if it takes longer. */
     private val COMPILE_WARM_UP_TIMEOUT = 300.seconds
+
+    /**
+     * Preview files a warm-up is given at most: the daemon cycles through them, and each needs only
+     * a pass to load its symbols.
+     */
+    private const val COMPILE_WARM_UP_MAX_SOURCES = 8
 
     const val MCP_APP_VIEWER_URI: String = "ui://compose-preview/viewer"
     const val MCP_APP_MIME_TYPE: String = "text/html;profile=mcp-app"

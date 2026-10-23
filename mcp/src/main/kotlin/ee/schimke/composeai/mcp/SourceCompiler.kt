@@ -12,6 +12,17 @@ import java.util.concurrent.TimeUnit
  */
 fun interface SourceCompiler {
   fun compile(projectRoot: File, modulePath: String, sources: List<File>): SourceCompileOutcome
+
+  /**
+   * [compile], and also rewrites the module's launch descriptor, for an edit to a build file: its
+   * classpath may have changed, and the daemon restarts from the rewritten descriptor. A compiler
+   * whose compile already rewrites it (`compose-preview bazel prepare`) needs nothing more.
+   */
+  fun compileAndRelaunch(
+    projectRoot: File,
+    modulePath: String,
+    sources: List<File>,
+  ): SourceCompileOutcome = compile(projectRoot, modulePath, sources)
 }
 
 sealed interface SourceCompileOutcome {
@@ -47,6 +58,20 @@ class BuildSystemSourceCompiler(
     projectRoot: File,
     modulePath: String,
     sources: List<File>,
+  ): SourceCompileOutcome = compile(projectRoot, modulePath, sources, relaunch = false)
+
+  // `bazel prepare` rewrites the descriptor itself; only Gradle needs telling.
+  override fun compileAndRelaunch(
+    projectRoot: File,
+    modulePath: String,
+    sources: List<File>,
+  ): SourceCompileOutcome = compile(projectRoot, modulePath, sources, relaunch = true)
+
+  private fun compile(
+    projectRoot: File,
+    modulePath: String,
+    sources: List<File>,
+    relaunch: Boolean,
   ): SourceCompileOutcome {
     if (BundleProjects.isBundleWorkspace(projectRoot)) {
       return SourceCompileOutcome.Unavailable(
@@ -55,7 +80,8 @@ class BuildSystemSourceCompiler(
       )
     }
     if (!ProjectDiscovery.isBazelWorkspace(projectRoot)) {
-      return gradle.compile(projectRoot, modulePath, sources)
+      return if (relaunch) gradle.compileAndRelaunch(projectRoot, modulePath, sources)
+      else gradle.compile(projectRoot, modulePath, sources)
     }
     val launcher =
       cli()
@@ -100,13 +126,28 @@ class GradleSourceCompiler(
     projectRoot: File,
     modulePath: String,
     sources: List<File>,
+  ): SourceCompileOutcome = compile(projectRoot, modulePath, relaunch = false)
+
+  /** Also runs `<module>:composePreviewDaemonStart`, which rewrites the launch descriptor. */
+  override fun compileAndRelaunch(
+    projectRoot: File,
+    modulePath: String,
+    sources: List<File>,
+  ): SourceCompileOutcome = compile(projectRoot, modulePath, relaunch = true)
+
+  private fun compile(
+    projectRoot: File,
+    modulePath: String,
+    relaunch: Boolean,
   ): SourceCompileOutcome {
     val windows = System.getProperty("os.name").orEmpty().startsWith("Windows")
     val wrapper = File(projectRoot, if (windows) "gradlew.bat" else "gradlew")
     if (!wrapper.isFile) {
       return SourceCompileOutcome.Unavailable("no Gradle wrapper at ${wrapper.path}")
     }
-    val task = if (modulePath == ":" || modulePath.isBlank()) ":$TASK" else "$modulePath:$TASK"
+    val prefix = if (modulePath == ":" || modulePath.isBlank()) "" else modulePath
+    val task = "$prefix:$TASK"
+    val tasks = listOf(task) + (if (relaunch) listOf("$prefix:$DAEMON_START_TASK") else emptyList())
     val command =
       if (windows) listOf("cmd", "/c", wrapper.absolutePath) else listOf(wrapper.absolutePath)
     val key = projectRoot.absolutePath
@@ -114,7 +155,7 @@ class GradleSourceCompiler(
     val inject =
       initScript != null &&
         needsInitScript.computeIfAbsent(key) { !initScripts.projectAppliesPlugin(projectRoot) }
-    val first = run(projectRoot, command, task, if (inject) initScript else null)
+    val first = run(projectRoot, command, tasks, if (inject) initScript else null)
     if (
       first is GradleRun.Finished &&
         first.exitCode != 0 &&
@@ -124,7 +165,7 @@ class GradleSourceCompiler(
     ) {
       // The scan missed a build that does not apply the plugin; remember that and retry.
       needsInitScript[key] = true
-      return outcome(task, run(projectRoot, command, task, initScript))
+      return outcome(task, run(projectRoot, command, tasks, initScript))
     }
     return outcome(task, first).let { result ->
       if (
@@ -177,7 +218,7 @@ class GradleSourceCompiler(
   private fun run(
     projectRoot: File,
     command: List<String>,
-    task: String,
+    tasks: List<String>,
     initScript: File?,
   ): GradleRun {
     val injection =
@@ -185,7 +226,7 @@ class GradleSourceCompiler(
     val startedAt = System.nanoTime()
     val process = runCatching {
       // Not `--quiet`: [CompileWork] reads the plain console's `> Task :x` lines.
-      ProcessBuilder(command + injection + listOf("--console=plain", task))
+      ProcessBuilder(command + injection + listOf("--console=plain") + tasks)
         .directory(projectRoot)
         .redirectErrorStream(true)
         .apply {
@@ -234,6 +275,8 @@ class GradleSourceCompiler(
 
   companion object {
     const val TASK = "composePreviewCompile"
+    /** Writes the module's daemon launch descriptor. */
+    const val DAEMON_START_TASK = "composePreviewDaemonStart"
     private const val MAX_CAPTURED_CHARS = 64 * 1024
     private val TASK_NOT_FOUND = Regex("""task '$TASK' not found|Task '[^']*$TASK' not found""")
 

@@ -503,34 +503,47 @@ class SourceTree(
 
   /**
    * When the build last built each file, as a function of the file: the oldest of its owning
-   * modules' latest [DeclaredModule.outputs], so an edit newer than any owner's last build counts
-   * as unbuilt, and one module's later build doesn't hide another's unbuilt edit. A file no
-   * published output covers falls back to the newest Gradle class output the `build/` convention
-   * finds. `null` when neither says.
+   * modules' last builds, so an edit newer than any owner's last build counts as unbuilt, and one
+   * module's later build doesn't hide another's unbuilt edit. A published module's last build is
+   * the newest of its [DeclaredModule.outputs] and the class outputs under its directory: the
+   * preview manifest is written only by discovery, and a compile or IDE build since then leaves it
+   * behind its classes. A file no published module covers falls back to the newest Gradle class
+   * output the `build/` convention finds. `null` when none of them says.
    */
   private fun builtAt(): (File) -> Long? {
     val convention by lazy { newestClassOutput() }
-    val byModule = declaredOutputs.mapValues { (_, outputs) ->
-      outputs.filter(File::isFile).maxOfOrNull(File::lastModified)
+    val byModule = HashMap<String, Long?>()
+    fun built(module: Module): Long? {
+      if (module.key in byModule) return byModule[module.key]
+      val outputs = declaredOutputs[module.key]
+      val built =
+        if (outputs == null) null
+        else
+          listOfNotNull(
+              outputs.filter(File::isFile).maxOfOrNull(File::lastModified),
+              newestClassOutputIn(module.dir),
+            )
+            .maxOrNull()
+      byModule[module.key] = built
+      return built
     }
-    return { file ->
-      modulesOfPath(file.path).mapNotNull { byModule[it.key] }.minOrNull() ?: convention
-    }
+    return { file -> modulesOfPath(file.path).mapNotNull(::built).minOrNull() ?: convention }
   }
 
-  private fun newestClassOutput(): Long? {
+  private fun newestClassOutput(): Long? =
+    sourceRoots().mapNotNull { newestClassOutputIn(it.parentFile) }.maxOrNull()
+
+  /** The newest class file under [module]'s Gradle class output directories. */
+  private fun newestClassOutputIn(module: File): Long? {
     var newest: Long? = null
-    val moduleDirs = sourceRoots().map { it.parentFile }
-    moduleDirs.forEach { module ->
-      CLASS_OUTPUTS.map { File(module, it) }
-        .filter(File::isDirectory)
-        .forEach { output ->
-          output
-            .walkTopDown()
-            .filter { it.isFile && it.extension == "class" }
-            .forEach { newest = maxOf(newest ?: 0L, it.lastModified()) }
-        }
-    }
+    CLASS_OUTPUTS.map { File(module, it) }
+      .filter(File::isDirectory)
+      .forEach { output ->
+        output
+          .walkTopDown()
+          .filter { it.isFile && it.extension == "class" }
+          .forEach { newest = maxOf(newest ?: 0L, it.lastModified()) }
+      }
     return newest
   }
 

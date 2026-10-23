@@ -866,16 +866,24 @@ class SourceRecompileTest {
   }
 
   /**
-   * #73: a published build file's edit used to go unseen. It recompiles the module, and reaches the
-   * daemon as a classpath change, so the daemon checks its classpath fingerprint.
+   * #73/#76: a published build file's edit used to go unseen. It recompiles the module with its
+   * launch descriptor, and restarts the daemon from it before the render: the running process keeps
+   * the classpath it started with, and a Bazel daemon ignores a classpath `fileChanged`.
    */
   @Test
-  fun `a published build file's edit recompiles and is forwarded as a classpath change`() {
+  fun `a published build file's edit rebuilds the descriptor and restarts the daemon`() {
     lateinit var fixture: Fixture
+    val relaunched = CopyOnWriteArrayList<List<File>>()
     start(
-      SourceCompiler { _, _, sources ->
-        compiles += sources
-        SourceCompileOutcome.Ok(durationMs = 1, work = nextWork)
+      object : SourceCompiler {
+        override fun compile(projectRoot: File, modulePath: String, sources: List<File>) =
+          SourceCompileOutcome.Ok(durationMs = 1, work = nextWork).also { compiles += sources }
+
+        override fun compileAndRelaunch(
+          projectRoot: File,
+          modulePath: String,
+          sources: List<File>,
+        ) = SourceCompileOutcome.Ok(durationMs = 1, work = nextWork).also { relaunched += sources }
       }
     )
     fixture = fixture()
@@ -883,17 +891,38 @@ class SourceRecompileTest {
     val build = File(app, "build.gradle.kts")
     publishSourceDir(app, ":app", File(app, "src/main/kotlin"), buildFiles = listOf(build))
     render(fixture)
-    compiles.clear()
-    daemon.fileChanges.clear()
+    val first = daemon
+    first.fileChanges.clear()
+    factory.daemonConfigurer = { replacement ->
+      replacement.autoRenderPngPath = { fixture.classes.absolutePath }
+    }
 
     build.writeText("plugins { }")
     build.setLastModified(build.lastModified() + 2_000)
-    render(fixture)
+    fixture.classes.writeText("after the build file edit")
+    assertThat(render(fixture).bytes).isEqualTo("after the build file edit")
 
-    assertThat(compiles.single().map { it.absolutePath }).containsExactly(build.absolutePath)
-    val changes = daemon.fileChanges.toList()
-    assertThat(changes.map { it["kind"]!!.jsonPrimitive.content }).containsExactly("classpath")
-    assertThat(changes.single()["path"]!!.jsonPrimitive.content).isEqualTo(build.absolutePath)
+    assertThat(relaunched.single().map { it.absolutePath }).containsExactly(build.absolutePath)
+    assertThat(compiles).isEmpty()
+    assertThat(factory.spawnHistory).hasSize(2)
+    assertThat(first.fileChanges).isEmpty()
+  }
+
+  /** #76: the descriptor rewrite rides along with the compile, in the same Gradle invocation. */
+  @Test
+  fun `gradle compiler rewrites the launch descriptor when asked to relaunch`() {
+    assumeFalse(System.getProperty("os.name").orEmpty().startsWith("Windows"))
+    val root = tmp.newFolder("gradle-relaunch")
+    val args = File(root, "args.txt")
+    File(root, "gradlew").apply {
+      writeText("#!/bin/sh\necho \"$@\" > '${args.absolutePath}'\nexit 0\n")
+      setExecutable(true)
+    }
+
+    GradleSourceCompiler().compileAndRelaunch(root, ":app", emptyList())
+
+    assertThat(args.readText())
+      .contains(":app:composePreviewCompile :app:composePreviewDaemonStart")
   }
 
   @Test

@@ -864,6 +864,9 @@ class DaemonMcpServer(
     }
   }
 
+  /** Modules already warned that their in-process compile sees only the edited files. */
+  private val editsOnlyWarned: MutableSet<DaemonAddr> = ConcurrentHashMap.newKeySet()
+
   /** Daemon clients asked to warm their in-process compiler; each is asked once. */
   private val compileWarmUpAsked: MutableSet<Any> =
     java.util.Collections.synchronizedSet(
@@ -1058,12 +1061,19 @@ class DaemonMcpServer(
             // compiler is misconfigured for this module and later edits skip it. Not when it was
             // only sent the edits (a module that published no source list): that compile can fail
             // on an edit that needs the rest of the module, which says nothing about the next one.
-            if (
-              inProcess is SourceCompileOutcome.Failed &&
-                gradle is SourceCompileOutcome.Ok &&
-                module?.all != null
-            ) {
-              daemon.allClients().firstOrNull()?.let(inProcessDeclined::add)
+            if (inProcess is SourceCompileOutcome.Failed && gradle is SourceCompileOutcome.Ok) {
+              if (module?.all != null) {
+                daemon.allClients().firstOrNull()?.let(inProcessDeclined::add)
+              } else if (editsOnlyWarned.add(addr)) {
+                System.err.println(
+                  "compose-preview-mcp: ${daemon.modulePath} published no source list in its " +
+                    "launch descriptor, so its in-process compile sees only the edited files " +
+                    "and falls back to Gradle when an edit needs the rest of the module. The " +
+                    "in-process compiler stays on for later edits. Regenerate the descriptor " +
+                    "with compose-ai-tools 2.71.0 or newer (2.72.1 for Bazel/Buck2) to publish " +
+                    "one."
+                )
+              }
             }
             gradle
           }

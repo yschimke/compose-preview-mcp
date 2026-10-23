@@ -661,11 +661,20 @@ class SourceRecompileTest {
     render(fixture)
     val askedBefore = asked.get()
 
-    edit(fixture, """@Preview fun Header() { Text("Gradle is right") }""")
-    assertThat(render(fixture).bytes).contains("Gradle is right")
-    edit(fixture, """@Preview fun Header() { Text("again") }""")
-    assertThat(render(fixture).bytes).contains("again")
+    val stderr = java.io.ByteArrayOutputStream()
+    val original = System.err
+    System.setErr(java.io.PrintStream(stderr, true))
+    try {
+      edit(fixture, """@Preview fun Header() { Text("Gradle is right") }""")
+      assertThat(render(fixture).bytes).contains("Gradle is right")
+      edit(fixture, """@Preview fun Header() { Text("again") }""")
+      assertThat(render(fixture).bytes).contains("again")
+    } finally {
+      System.setErr(original)
+    }
     assertThat(asked.get()).isEqualTo(askedBefore + 2)
+    // Said once, not on every edit.
+    assertThat(stderr.toString().lines().filter { "published no source list" in it }).hasSize(1)
   }
 
   /**

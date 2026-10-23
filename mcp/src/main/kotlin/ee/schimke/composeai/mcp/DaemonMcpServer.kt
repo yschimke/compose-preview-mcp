@@ -1108,13 +1108,18 @@ class DaemonMcpServer(
       // load the same output directory, still need telling.
       val compiledInProcess =
         outcome is SourceCompileOutcome.Ok && outcome.work?.task == IN_PROCESS_COMPILE_TASK
+      // A build file's edit can change the classpath, which the daemon checks against the
+      // fingerprint it started with; a source's swaps the classloader.
+      val tree = sourceTrees[daemon.workspaceId]
       if (outcome !is SourceCompileOutcome.Failed)
         daemon.allClients().drop(if (compiledInProcess) 1 else 0).forEach { client ->
           sources.forEach { path ->
             runCatching {
               client.fileChanged(
                 path = path,
-                kind = FileKind.SOURCE,
+                kind =
+                  if (tree?.isBuildFile(File(path)) == true) FileKind.CLASSPATH
+                  else FileKind.SOURCE,
                 changeType = ChangeType.MODIFIED,
               )
             }
@@ -1133,16 +1138,20 @@ class DaemonMcpServer(
   private fun moduleSourcesOf(daemon: SupervisedDaemon, edited: List<String>): ModuleSources? {
     val tree = sourceTrees[daemon.workspaceId] ?: return null
     val root = supervisor.project(daemon.workspaceId)?.path ?: return null
-    val key =
-      tree.moduleKey(
-        daemon.modulePath,
-        listOfNotNull(daemon.moduleProjectDirPath?.let(::File), moduleDir(root, daemon.modulePath)),
-      ) ?: return null
+    val key = moduleKeyOf(daemon, tree, root) ?: return null
     return ModuleSources(
       all = tree.kotlinSourcesOf(key)?.map { it.absolutePath },
-      foreign = edited.filter { path -> tree.moduleOf(File(path)).let { it != null && it != key } },
+      foreign =
+        edited.filter { path -> tree.modulesOf(File(path)).let { it.isNotEmpty() && key !in it } },
     )
   }
+
+  /** [daemon]'s module key in [tree] ([SourceTree.moduleKey]), or `null` when it isn't one. */
+  private fun moduleKeyOf(daemon: SupervisedDaemon, tree: SourceTree, root: File): String? =
+    tree.moduleKey(
+      daemon.modulePath,
+      listOfNotNull(daemon.moduleProjectDirPath?.let(::File), moduleDir(root, daemon.modulePath)),
+    )
 
   /** [all] is `null` when the module published no source list, so only the edits are known. */
   private class ModuleSources(val all: List<String>?, val foreign: List<String>)
@@ -1241,7 +1250,7 @@ class DaemonMcpServer(
       tree
         .changedSince(compiled)
         .map { it.absolutePath }
-        .filterNot { leafOfAnotherModule(daemon, tree, root, it) }
+        .filterNot { unrelatedEdit(daemon, tree, root, it) }
     if (changed.isEmpty()) return
     changed.forEach(previewActivity::sourceChanged)
     pendingSources.computeIfAbsent(addr) { ConcurrentHashMap.newKeySet() }.addAll(changed)
@@ -1249,33 +1258,29 @@ class DaemonMcpServer(
   }
 
   /**
-   * Whether [path] is a leaf of another module that [daemon] has no reason to recompile for: a file
-   * another module's catalog declares a preview in and [daemon]'s doesn't, in a module nothing on
-   * [daemon]'s classpath comes from. A file in a module [daemon] depends on is kept, since the
-   * composable it declares may be one [daemon]'s previews call. So is one whose module can't be
-   * told apart by directory (a Bazel or Buck2 target, whose module directory is the workspace
-   * root).
+   * Whether [path] belongs only to modules [daemon] does not build from, so its edit has no reason
+   * to recompile [daemon]: another module's file, preview or not, when nothing on [daemon]'s
+   * classpath comes from that module's directory. A file in a module [daemon] depends on is kept,
+   * and so is one whose module can't be told apart by directory (a Bazel or Buck2 target, whose
+   * module directory is the workspace root, and whose outputs live in the output tree), or that
+   * belongs to no module the tree knows.
    */
-  private fun leafOfAnotherModule(
+  private fun unrelatedEdit(
     daemon: SupervisedDaemon,
     tree: SourceTree,
     root: File,
     path: String,
   ): Boolean {
-    val addr = DaemonAddr(daemon.workspaceId, daemon.modulePath)
-    val canonical = runCatching { File(path).canonicalPath }.getOrDefault(path)
-    val declaring =
-      catalog
-        .filter { (other, previews) ->
-          other.workspaceId == addr.workspaceId &&
-            previews.values.any { it.resolvedSourcePath == canonical }
-        }
-        .keys
-    if (declaring.isEmpty() || addr in declaring) return false
-    val owner = tree.moduleDirOf(File(path)) ?: return false
-    if (owner == root.absoluteFile.normalize()) return false
-    val prefix = "${owner.path}${File.separator}"
-    return daemon.classpathEntries.none { it == owner.path || it.startsWith(prefix) }
+    val key = moduleKeyOf(daemon, tree, root) ?: return false
+    val file = File(path)
+    val owners = tree.modulesOf(file)
+    if (owners.isEmpty() || key in owners) return false
+    val dirs = tree.moduleDirsOf(file)
+    if (dirs.isEmpty() || root.absoluteFile.normalize() in dirs) return false
+    return dirs.none { dir ->
+      val prefix = "${dir.path}${File.separator}"
+      daemon.classpathEntries.any { it == dir.path || it.startsWith(prefix) }
+    }
   }
 
   /**
@@ -1299,6 +1304,8 @@ class DaemonMcpServer(
         sourceDirs = watch.sourceDirs.map(::File),
         resourceDirs = watch.resourceDirs.map(::File),
         modulePath = descriptor.modulePath,
+        buildFiles = watch.buildFiles.map(::File),
+        outputs = listOf(descriptor.manifestPath).filter { it.isNotEmpty() }.map(::File),
       )
     }
 

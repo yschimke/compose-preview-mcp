@@ -334,7 +334,12 @@ class SourceRecompileTest {
       .build()
 
   /** Writes [moduleDir]'s launch descriptor publishing [sourceDir] as its `sourceWatch`. */
-  private fun publishSourceDir(moduleDir: File, modulePath: String, sourceDir: File) {
+  private fun publishSourceDir(
+    moduleDir: File,
+    modulePath: String,
+    sourceDir: File,
+    buildFiles: List<File> = emptyList(),
+  ) {
     File(moduleDir, "build/compose-previews/daemon-launch.json").apply {
       parentFile.mkdirs()
       writeText(
@@ -342,7 +347,8 @@ class SourceRecompileTest {
         {"schemaVersion":2,"modulePath":"$modulePath","variant":"debug","enabled":true,
          "mainClass":"M","classpath":[],"jvmArgs":[],"systemProperties":{},
          "workingDirectory":"${moduleDir.absolutePath}","manifestPath":"${moduleDir.absolutePath}/p.json",
-         "sourceWatch":{"sourceDirs":["${sourceDir.absolutePath}"]}}
+         "sourceWatch":{"sourceDirs":["${sourceDir.absolutePath}"],
+           "buildFiles":[${buildFiles.joinToString(",") { "\"${it.absolutePath}\"" }}]}}
         """
           .trimIndent()
       )
@@ -801,6 +807,93 @@ class SourceRecompileTest {
     assertThat(gradle).containsExactly(":app")
     assertThat(asked.getValue(":feature").single().single())
       .endsWith("feature/src/main/kotlin/com/example/Screen.kt")
+  }
+
+  /**
+   * #73: an edit to another module's file that declares no preview (a view model, a theme) reached
+   * every module's compile, and ran Gradle for modules that don't depend on it.
+   */
+  @Test
+  fun `another module's non-preview edit does not recompile a module that does not use it`() {
+    val gradle = CopyOnWriteArrayList<String>()
+    start(
+      SourceCompiler { _, modulePath, _ ->
+        gradle += modulePath
+        SourceCompileOutcome.Ok(durationMs = 1, work = nextWork)
+      }
+    )
+    val projectDir = tmp.newFolder("workspace")
+    for (name in listOf("app", "feature")) {
+      File(projectDir, "$name/build.gradle.kts").apply { parentFile.mkdirs() }.writeText("")
+      File(projectDir, "$name/src/main/kotlin/com/example/Screen.kt").apply {
+        parentFile.mkdirs()
+        writeText("""@Preview fun Header() { Text("$name") }""")
+      }
+    }
+    val viewModel =
+      File(projectDir, "feature/src/main/kotlin/com/example/ViewModel.kt").apply {
+        writeText("class ViewModel")
+      }
+    val workspaceId = registerWorkspace(projectDir)
+    supervisor.daemonFor(workspaceId, ":app")
+    val app = factory.daemons.getValue(workspaceId to ":app")
+    val asked = CopyOnWriteArrayList<List<String>>()
+    app.onCompileSources = { sources ->
+      asked += sources
+      CompileSourcesResult(result = CompileResultKind.OK, durationMs = 1)
+    }
+    app.emitDiscovery(PREVIEW_ID, sourceFile = "app/src/main/kotlin/com/example/Screen.kt")
+    client.expectNotification("notifications/resources/list_changed", 2_000)
+    val png = tmp.newFile("render.png").apply { writeText("png") }
+    app.autoRenderPngPath = { png.absolutePath }
+    fun render() =
+      client.callTool(
+        "render_preview",
+        buildJsonObject {
+          put("uri", PreviewUri(workspaceId, ":app", PREVIEW_ID).toUri())
+          put("inline", false)
+        },
+        timeoutMs = 10_000,
+      )
+    render()
+    asked.clear()
+
+    viewModel.writeText("class ViewModel(val edited: Int)")
+    viewModel.setLastModified(viewModel.lastModified() + 2_000)
+    render()
+    assertThat(asked).isEmpty()
+    assertThat(gradle).isEmpty()
+  }
+
+  /**
+   * #73: a published build file's edit used to go unseen. It recompiles the module, and reaches the
+   * daemon as a classpath change, so the daemon checks its classpath fingerprint.
+   */
+  @Test
+  fun `a published build file's edit recompiles and is forwarded as a classpath change`() {
+    lateinit var fixture: Fixture
+    start(
+      SourceCompiler { _, _, sources ->
+        compiles += sources
+        SourceCompileOutcome.Ok(durationMs = 1, work = nextWork)
+      }
+    )
+    fixture = fixture()
+    val app = File(fixture.source.path.substringBefore("/src/"))
+    val build = File(app, "build.gradle.kts")
+    publishSourceDir(app, ":app", File(app, "src/main/kotlin"), buildFiles = listOf(build))
+    render(fixture)
+    compiles.clear()
+    daemon.fileChanges.clear()
+
+    build.writeText("plugins { }")
+    build.setLastModified(build.lastModified() + 2_000)
+    render(fixture)
+
+    assertThat(compiles.single().map { it.absolutePath }).containsExactly(build.absolutePath)
+    val changes = daemon.fileChanges.toList()
+    assertThat(changes.map { it["kind"]!!.jsonPrimitive.content }).containsExactly("classpath")
+    assertThat(changes.single()["path"]!!.jsonPrimitive.content).isEqualTo(build.absolutePath)
   }
 
   @Test

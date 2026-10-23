@@ -52,6 +52,17 @@ class SourceTree(
      * workspace shares one [moduleDir], so this, when set, is what tells them apart.
      */
     val modulePath: String? = null,
+    /**
+     * Files whose edits change what the module builds or its classpath: build scripts, version
+     * catalogs, a Bazel package's `BUILD` file and `.compose-preview/bazel.json`.
+     */
+    val buildFiles: List<File> = emptyList(),
+    /**
+     * Files the build writes when it builds the module (its preview manifest): with the class
+     * outputs the `build/` convention finds, the time a source newer than every one of them was
+     * edited after the last build. A Bazel or Buck2 target has no `build/` to find.
+     */
+    val outputs: List<File> = emptyList(),
   )
 
   /**
@@ -137,6 +148,12 @@ class SourceTree(
 
   /** Which [generation] each changed file was last seen changing in. */
   private val changedAt = LinkedHashMap<File, Long>()
+
+  /** Each published build file's path, with the modules that published it. */
+  private val buildFileOwners = LinkedHashMap<String, MutableSet<Module>>()
+
+  /** Each published module's [DeclaredModule.outputs], by module key. */
+  private val declaredOutputs = LinkedHashMap<String, List<File>>()
 
   /** Root directories whose files all count as sources: published resource directories. */
   private val resourceRoots = mutableListOf<String>()
@@ -245,24 +262,37 @@ class SourceTree(
   }
 
   /**
-   * The key of the module [file] belongs to: the module whose watched root holds it, the deepest
-   * when roots nest. `null` before the first walk, or for a file outside every module.
+   * The keys of the modules [file] belongs to: those whose watched root holds it, the deepest when
+   * roots nest, and every module when several publish that same root (two Bazel targets in one
+   * package, two compilations sharing `commonMain`). A build file belongs to the modules that
+   * published it. Empty before the first walk, or for a file outside every module.
    */
   @Synchronized
-  fun moduleOf(file: File): String? = moduleOfPath(file.absoluteFile.normalize().path)?.key
+  fun modulesOf(file: File): Set<String> =
+    modulesOfPath(file.absoluteFile.normalize().path).mapTo(LinkedHashSet()) { it.key }
 
   /**
-   * The directory of the module [file] belongs to, as [moduleOf] finds it. For a Bazel or Buck2
-   * target that is the workspace root, which every target shares.
+   * The directories of the modules [file] belongs to, as [modulesOf] finds them. For a Bazel or
+   * Buck2 target that is the workspace root, which every target shares.
    */
   @Synchronized
-  fun moduleDirOf(file: File): File? = moduleOfPath(file.absoluteFile.normalize().path)?.dir
+  fun moduleDirsOf(file: File): Set<File> =
+    modulesOfPath(file.absoluteFile.normalize().path).mapTo(LinkedHashSet()) { it.dir }
 
-  private fun moduleOfPath(path: String): Module? =
-    moduleRoots
-      .filter { (root, _) -> path.startsWith("$root${File.separator}") }
-      .maxByOrNull { (root, _) -> root.length }
-      ?.second
+  /** Whether [file] is a build file a module published, rather than a source. */
+  @Synchronized
+  fun isBuildFile(file: File): Boolean = file.absoluteFile.normalize().path in buildFileOwners
+
+  private fun modulesOfPath(path: String): Set<Module> {
+    buildFileOwners[path]?.let {
+      return it
+    }
+    val containing = moduleRoots.filter { (root, _) -> path.startsWith("$root${File.separator}") }
+    val deepest = containing.maxOfOrNull { (root, _) -> root.length } ?: return emptySet()
+    return containing
+      .filter { (root, _) -> root.length == deepest }
+      .mapTo(LinkedHashSet()) { it.second }
+  }
 
   /**
    * The key of the module a daemon for [modulePath] builds: the module that published under that
@@ -293,7 +323,9 @@ class SourceTree(
   @Synchronized
   fun kotlinSourcesOf(key: String): List<File>? {
     if (moduleRoots.none { (_, module) -> module.key == key && module.published }) return null
-    return files.keys.filter { it.extension == "kt" && moduleOf(it) == key }.sorted()
+    return files.keys
+      .filter { it.extension == "kt" && modulesOfPath(it.path).any { module -> module.key == key } }
+      .sorted()
   }
 
   /** Files that changed after [generation], for the compile's source list. */
@@ -304,12 +336,15 @@ class SourceTree(
   private fun initialWalk(startedAt: Long): Refresh {
     var listed = 0
     watchRoots().forEach { src -> listed += register(src) {} }
+    registerBuildFiles {}
     modulesScannedAt = startedAt
     initialized = true
-    val compiledAt = newestClassOutput()
+    val built = builtAt()
     val pending =
-      if (compiledAt == null) emptyList()
-      else files.filter { (_, stamp) -> stamp.modifiedMs > compiledAt }.keys.toList()
+      files
+        .filter { (file, stamp) -> built(file)?.let { stamp.modifiedMs > it } == true }
+        .keys
+        .toList()
     if (pending.isNotEmpty()) {
       generation++
       pending.forEach { changedAt[it] = generation }
@@ -335,16 +370,27 @@ class SourceTree(
     val roots = watchRoots()
     prune()
     val fresh = roots.filter { it !in dirs }
-    if (fresh.isEmpty()) return 0
-    val compiledAt = newestClassOutput()
-    var listed = 0
-    fresh.forEach { dir ->
-      listed +=
-        register(dir) { file ->
-          if (compiledAt != null && file.lastModified() > compiledAt) onChanged(file)
-        }
+    val freshBuildFiles = buildFileOwners.keys.map(::File).filter { it !in files && it.isFile }
+    if (fresh.isEmpty() && freshBuildFiles.isEmpty()) return 0
+    val built = builtAt()
+    val report = { file: File ->
+      if (built(file)?.let { file.lastModified() > it } == true) onChanged(file)
     }
+    var listed = 0
+    fresh.forEach { dir -> listed += register(dir, report) }
+    registerBuildFiles(report)
     return listed
+  }
+
+  /** Adds each published build file not yet cached. */
+  private fun registerBuildFiles(onFile: (File) -> Unit) {
+    buildFileOwners.keys
+      .map(::File)
+      .filter { it !in files && it.isFile }
+      .forEach {
+        files[it] = stamp(it)
+        onFile(it)
+      }
   }
 
   /**
@@ -357,7 +403,8 @@ class SourceTree(
     val prefixes = moduleRoots.map { (root, _) -> root }
     fun inside(file: File): Boolean {
       val path = file.path
-      return prefixes.any { path == it || path.startsWith("$it${File.separator}") }
+      return path in buildFileOwners ||
+        prefixes.any { path == it || path.startsWith("$it${File.separator}") }
     }
     dirs.keys.removeAll { !inside(it) }
     files.keys.removeAll { !inside(it) }
@@ -386,11 +433,18 @@ class SourceTree(
 
   /**
    * What the tree watches: each published module's source and resource directories, and the `src/`
-   * of every module that published none. Rebuilds [moduleRoots] and [resourceRoots].
+   * of every module that published none. Rebuilds [moduleRoots], [resourceRoots], [buildFileOwners]
+   * and [declaredOutputs].
    */
   private fun watchRoots(): List<File> {
     val published = runCatching(declared).getOrDefault(emptyList())
     val publishedModules = published.map { it.moduleDir.absoluteFile.normalize() }.toSet()
+    buildFileOwners.clear()
+    declaredOutputs.clear()
+    published.forEach { declared ->
+      declaredOutputs[declared.modulePath ?: declared.moduleDir.absoluteFile.normalize().path] =
+        declared.outputs
+    }
     resourceRoots.clear()
     published
       .flatMap { it.resourceDirs }
@@ -420,6 +474,9 @@ class SourceTree(
           moduleRoots += dir.path to module
           if (dir.isDirectory) roots += dir
         }
+      declared.buildFiles.forEach { file ->
+        buildFileOwners.getOrPut(file.absoluteFile.normalize().path) { LinkedHashSet() } += module
+      }
     }
     return roots.toList()
   }
@@ -442,6 +499,23 @@ class SourceTree(
       }
     }
     return roots
+  }
+
+  /**
+   * When the build last built each file, as a function of the file: the oldest of its owning
+   * modules' latest [DeclaredModule.outputs], so an edit newer than any owner's last build counts
+   * as unbuilt, and one module's later build doesn't hide another's unbuilt edit. A file no
+   * published output covers falls back to the newest Gradle class output the `build/` convention
+   * finds. `null` when neither says.
+   */
+  private fun builtAt(): (File) -> Long? {
+    val convention by lazy { newestClassOutput() }
+    val byModule = declaredOutputs.mapValues { (_, outputs) ->
+      outputs.filter(File::isFile).maxOfOrNull(File::lastModified)
+    }
+    return { file ->
+      modulesOfPath(file.path).mapNotNull { byModule[it.key] }.minOrNull() ?: convention
+    }
   }
 
   private fun newestClassOutput(): Long? {

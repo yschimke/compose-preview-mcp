@@ -1,5 +1,12 @@
 # Changelog
 
+## [4.11.0](https://github.com/yschimke/compose-preview-mcp/compare/v4.10.0...v4.11.0) (2026-10-23)
+
+
+### Bug Fixes
+
+* count only a module's own classes as its build ([#81](https://github.com/yschimke/compose-preview-mcp/issues/81)) ([f4b1f83](https://github.com/yschimke/compose-preview-mcp/commit/f4b1f83c48b6383fae1143492c08f885a9595e8a))
+
 ## [4.10.0](https://github.com/yschimke/compose-preview-mcp/compare/v4.9.0...v4.10.0) (2026-10-23)
 
 

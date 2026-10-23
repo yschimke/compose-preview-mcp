@@ -28,9 +28,16 @@ class SourceTree(
   val root: File,
   private val budgetMs: Long = DEFAULT_BUDGET_MS,
   /**
+   * How often an unfocused [refresh] reads [declared] again, so a launch descriptor written after
+   * the first walk, or a published directory the build creates later (generated sources), is
+   * watched too.
+   */
+  private val moduleRescanMs: Long = DEFAULT_MODULE_RESCAN_MS,
+  /**
    * Modules whose build published where they're built from (the launch descriptor's `sourceWatch`),
-   * read on the first walk. Each replaces the `src/` convention for its module, and one the
-   * convention can't find (a Bazel or Buck2 target) is watched all the same.
+   * read on the first walk and every [moduleRescanMs] after. Each replaces the `src/` convention
+   * for its module, and one the convention can't find (a Bazel or Buck2 target) is watched all the
+   * same.
    */
   private val declared: () -> List<DeclaredModule> = { emptyList() },
 ) {
@@ -40,6 +47,11 @@ class SourceTree(
     val moduleDir: File,
     val sourceDirs: List<File>,
     val resourceDirs: List<File>,
+    /**
+     * The build's name for the module (`:app`, `//feature:ui`). Every Bazel or Buck2 target of a
+     * workspace shares one [moduleDir], so this, when set, is what tells them apart.
+     */
+    val modulePath: String? = null,
   )
 
   /**
@@ -102,10 +114,20 @@ class SourceTree(
   private val files = LinkedHashMap<File, Stamp>()
   private var initialized = false
 
-  private data class Module(val dir: File, val published: Boolean)
+  /**
+   * A module, identified by [key]: its published module path, else its directory. [modulePath] is
+   * null for a module found by convention.
+   */
+  private data class Module(
+    val key: String,
+    val dir: File,
+    val modulePath: String?,
+    val published: Boolean,
+  )
 
   /** Each watched root's path, with the module it belongs to; set by the first walk. */
   private val moduleRoots = mutableListOf<Pair<String, Module>>()
+  private var modulesScannedAt = 0L
   private var fileCursor = 0
 
   /** Bumped on every refresh that saw a change; callers compare it with what they compiled. */
@@ -134,6 +156,12 @@ class SourceTree(
     var statted = 0
     var listed = 0
     var complete = true
+    if (
+      scoped == null &&
+        startedAt - modulesScannedAt >= TimeUnit.MILLISECONDS.toNanos(moduleRescanMs)
+    ) {
+      listed += rescanModules { changed += it }
+    }
     // Directories first: a moved directory mtime is how additions, deletions and atomic renames
     // show up, and a re-list is the only walk an unchanged tree never does.
     for ((dir, known) in dirs.entries.toList()) {
@@ -217,35 +245,48 @@ class SourceTree(
   }
 
   /**
-   * The module directory [file] belongs to: the module whose watched root holds it, the deepest
+   * The key of the module [file] belongs to: the module whose watched root holds it, the deepest
    * when roots nest. `null` before the first walk, or for a file outside every module.
    */
   @Synchronized
-  fun moduleOf(file: File): File? {
-    val path = file.absoluteFile.normalize().path
-    return moduleRoots
+  fun moduleOf(file: File): String? = moduleOfPath(file.absoluteFile.normalize().path)?.key
+
+  private fun moduleOfPath(path: String): Module? =
+    moduleRoots
       .filter { (root, _) -> path.startsWith("$root${File.separator}") }
       .maxByOrNull { (root, _) -> root.length }
       ?.second
-      ?.dir
-  }
 
-  /** Whether [moduleDir] is a module this tree watches. */
+  /**
+   * The key of the module a daemon for [modulePath] builds: the module that published under that
+   * path, else the one found by convention in the first of [moduleDirs] the tree watches. `null`
+   * for a module the tree doesn't know, as for a Bazel target that published nothing.
+   */
   @Synchronized
-  fun knowsModule(moduleDir: File): Boolean = moduleRoots.any { (_, module) ->
-    module.dir == moduleDir.absoluteFile.normalize()
+  fun moduleKey(modulePath: String, moduleDirs: List<File>): String? {
+    moduleRoots
+      .firstOrNull { (_, module) -> module.modulePath == modulePath }
+      ?.let {
+        return it.second.key
+      }
+    return moduleDirs.firstNotNullOfOrNull { dir ->
+      val normalized = dir.absoluteFile.normalize()
+      moduleRoots
+        .firstOrNull { (_, module) -> module.modulePath == null && module.dir == normalized }
+        ?.second
+        ?.key
+    }
   }
 
   /**
-   * Every Kotlin source of [moduleDir], when its build published where it is built from, else
-   * `null`. A `src/` found by convention also holds other targets' and variants' source sets
+   * Every Kotlin source of the module [key] names, when its build published where it is built from,
+   * else `null`. A `src/` found by convention also holds other targets' and variants' source sets
    * (`iosMain`, `release`), which no single compilation reads, so it has no answer here.
    */
   @Synchronized
-  fun kotlinSourcesOf(moduleDir: File): List<File>? {
-    val dir = moduleDir.absoluteFile.normalize()
-    if (moduleRoots.none { (_, module) -> module.dir == dir && module.published }) return null
-    return files.keys.filter { it.extension == "kt" && moduleOf(it) == dir }.sorted()
+  fun kotlinSourcesOf(key: String): List<File>? {
+    if (moduleRoots.none { (_, module) -> module.key == key && module.published }) return null
+    return files.keys.filter { it.extension == "kt" && moduleOf(it) == key }.sorted()
   }
 
   /** Files that changed after [generation], for the compile's source list. */
@@ -256,6 +297,7 @@ class SourceTree(
   private fun initialWalk(startedAt: Long): Refresh {
     var listed = 0
     watchRoots().forEach { src -> listed += register(src) {} }
+    modulesScannedAt = startedAt
     initialized = true
     val compiledAt = newestClassOutput()
     val pending =
@@ -273,6 +315,27 @@ class SourceTree(
       complete = true,
       initial = true,
     )
+  }
+
+  /**
+   * Reads [declared] again and registers every watch root not yet watched: a module whose launch
+   * descriptor appeared since the last scan, or a published directory that didn't exist then. As on
+   * the first walk, a file newer than every class output is reported to [onChanged]; one older is
+   * already compiled. Returns how many directories it listed.
+   */
+  private fun rescanModules(onChanged: (File) -> Unit): Int {
+    modulesScannedAt = System.nanoTime()
+    val fresh = watchRoots().filter { it !in dirs }
+    if (fresh.isEmpty()) return 0
+    val compiledAt = newestClassOutput()
+    var listed = 0
+    fresh.forEach { dir ->
+      listed +=
+        register(dir) { file ->
+          if (compiledAt != null && file.lastModified() > compiledAt) onChanged(file)
+        }
+    }
+    return listed
   }
 
   /** Adds [dir] and everything below it; returns how many directories it listed. */
@@ -296,8 +359,8 @@ class SourceTree(
   }
 
   /**
-   * What the first walk registers: each published module's source and resource directories, and the
-   * `src/` of every module that published none.
+   * What the tree watches: each published module's source and resource directories, and the `src/`
+   * of every module that published none. Rebuilds [moduleRoots] and [resourceRoots].
    */
   private fun watchRoots(): List<File> {
     val published = runCatching(declared).getOrDefault(emptyList())
@@ -312,11 +375,19 @@ class SourceTree(
       .filter { it.parentFile.absoluteFile.normalize() !in publishedModules }
       .forEach { src ->
         roots += src
-        val module = Module(src.parentFile.absoluteFile.normalize(), published = false)
+        val dir = src.parentFile.absoluteFile.normalize()
+        val module = Module(key = dir.path, dir = dir, modulePath = null, published = false)
         moduleRoots += src.absoluteFile.normalize().path to module
       }
     published.forEach { declared ->
-      val module = Module(declared.moduleDir.absoluteFile.normalize(), published = true)
+      val dir = declared.moduleDir.absoluteFile.normalize()
+      val module =
+        Module(
+          key = declared.modulePath ?: dir.path,
+          dir = dir,
+          modulePath = declared.modulePath,
+          published = true,
+        )
       (declared.sourceDirs + declared.resourceDirs)
         .map { it.absoluteFile.normalize() }
         .forEach { dir ->
@@ -380,6 +451,7 @@ class SourceTree(
 
   companion object {
     const val DEFAULT_BUDGET_MS = 200L
+    const val DEFAULT_MODULE_RESCAN_MS = 5_000L
     private const val MAX_MODULE_DEPTH = 4
     private val BUILD_FILES = listOf("build.gradle.kts", "build.gradle")
     private val SKIPPED_DIRS = setOf("build", "out", "node_modules", "gradle")

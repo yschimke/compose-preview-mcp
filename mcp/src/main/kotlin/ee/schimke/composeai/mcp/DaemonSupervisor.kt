@@ -777,4 +777,5 @@ internal fun DaemonLaunchDescriptor.withSystemProperty(
     manifestPath = manifestPath,
     jailCommand = jailCommand,
     hardTtlSeconds = hardTtlSeconds,
+    sourceWatch = sourceWatch,
   )

@@ -1,5 +1,13 @@
 # Changelog
 
+## [4.10.0](https://github.com/yschimke/compose-preview-mcp/compare/v4.9.0...v4.10.0) (2026-10-23)
+
+
+### Bug Fixes
+
+* count a module's classes as built, and restart its daemon after a build file edit ([#77](https://github.com/yschimke/compose-preview-mcp/issues/77)) ([8728129](https://github.com/yschimke/compose-preview-mcp/commit/87281291de50dd6e4a464e2af90c89dfde70b291))
+* restart the daemon only when a build file edit changes its launch ([#79](https://github.com/yschimke/compose-preview-mcp/issues/79)) ([4093f36](https://github.com/yschimke/compose-preview-mcp/commit/4093f360c3bd76b9373d12f7be1ae21217e0c151))
+
 ## [4.9.0](https://github.com/yschimke/compose-preview-mcp/compare/v4.8.0...v4.9.0) (2026-10-23)
 
 

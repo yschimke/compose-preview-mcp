@@ -1,5 +1,12 @@
 # Changelog
 
+## [4.9.0](https://github.com/yschimke/compose-preview-mcp/compare/v4.8.0...v4.9.0) (2026-10-23)
+
+
+### Bug Fixes
+
+* watch published build files, share dirs between modules, skip unrelated modules' edits ([#74](https://github.com/yschimke/compose-preview-mcp/issues/74)) ([eacec57](https://github.com/yschimke/compose-preview-mcp/commit/eacec57aec8b6eb1a3df28f7f8fd2b6fc3e93d50))
+
 ## [4.8.0](https://github.com/yschimke/compose-preview-mcp/compare/v4.7.0...v4.8.0) (2026-10-23)
 
 

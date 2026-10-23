@@ -1117,9 +1117,17 @@ class DaemonMcpServer(
       // load the same output directory, still need telling.
       val compiledInProcess =
         outcome is SourceCompileOutcome.Ok && outcome.work?.task == IN_PROCESS_COMPILE_TASK
-      if (buildChanged && outcome is SourceCompileOutcome.Ok) {
+      // Only a changed launch (a new dependency, JVM argument or system property) needs a new
+      // process, which costs a cold start (seconds on Android); any other build file edit swaps
+      // the classloader onto the rebuilt classes like a source edit.
+      if (buildChanged && outcome is SourceCompileOutcome.Ok && supervisor.launchChanged(daemon)) {
         relaunchDaemon(daemon)
         return outcome
+      }
+      // A build file whose rebuild could not run at all is left to the daemon's own classpath
+      // fingerprint check, in case it was built outside.
+      val unbuiltBuildFile = { path: String ->
+        outcome is SourceCompileOutcome.Unavailable && tree?.isBuildFile(File(path)) == true
       }
       if (outcome !is SourceCompileOutcome.Failed)
         daemon.allClients().drop(if (compiledInProcess) 1 else 0).forEach { client ->
@@ -1127,7 +1135,7 @@ class DaemonMcpServer(
             runCatching {
               client.fileChanged(
                 path = path,
-                kind = FileKind.SOURCE,
+                kind = if (unbuiltBuildFile(path)) FileKind.CLASSPATH else FileKind.SOURCE,
                 changeType = ChangeType.MODIFIED,
               )
             }
@@ -1138,11 +1146,12 @@ class DaemonMcpServer(
   }
 
   /**
-   * Restarts [daemon] from its launch descriptor, which a build file's compile just rewrote. The
-   * running process keeps the classpath it started with: a classloader swap doesn't reach a new
-   * dependency, and its classpath fingerprint covers only the jars it already had (a Bazel daemon
-   * has none). Synchronous, so the render that follows reaches the new process; renders already
-   * queued on the old one fail, as on `classpathDirty`.
+   * Restarts [daemon] from its launch descriptor, which a build file's compile just rewrote to
+   * launch a different process ([DaemonSupervisor.launchChanged]). The running process keeps the
+   * classpath it started with: a classloader swap doesn't reach a new dependency, and its classpath
+   * fingerprint covers only the jars it already had (a Bazel daemon has none). Synchronous, so the
+   * render that follows reaches the new process; renders already queued on the old one fail, as on
+   * `classpathDirty`.
    */
   private fun relaunchDaemon(daemon: SupervisedDaemon) {
     val workspaceId = daemon.workspaceId
@@ -1349,6 +1358,12 @@ class DaemonMcpServer(
         modulePath = descriptor.modulePath,
         buildFiles = watch.buildFiles.map(::File),
         outputs = listOf(descriptor.manifestPath).filter { it.isNotEmpty() }.map(::File),
+        classOutputs =
+          descriptor.systemProperties[DaemonSupervisor.USER_CLASS_DIRS_PROP]
+            .orEmpty()
+            .split(File.pathSeparator)
+            .filter { it.isNotEmpty() }
+            .map(::File),
       )
     }
 

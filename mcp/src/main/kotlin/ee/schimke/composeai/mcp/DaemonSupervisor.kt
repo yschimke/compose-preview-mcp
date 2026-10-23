@@ -252,6 +252,28 @@ class DaemonSupervisor(
     projects.clear()
   }
 
+  /**
+   * Whether [daemon]'s launch descriptor on disk now launches a different process from the one
+   * running: another classpath, JVM arguments, system properties, main class, launcher, working
+   * directory, jail command or lifetime. A daemon swaps its user classes in place, but none of
+   * these. `true` when either descriptor is unknown, so the caller restarts rather than guess.
+   */
+  fun launchChanged(daemon: SupervisedDaemon): Boolean {
+    val project = projects[daemon.workspaceId] ?: return true
+    val running = daemon.launchDescriptor ?: return true
+    val current =
+      runCatching { descriptorProvider.descriptorFor(project, daemon.modulePath) }.getOrNull()
+        ?: return true
+    return current.classpath != running.classpath ||
+      current.jvmArgs != running.jvmArgs ||
+      current.systemProperties != running.systemProperties ||
+      current.mainClass != running.mainClass ||
+      current.javaLauncher != running.javaLauncher ||
+      current.workingDirectory != running.workingDirectory ||
+      current.jailCommand != running.jailCommand ||
+      current.hardTtlSeconds != running.hardTtlSeconds
+  }
+
   /** Returns the [NotificationRouter] so callers can register handlers. */
   fun router(): NotificationRouter = router
 
@@ -267,6 +289,7 @@ class DaemonSupervisor(
         if (replicasPerDaemon > 0) it.withSystemProperty(ON_DEMAND_WORKER_BOOT_PROP, "true") else it
       }
     val supervised = SupervisedDaemon(workspaceId = project.workspaceId, modulePath = modulePath)
+    supervised.launchDescriptor = baseDescriptor
     val descriptorWorkingDirectory = File(descriptor.workingDirectory)
     supervised.classpathEntries =
       (descriptor.classpath +
@@ -539,6 +562,9 @@ class SupervisedDaemon(val workspaceId: WorkspaceId, val modulePath: String) {
    * against it.
    */
   @Volatile internal var moduleProjectDirPath: String? = null
+
+  /** The launch descriptor this daemon was spawned from, before the supervisor's injections. */
+  @Volatile internal var launchDescriptor: DaemonLaunchDescriptor? = null
 
   /**
    * Every classpath entry the launch descriptor gives the daemon, its user class directories

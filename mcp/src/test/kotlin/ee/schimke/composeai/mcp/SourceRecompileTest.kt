@@ -866,46 +866,103 @@ class SourceRecompileTest {
   }
 
   /**
-   * #73/#76: a published build file's edit used to go unseen. It recompiles the module with its
-   * launch descriptor, and restarts the daemon from it before the render: the running process keeps
-   * the classpath it started with, and a Bazel daemon ignores a classpath `fileChanged`.
+   * The compiler for the build file tests: records [compileAndRelaunch] calls, and rewrites the
+   * module's descriptor classpath to [classpathAfter] as `composePreviewDaemonStart` would.
    */
-  @Test
-  fun `a published build file's edit rebuilds the descriptor and restarts the daemon`() {
-    lateinit var fixture: Fixture
-    val relaunched = CopyOnWriteArrayList<List<File>>()
-    start(
-      object : SourceCompiler {
-        override fun compile(projectRoot: File, modulePath: String, sources: List<File>) =
-          SourceCompileOutcome.Ok(durationMs = 1, work = nextWork).also { compiles += sources }
+  private fun relaunchingCompiler(
+    relaunched: MutableList<List<File>>,
+    classpathAfter: () -> List<String>?,
+  ) =
+    object : SourceCompiler {
+      override fun compile(projectRoot: File, modulePath: String, sources: List<File>) =
+        SourceCompileOutcome.Ok(durationMs = 1, work = nextWork).also { compiles += sources }
 
-        override fun compileAndRelaunch(
-          projectRoot: File,
-          modulePath: String,
-          sources: List<File>,
-        ) = SourceCompileOutcome.Ok(durationMs = 1, work = nextWork).also { relaunched += sources }
-      }
-    )
-    fixture = fixture()
+      override fun compileAndRelaunch(projectRoot: File, modulePath: String, sources: List<File>) =
+        SourceCompileOutcome.Ok(durationMs = 1, work = nextWork).also {
+          relaunched += sources
+          classpathAfter()?.let { descriptors.classpaths[modulePath] = it }
+        }
+    }
+
+  /** Publishes [fixture]'s module with its build file watched, renders once, and edits the file. */
+  private fun editBuildFile(fixture: Fixture): File {
     val app = File(fixture.source.path.substringBefore("/src/"))
     val build = File(app, "build.gradle.kts")
     publishSourceDir(app, ":app", File(app, "src/main/kotlin"), buildFiles = listOf(build))
     render(fixture)
-    val first = daemon
-    first.fileChanges.clear()
+    daemon.fileChanges.clear()
+    build.writeText("plugins { }")
+    build.setLastModified(build.lastModified() + 2_000)
+    return build
+  }
+
+  /**
+   * #73/#76: a build file's edit that changes the launch (here, a new classpath jar) rebuilds the
+   * descriptor and restarts the daemon from it before the render: the running process keeps the
+   * classpath it started with, and a Bazel daemon ignores a classpath `fileChanged`.
+   */
+  @Test
+  fun `a build file edit that changes the launch restarts the daemon`() {
+    lateinit var fixture: Fixture
+    val relaunched = CopyOnWriteArrayList<List<File>>()
+    start(relaunchingCompiler(relaunched) { listOf("/deps/added-dependency.jar") })
+    fixture = fixture()
     factory.daemonConfigurer = { replacement ->
       replacement.autoRenderPngPath = { fixture.classes.absolutePath }
     }
-
-    build.writeText("plugins { }")
-    build.setLastModified(build.lastModified() + 2_000)
+    val build = editBuildFile(fixture)
+    val first = daemon
     fixture.classes.writeText("after the build file edit")
-    assertThat(render(fixture).bytes).isEqualTo("after the build file edit")
 
+    assertThat(render(fixture).bytes).isEqualTo("after the build file edit")
     assertThat(relaunched.single().map { it.absolutePath }).containsExactly(build.absolutePath)
     assertThat(compiles).isEmpty()
     assertThat(factory.spawnHistory).hasSize(2)
     assertThat(first.fileChanges).isEmpty()
+  }
+
+  /**
+   * #76 follow-up: a cold start costs seconds on Android, so a build file edit that leaves the
+   * launch as it was (a comment, a task tweak, a dependency already there) swaps the classloader
+   * like a source edit, and keeps the daemon.
+   */
+  @Test
+  fun `a build file edit that leaves the launch alone keeps the daemon`() {
+    lateinit var fixture: Fixture
+    val relaunched = CopyOnWriteArrayList<List<File>>()
+    start(relaunchingCompiler(relaunched) { null })
+    fixture = fixture()
+    val build = editBuildFile(fixture)
+
+    render(fixture)
+    assertThat(relaunched).hasSize(1)
+    assertThat(factory.spawnHistory).hasSize(1)
+    val changes = daemon.fileChanges.toList()
+    assertThat(changes.map { it["kind"]!!.jsonPrimitive.content }).containsExactly("source")
+    assertThat(changes.single()["path"]!!.jsonPrimitive.content).isEqualTo(build.absolutePath)
+  }
+
+  /**
+   * #77 review: when the build file's rebuild could not run at all (no wrapper), its edit still
+   * reaches the daemon's classpath fingerprint check, in case it was built outside.
+   */
+  @Test
+  fun `a build file edit that cannot be rebuilt is forwarded as a classpath change`() {
+    lateinit var fixture: Fixture
+    start(
+      object : SourceCompiler {
+        override fun compile(projectRoot: File, modulePath: String, sources: List<File>) =
+          SourceCompileOutcome.Unavailable("no Gradle wrapper")
+      }
+    )
+    fixture = fixture()
+    val build = editBuildFile(fixture)
+
+    render(fixture)
+    assertThat(factory.spawnHistory).hasSize(1)
+    val changes = daemon.fileChanges.toList()
+    assertThat(changes.map { it["kind"]!!.jsonPrimitive.content }).containsExactly("classpath")
+    assertThat(changes.single()["path"]!!.jsonPrimitive.content).isEqualTo(build.absolutePath)
   }
 
   /** #76: the descriptor rewrite rides along with the compile, in the same Gradle invocation. */

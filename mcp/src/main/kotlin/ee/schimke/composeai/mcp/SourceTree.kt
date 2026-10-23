@@ -251,6 +251,13 @@ class SourceTree(
   @Synchronized
   fun moduleOf(file: File): String? = moduleOfPath(file.absoluteFile.normalize().path)?.key
 
+  /**
+   * The directory of the module [file] belongs to, as [moduleOf] finds it. For a Bazel or Buck2
+   * target that is the workspace root, which every target shares.
+   */
+  @Synchronized
+  fun moduleDirOf(file: File): File? = moduleOfPath(file.absoluteFile.normalize().path)?.dir
+
   private fun moduleOfPath(path: String): Module? =
     moduleRoots
       .filter { (root, _) -> path.startsWith("$root${File.separator}") }
@@ -325,7 +332,9 @@ class SourceTree(
    */
   private fun rescanModules(onChanged: (File) -> Unit): Int {
     modulesScannedAt = System.nanoTime()
-    val fresh = watchRoots().filter { it !in dirs }
+    val roots = watchRoots()
+    prune(roots)
+    val fresh = roots.filter { it !in dirs }
     if (fresh.isEmpty()) return 0
     val compiledAt = newestClassOutput()
     var listed = 0
@@ -336,6 +345,22 @@ class SourceTree(
         }
     }
     return listed
+  }
+
+  /**
+   * Forgets every cached directory and file outside [roots]: a `src/` the first walk found by
+   * convention stops being watched once its module publishes narrower directories, and an edit to a
+   * source set the build no longer compiles must not reach a compile.
+   */
+  private fun prune(roots: List<File>) {
+    val prefixes = roots.map { it.path }
+    fun inside(file: File): Boolean {
+      val path = file.path
+      return prefixes.any { path == it || path.startsWith("$it${File.separator}") }
+    }
+    dirs.keys.removeAll { !inside(it) }
+    files.keys.removeAll { !inside(it) }
+    changedAt.keys.removeAll { !inside(it) }
   }
 
   /** Adds [dir] and everything below it; returns how many directories it listed. */

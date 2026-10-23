@@ -1231,7 +1231,7 @@ class DaemonMcpServer(
       tree
         .changedSince(compiled)
         .map { it.absolutePath }
-        .filterNot { leafOfAnotherModule(addr, it) }
+        .filterNot { leafOfAnotherModule(daemon, tree, root, it) }
     if (changed.isEmpty()) return
     changed.forEach(previewActivity::sourceChanged)
     pendingSources.computeIfAbsent(addr) { ConcurrentHashMap.newKeySet() }.addAll(changed)
@@ -1239,11 +1239,20 @@ class DaemonMcpServer(
   }
 
   /**
-   * Whether [path] is a file another module's catalog declares a preview in and [addr]'s doesn't: a
-   * leaf of that module, which [addr] has no reason to recompile for. `notify_file_changed` targets
-   * its compile the same way.
+   * Whether [path] is a leaf of another module that [daemon] has no reason to recompile for: a file
+   * another module's catalog declares a preview in and [daemon]'s doesn't, in a module nothing on
+   * [daemon]'s classpath comes from. A file in a module [daemon] depends on is kept, since the
+   * composable it declares may be one [daemon]'s previews call. So is one whose module can't be
+   * told apart by directory (a Bazel or Buck2 target, whose module directory is the workspace
+   * root).
    */
-  private fun leafOfAnotherModule(addr: DaemonAddr, path: String): Boolean {
+  private fun leafOfAnotherModule(
+    daemon: SupervisedDaemon,
+    tree: SourceTree,
+    root: File,
+    path: String,
+  ): Boolean {
+    val addr = DaemonAddr(daemon.workspaceId, daemon.modulePath)
     val canonical = runCatching { File(path).canonicalPath }.getOrDefault(path)
     val declaring =
       catalog
@@ -1252,7 +1261,11 @@ class DaemonMcpServer(
             previews.values.any { it.resolvedSourcePath == canonical }
         }
         .keys
-    return declaring.isNotEmpty() && addr !in declaring
+    if (declaring.isEmpty() || addr in declaring) return false
+    val owner = tree.moduleDirOf(File(path)) ?: return false
+    if (owner == root.absoluteFile.normalize()) return false
+    val prefix = "${owner.path}${File.separator}"
+    return daemon.classpathEntries.none { it == owner.path || it.startsWith(prefix) }
   }
 
   /**

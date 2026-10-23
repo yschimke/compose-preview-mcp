@@ -933,6 +933,9 @@ class FakeDaemonClientFactory : DaemonClientFactory {
 
 /** Test [DescriptorProvider] returning a stub descriptor for any module. */
 class FakeDescriptorProvider : DescriptorProvider {
+  /** Each module's descriptor classpath; empty for one not listed. */
+  val classpaths: MutableMap<String, List<String>> = java.util.concurrent.ConcurrentHashMap()
+
   override fun descriptorFor(
     project: RegisteredProject,
     modulePath: String,
@@ -943,7 +946,7 @@ class FakeDescriptorProvider : DescriptorProvider {
       variant = "debug",
       enabled = true,
       mainClass = "fake.Main",
-      classpath = emptyList(),
+      classpath = classpaths[modulePath].orEmpty(),
       jvmArgs = emptyList(),
       systemProperties = emptyMap(),
       workingDirectory = project.path.absolutePath,

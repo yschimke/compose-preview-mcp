@@ -101,14 +101,14 @@ class SourceTreeTest {
     val published = mutableListOf<SourceTree.DeclaredModule>()
     val tree = SourceTree(root, budgetMs = 10_000, moduleRescanMs = 0) { published.toList() }
     tree.refresh()
-    assertThat(tree.moduleOf(target)).isNull()
+    assertThat(tree.modulesOf(target)).isEmpty()
 
     // A generated directory the build only creates later is picked up the same way.
     val generated = File(root, "out/gen")
     published +=
       SourceTree.DeclaredModule(root, listOf(target.parentFile, generated), emptyList(), "//ui:ui")
     tree.refresh()
-    assertThat(tree.moduleOf(target)).isEqualTo("//ui:ui")
+    assertThat(tree.modulesOf(target)).containsExactly("//ui:ui")
     target.edit("fun screen() = 1")
     assertThat(tree.refresh().changed.map { it.canonicalFile })
       .containsExactly(target.canonicalFile)
@@ -134,8 +134,8 @@ class SourceTreeTest {
       }
     tree.refresh()
 
-    assertThat(tree.moduleOf(a)).isEqualTo("//feature-a:ui")
-    assertThat(tree.moduleOf(b)).isEqualTo("//feature-b:ui")
+    assertThat(tree.modulesOf(a)).containsExactly("//feature-a:ui")
+    assertThat(tree.modulesOf(b)).containsExactly("//feature-b:ui")
     assertThat(tree.moduleKey("//feature-b:ui", listOf(root))).isEqualTo("//feature-b:ui")
     assertThat(tree.kotlinSourcesOf("//feature-a:ui")!!.map { it.canonicalFile })
       .containsExactly(a.canonicalFile)
@@ -182,5 +182,99 @@ class SourceTreeTest {
 
     generated.deleteRecursively()
     assertThat(tree.refresh().changed.map { it.path }).containsExactly(gen.path)
+  }
+
+  /** #73: a published build file is watched, and its edit is reported like a source's. */
+  @Test
+  fun `a published build file is watched`() {
+    val root = createTempDirectory("cp-source-tree-build-files").toFile()
+    val screen = File(root, "ui/Screen.kt").edit("fun screen() {}")
+    val build = File(root, "ui/BUILD.bazel").edit("")
+    val config = File(root, ".compose-preview/bazel.json").edit("{}")
+    val tree =
+      SourceTree(root, budgetMs = 10_000) {
+        listOf(
+          SourceTree.DeclaredModule(
+            root,
+            listOf(screen.parentFile),
+            emptyList(),
+            "//ui:ui",
+            buildFiles = listOf(build, config),
+          )
+        )
+      }
+    tree.refresh()
+
+    config.edit("{\"providers\":[]}")
+    assertThat(tree.refresh().changed.map { it.canonicalFile })
+      .containsExactly(config.canonicalFile)
+    assertThat(tree.isBuildFile(config)).isTrue()
+    assertThat(tree.isBuildFile(screen)).isFalse()
+    assertThat(tree.modulesOf(config)).containsExactly("//ui:ui")
+  }
+
+  /**
+   * #73: a Bazel target has no `build/` to read a compile time from, so an edit made after
+   * `prepare` and before the first walk was taken as already built. Its published outputs say.
+   */
+  @Test
+  fun `an edit newer than a published output is reported on the first walk`() {
+    val root = createTempDirectory("cp-source-tree-outputs").toFile()
+    val built = File(root, "ui/Built.kt").edit("fun built() {}")
+    val manifest = File(root, ".compose-preview/outputs/ui/previews.json").edit("{}")
+    val edited = File(root, "ui/Edited.kt").edit("fun edited() {}")
+    built.setLastModified(manifest.lastModified() - 10_000)
+    edited.setLastModified(manifest.lastModified() + 10_000)
+    val tree =
+      SourceTree(root, budgetMs = 10_000) {
+        listOf(
+          SourceTree.DeclaredModule(
+            root,
+            listOf(built.parentFile),
+            emptyList(),
+            "//ui:ui",
+            outputs = listOf(manifest),
+          )
+        )
+      }
+
+    val first = tree.refresh()
+    assertThat(first.initial).isTrue()
+    assertThat(first.changed.map { it.canonicalFile }).containsExactly(edited.canonicalFile)
+  }
+
+  /**
+   * #73: two modules that publish one directory (two Bazel targets in a package, two compilations
+   * sharing `commonMain`) both own its files, and each compiles them with its own.
+   */
+  @Test
+  fun `a directory several modules publish belongs to each of them`() {
+    val root = createTempDirectory("cp-source-tree-shared").toFile()
+    val common = File(root, "src/commonMain/kotlin/Common.kt").edit("val common = 1")
+    val jvm = File(root, "src/jvmMain/kotlin/Jvm.kt").edit("val jvm = common")
+    val android = File(root, "src/androidMain/kotlin/Android.kt").edit("val android = common")
+    val tree =
+      SourceTree(root, budgetMs = 10_000) {
+        listOf(
+          SourceTree.DeclaredModule(
+            root,
+            listOf(common.parentFile, jvm.parentFile),
+            emptyList(),
+            ":jvm",
+          ),
+          SourceTree.DeclaredModule(
+            root,
+            listOf(common.parentFile, android.parentFile),
+            emptyList(),
+            ":android",
+          ),
+        )
+      }
+    tree.refresh()
+
+    assertThat(tree.modulesOf(common)).containsExactly(":jvm", ":android")
+    assertThat(tree.modulesOf(jvm)).containsExactly(":jvm")
+    assertThat(tree.kotlinSourcesOf(":android")!!.map { it.canonicalFile })
+      .containsExactly(common.canonicalFile, android.canonicalFile)
   }
 }

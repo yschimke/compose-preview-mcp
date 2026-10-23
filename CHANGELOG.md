@@ -1,5 +1,26 @@
 # Changelog
 
+## [4.6.0](https://github.com/yschimke/compose-preview-mcp/compare/v4.5.0...v4.6.0) (2026-10-23)
+
+
+### Features
+
+* ask the daemon to warm its compiler after the first render ([#62](https://github.com/yschimke/compose-preview-mcp/issues/62)) ([7ba5043](https://github.com/yschimke/compose-preview-mcp/commit/7ba504324d3af3dd1e8516f1a59ecff41b4c7769))
+* compile edits in the daemon by default ([#55](https://github.com/yschimke/compose-preview-mcp/issues/55)) ([d76d623](https://github.com/yschimke/compose-preview-mcp/commit/d76d62344d338f8eea46cb07468cd7cecb250943))
+* watch where the build says sources are, and let agents narrow it ([#56](https://github.com/yschimke/compose-preview-mcp/issues/56)) ([fce9036](https://github.com/yschimke/compose-preview-mcp/commit/fce90364293a49d994a17723868b11d758ac144b))
+
+
+### Bug Fixes
+
+* compile each edit with its own module's sources, once ([#58](https://github.com/yschimke/compose-preview-mcp/issues/58)) ([22c4aa9](https://github.com/yschimke/compose-preview-mcp/commit/22c4aa99211df394e47476796d2dc8ec7e339b70))
+* **deps:** update dependency ee.schimke.composeai:compose-ai-tools-bom to v2.70.5 ([#48](https://github.com/yschimke/compose-preview-mcp/issues/48)) ([78253a5](https://github.com/yschimke/compose-preview-mcp/commit/78253a50703bb217ff3e93a9b6f17d62c3765aaa))
+* **deps:** update dependency ee.schimke.composeai:compose-ai-tools-bom to v2.70.7 ([#51](https://github.com/yschimke/compose-preview-mcp/issues/51)) ([99e5d2a](https://github.com/yschimke/compose-preview-mcp/commit/99e5d2a05c0cd8dc427ad1dfcace1b82fb422955))
+* **deps:** update dependency ee.schimke.composeai:compose-ai-tools-bom to v2.71.0 ([#60](https://github.com/yschimke/compose-preview-mcp/issues/60)) ([140e7c4](https://github.com/yschimke/compose-preview-mcp/commit/140e7c4abc0a0249f139228feddf3fcdf28ec51b))
+* **deps:** update dependency ee.schimke.composeai:compose-preview-daemon-bom to v3.21.3 ([#49](https://github.com/yschimke/compose-preview-mcp/issues/49)) ([dc0da20](https://github.com/yschimke/compose-preview-mcp/commit/dc0da20e7aca64628141cd69d836ff76532c56d8))
+* **deps:** update dependency ee.schimke.composeai:compose-preview-daemon-bom to v3.21.4 ([#52](https://github.com/yschimke/compose-preview-mcp/issues/52)) ([3aec768](https://github.com/yschimke/compose-preview-mcp/commit/3aec768be5c27efafee38f704a21c58c8014f73d))
+* **deps:** update dependency ee.schimke.composeai:compose-preview-daemon-bom to v3.22.0 ([#59](https://github.com/yschimke/compose-preview-mcp/issues/59)) ([897fffa](https://github.com/yschimke/compose-preview-mcp/commit/897fffa848f884b03cdd9099c423cbc551d6d9aa))
+* send the edited files as a change set with compileSources ([#54](https://github.com/yschimke/compose-preview-mcp/issues/54)) ([1508536](https://github.com/yschimke/compose-preview-mcp/commit/150853676e9692e46a0661bed91e12774c7e1faa))
+
 ## [4.5.0](https://github.com/yschimke/compose-preview-mcp/compare/v4.4.0...v4.5.0) (2026-10-20)
 
 

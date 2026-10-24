@@ -3,6 +3,7 @@ package ee.schimke.composeai.mcp
 import com.google.common.truth.Truth.assertThat
 import ee.schimke.composeai.daemon.protocol.DaemonLaunchDescriptor
 import java.io.File
+import java.nio.file.Files
 import kotlinx.serialization.json.Json
 import org.junit.Rule
 import org.junit.Test
@@ -89,6 +90,39 @@ class BazelWorkspaceTest {
     File(ws, "bazel-ws/nested/settings.gradle.kts").writeText("")
     assertThat(ProjectDiscovery.buildsFor(ws)).containsExactly(ws)
     assertThat(DescriptorProvider.indexDescriptorsByModulePath(ws)).isEmpty()
+  }
+
+  @Test
+  fun `symlinked output roots with a custom prefix are never searched`() {
+    val ws = workspace()
+    // `--symlink_prefix=out-` names the convenience links `out-bin`, `out-ws`, …: not `bazel-*`.
+    val execroot =
+      tmp.newFolder("execroot").canonicalFile.apply {
+        File(this, "k8/build/compose-previews").apply {
+          mkdirs()
+          File(this, "daemon-launch.json").writeText(DESCRIPTOR)
+        }
+        File(this, "nested").mkdirs()
+        File(this, "nested/settings.gradle.kts").writeText("")
+      }
+    Files.createSymbolicLink(File(ws, "out-ws").toPath(), execroot.toPath())
+    assertThat(DescriptorProvider.indexDescriptorsByModulePath(ws)).isEmpty()
+    // The workspace root itself is walked even when it is reached through a symlink.
+    val linkedRoot =
+      File(tmp.root, "linked-ws").apply { Files.createSymbolicLink(toPath(), ws.toPath()) }
+    File(ws, ".compose-preview/outputs/abc/build/compose-previews").apply {
+      mkdirs()
+      File(this, "daemon-launch.json").writeText(DESCRIPTOR)
+    }
+    assertThat(DescriptorProvider.indexDescriptorsByModulePath(linkedRoot)).hasSize(1)
+  }
+
+  @Test
+  fun `a blazerc alone does not make a Bazel workspace`() {
+    val dir = tmp.newFolder("blazerc-only").canonicalFile
+    File(dir, ".blazerc").writeText("build --symlink_prefix=out-\n")
+    assertThat(ProjectDiscovery.isBazelWorkspace(dir)).isFalse()
+    assertThat(ProjectDiscovery.isBuild(dir)).isFalse()
   }
 
   @Test

@@ -2,6 +2,7 @@ package ee.schimke.composeai.mcp
 
 import com.google.common.truth.Truth.assertThat
 import java.io.File
+import java.nio.file.Files
 import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
@@ -39,6 +40,18 @@ class ProjectDiscoveryTest {
   @Test
   fun `a git root that is not a build finds the builds up to two levels below it`() {
     val repo = fixture()
+    assertThat(ProjectDiscovery.buildsFor(repo))
+      .containsExactly(File(repo, "ComposeAdvanced"), File(repo, "ComposeStarter"))
+      .inOrder()
+  }
+
+  @Test
+  fun `a symlinked directory below a root that is not a build is never searched`() {
+    val repo = fixture()
+    // An output-tree symlink with no `bazel-` prefix, pointing at something that looks like a
+    // build.
+    val target = build(tmp.newFolder("elsewhere"))
+    Files.createSymbolicLink(File(repo, "out-ws").toPath(), target.toPath())
     assertThat(ProjectDiscovery.buildsFor(repo))
       .containsExactly(File(repo, "ComposeAdvanced"), File(repo, "ComposeStarter"))
       .inOrder()

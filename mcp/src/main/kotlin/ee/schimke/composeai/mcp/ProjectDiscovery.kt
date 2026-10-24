@@ -1,6 +1,7 @@
 package ee.schimke.composeai.mcp
 
 import java.io.File
+import java.nio.file.Files
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.contentOrNull
@@ -11,12 +12,12 @@ import kotlinx.serialization.json.jsonPrimitive
  * (no `--project`) works for any project: the client's MCP roots, the server's working directory,
  * or a `project` argument all go through [buildsFor].
  *
- * A build is a directory with `settings.gradle(.kts)`, or a Bazel-family workspace root
- * (`MODULE.bazel`, `WORKSPACE(.bazel)`, `.blazerc`) or Buck2 project root (`.buckroot`, the
- * outermost `.buckconfig`) with no Gradle build of its own: the compose-preview CLI prepares and
- * rebuilds those ([isBazelWorkspace]), so this server never runs Bazel or Buck2 itself. A preview
- * bundle's workspace ([BundleProjects]) is one too. A repository such as wear-os-samples keeps one
- * build per sample one level below its git root, so a root that is not a build is searched up to
+ * A build is a directory with `settings.gradle(.kts)`, or a Bazel workspace root (`MODULE.bazel`,
+ * `WORKSPACE(.bazel)`) or Buck2 project root (`.buckroot`, the outermost `.buckconfig`) with no
+ * Gradle build of its own: the compose-preview CLI prepares and rebuilds those
+ * ([isBazelWorkspace]), so this server never runs Bazel or Buck2 itself. A preview bundle's
+ * workspace ([BundleProjects]) is one too. A repository such as wear-os-samples keeps one build per
+ * sample one level below its git root, so a root that is not a build is searched up to
  * [SEARCH_DEPTH] levels down.
  */
 object ProjectDiscovery {
@@ -29,8 +30,7 @@ object ProjectDiscovery {
   private val ROOT_BUILD_FILES = SETTINGS_FILES + listOf("build.gradle.kts", "build.gradle")
 
   /** The CLI's own Bazel-family markers (`detectProjectBuild`), so both agree on a workspace. */
-  private val BAZEL_WORKSPACE_FILES =
-    listOf("MODULE.bazel", "WORKSPACE.bazel", "WORKSPACE", ".blazerc")
+  private val BAZEL_WORKSPACE_FILES = listOf("MODULE.bazel", "WORKSPACE.bazel", "WORKSPACE")
 
   private val SKIPPED_DIRS = setOf("build", "node_modules")
 
@@ -99,9 +99,18 @@ object ProjectDiscovery {
     return true
   }
 
-  /** `bazel-bin`, `bazel-out`, … and Buck2's `buck-out`: output trees no scan should follow. */
+  /**
+   * An output tree no scan should follow: `bazel-bin`, `bazel-out`, … and Buck2's `buck-out` by
+   * name, and any symbolic link. A workspace built with a custom `--symlink_prefix` gets its
+   * convenience symlinks under another name, and those lead into the same output and execroot
+   * trees; skipping every symlink covers them without naming a prefix. A Gradle sample that is
+   * itself a symlink below a root is therefore not discovered, as [LocalDesignDiscovery] already
+   * refuses to follow one.
+   */
   fun isBazelOutputLink(dir: File): Boolean =
-    dir.name.startsWith("bazel-") || dir.name == "buck-out"
+    dir.name.startsWith("bazel-") ||
+      dir.name == "buck-out" ||
+      runCatching { Files.isSymbolicLink(dir.toPath()) }.getOrDefault(false)
 
   /**
    * The builds [dir] stands for: [dir] itself when it is one; else the nearest ancestor with

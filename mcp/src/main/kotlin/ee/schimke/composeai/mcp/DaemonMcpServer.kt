@@ -397,6 +397,12 @@ class DaemonMcpServer(
 
   private data class RenderedAt(val overrides: PreviewOverrides?)
 
+  /**
+   * Per-preview locks holding `get_preview_data`'s render-if-needed and `data/fetch` together, so a
+   * concurrent call at other overrides cannot render in between. Never held across previews.
+   */
+  private val dataFetchLocks = ConcurrentHashMap<PreviewIdKey, Any>()
+
   private val watchPropagator =
     WatchPropagator(
       subscriptions = subscriptions,
@@ -6482,50 +6488,55 @@ class DaemonMcpServer(
     // far as this server knows it) renders first: after a `render_matrix`, the latest render is its
     // last cell. `overrides` + `force` in the fetch then make a re-rendering kind produce this
     // configuration's artefact rather than reuse another's.
-    val latest =
-      latestRenderOverrides[PreviewIdKey(uri.workspaceId, uri.modulePath, uri.previewFqn)]
-    val rerender =
-      if (canonical == null) latest != null && latest.overrides != null
-      else latest != RenderedAt(canonical)
-    if (rerender) {
-      runCatching { awaitNextRender(uri, overrides = overrides) }
-        .onFailure {
-          return errorCallToolResult(
-            "get_preview_data: render at the requested overrides failed: ${it.message}"
-          )
-        }
-    }
-    val fetchParams =
-      if (canonical == null) perKindParams
-      else
-        JsonObject(
-          perKindParams.orEmpty() +
-            mapOf(
-              DataFetchParams.PARAM_OVERRIDES to
-                json.encodeToJsonElement(PreviewOverrides.serializer(), overrides!!),
-              DataFetchParams.PARAM_FORCE_RERENDER to JsonPrimitive(true),
+    //
+    // Serialized per preview, render and fetch together, even when no render is needed: another
+    // configuration's render landing between them would hand this call its findings.
+    val previewKey = PreviewIdKey(uri.workspaceId, uri.modulePath, uri.previewFqn)
+    synchronized(dataFetchLocks.computeIfAbsent(previewKey) { Any() }) {
+      val latest = latestRenderOverrides[previewKey]
+      val rerender =
+        if (canonical == null) latest != null && latest.overrides != null
+        else latest != RenderedAt(canonical)
+      if (rerender) {
+        runCatching { awaitNextRender(uri, overrides = overrides) }
+          .onFailure {
+            return errorCallToolResult(
+              "get_preview_data: render at the requested overrides failed: ${it.message}"
             )
-        )
-    return runCatching {
-      // Fetch first; on `DataProductNotAvailable` (-32021, never rendered) render once and retry.
-      // Other errors propagate.
-      val result =
-        try {
-          daemon.client.dataFetch(uri.previewFqn, kind, fetchParams, inline)
-        } catch (e: DataProductWireException) {
-          if (e.code != DataProductWireException.NOT_AVAILABLE) throw e
-          awaitNextRender(uri, overrides = overrides)
-          daemon.client.dataFetch(uri.previewFqn, kind, fetchParams, inline)
-        }
-      renderDataFetchResult(result)
-    }
-      .getOrElse { e ->
-        when (e) {
-          is DataProductWireException ->
-            errorCallToolResult("get_preview_data: ${nameOf(e.code)}: ${e.wireMessage}")
-          else -> errorCallToolResult("get_preview_data failed: ${e.message}")
-        }
+          }
       }
+      val fetchParams =
+        if (canonical == null) perKindParams
+        else
+          JsonObject(
+            perKindParams.orEmpty() +
+              mapOf(
+                DataFetchParams.PARAM_OVERRIDES to
+                  json.encodeToJsonElement(PreviewOverrides.serializer(), overrides!!),
+                DataFetchParams.PARAM_FORCE_RERENDER to JsonPrimitive(true),
+              )
+          )
+      return runCatching {
+        // Fetch first; on `DataProductNotAvailable` (-32021, never rendered) render once and retry.
+        // Other errors propagate.
+        val result =
+          try {
+            daemon.client.dataFetch(uri.previewFqn, kind, fetchParams, inline)
+          } catch (e: DataProductWireException) {
+            if (e.code != DataProductWireException.NOT_AVAILABLE) throw e
+            awaitNextRender(uri, overrides = overrides)
+            daemon.client.dataFetch(uri.previewFqn, kind, fetchParams, inline)
+          }
+        renderDataFetchResult(result)
+      }
+        .getOrElse { e ->
+          when (e) {
+            is DataProductWireException ->
+              errorCallToolResult("get_preview_data: ${nameOf(e.code)}: ${e.wireMessage}")
+            else -> errorCallToolResult("get_preview_data failed: ${e.message}")
+          }
+        }
+    }
   }
 
   /**

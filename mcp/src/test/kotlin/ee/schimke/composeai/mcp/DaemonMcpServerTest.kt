@@ -7070,6 +7070,65 @@ class DaemonMcpServerTest {
   }
 
   @Test
+  fun `concurrent get_preview_data calls at different overrides each get their own render's data`() {
+    // #100 review: for a kind read off the latest render, another configuration's render landing
+    // between this call's render and its fetch handed it the other configuration's findings.
+    val fetches = java.util.concurrent.CopyOnWriteArrayList<JsonObject?>()
+    lateinit var daemonRef: FakeDaemon
+    val (daemon, workspaceId) =
+      atfDaemon(fetches) { "fontScale=${daemonRef.renderOverrides.lastOrNull()?.fontScale}" }
+    daemonRef = daemon
+    val uri = PreviewUri(workspaceId, ":module", "com.example.Red").toUri()
+    // Two sessions (an MCP session runs its own tool calls one at a time).
+    val (c2s, sfc) = pipedPair()
+    val (s2c, cfs) = pipedPair()
+    val otherSession = server.newSession(input = sfc, output = s2c).also { it.start() }
+    val otherClient = McpTestClient(input = cfs, output = c2s)
+    otherClient.initialize()
+    fun findings(via: McpTestClient, scale: Double): String =
+      json
+        .parseToJsonElement(
+          via
+            .callTool(
+              "get_preview_data",
+              buildJsonObject {
+                put("uri", uri)
+                put("kind", "a11y/atf")
+                putJsonObject("overrides") { put("fontScale", scale) }
+              },
+              timeoutMs = 20_000,
+            )
+            .firstTextContent()
+        )
+        .jsonObject["payload"]!!
+        .jsonObject["findings"]!!
+        .jsonPrimitive
+        .content
+
+    // Hold the first (1.5) render open until the 2.0 call has had time to queue behind it, then
+    // finish it: without the per-preview lock the 2.0 render is dispatched, and lands, before the
+    // 1.5 call fetches.
+    val autoRender = daemon.autoRenderPngPath
+    daemon.autoRenderPngPath = null
+    val pool = java.util.concurrent.Executors.newFixedThreadPool(2)
+    try {
+      val scaled = pool.submit<String> { findings(client, 1.5) }
+      assertThat(daemon.renderRequests.poll(5_000, TimeUnit.MILLISECONDS))
+        .isEqualTo(listOf("com.example.Red"))
+      val larger = pool.submit<String> { findings(otherClient, 2.0) }
+      Thread.sleep(500)
+      daemon.autoRenderPngPath = autoRender
+      daemon.emitRenderFinished("com.example.Red", autoRender!!("com.example.Red")!!)
+      assertThat(scaled.get(20, TimeUnit.SECONDS)).isEqualTo("fontScale=1.5")
+      assertThat(larger.get(20, TimeUnit.SECONDS)).isEqualTo("fontScale=2.0")
+    } finally {
+      pool.shutdownNow()
+      runCatching { otherClient.close() }
+      runCatching { otherSession.close() }
+    }
+  }
+
+  @Test
   fun `get_preview_data folds an overrides-bearing resource_link uri`() {
     val fetches = java.util.concurrent.CopyOnWriteArrayList<JsonObject?>()
     val (daemon, workspaceId) = atfDaemon(fetches)

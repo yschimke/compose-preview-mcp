@@ -172,8 +172,7 @@ class ProjectBootstrap(
       when {
         result.timedOut -> "compose-preview bazel prepare timed out after ${durationMs}ms"
         result.exitCode != 0 ->
-          "compose-preview bazel prepare failed: " +
-            result.output.lines().lastOrNull { it.isNotBlank() }.orEmpty()
+          "compose-preview bazel prepare failed: " + CommandFailure.summarize(result.output)
         else -> "compose-preview bazel prepare wrote no daemon launch descriptor"
       }
     )
@@ -202,7 +201,7 @@ class ProjectBootstrap(
         result.timedOut -> "compose-preview bundle prepare timed out after ${durationMs}ms"
         result.exitCode != 0 ->
           "compose-preview bundle prepare failed: " +
-            result.output.lines().lastOrNull { it.isNotBlank() }.orEmpty() +
+            CommandFailure.summarize(result.output) +
             " (`bundle prepare` needs a compose-preview CLI newer than 2.59.0)"
         else -> "compose-preview bundle prepare wrote no daemon launch descriptor"
       }

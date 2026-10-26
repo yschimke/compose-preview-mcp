@@ -1169,6 +1169,8 @@ class DaemonMcpServer(
       }
     supervisor.forgetDaemon(workspaceId, modulePath)
     catalog.remove(DaemonAddr(workspaceId, modulePath))
+    // The new process loads the classes on disk; a note about the old one's would be stale.
+    staleNotes.remove(DaemonAddr(workspaceId, modulePath))
     evictDataProductsForDaemon(workspaceId, modulePath)
     watchPropagator.forget(daemon)
     runCatching { supervisor.daemonFor(workspaceId, modulePath) }
@@ -1999,7 +2001,7 @@ class DaemonMcpServer(
                 "crop":{"type":"object","description":"Return only ONE element's rectangle instead of the full frame (issue #1817) — far fewer tokens, and it focuses the view on the region you care about (the natural partner to diff_semantics: 'ref X changed' -> crop ref X). Set EITHER a semantic target (ref | testTag | role/text, resolved against compose/semantics) OR explicit render-pixel bounds {left,top,right,bottom}. Honours 'observe': png returns the cropped image (+ region metadata), hash/semantics return the crop's sha + dimensions only.","properties":{"ref":{"type":"string"},"testTag":{"type":"string"},"role":{"type":"string"},"text":{"type":"string"},"left":{"type":"integer"},"top":{"type":"integer"},"right":{"type":"integer"},"bottom":{"type":"integer"}}},
                 "overrides":{"type":"object","description":"Optional per-call display overrides."},
                 "details":{"type":"array","items":{"type":"string","enum":["a11y","layout"]},"description":"Opt-in, default none. Also fetch the accessibility findings and overlay (a11y) and the layout bounds (layout) in this call. Each adds ONE summary line to the result; the full detail goes only into the card, where the person toggles Plain / A11y overlay / Audit (numbered findings) / Layout bounds (numbered boxes with a legend of each one's size, padding, gap and scale). Pass it only when the person asks about accessibility or layout."},
-                "force":{"type":"object","description":"Sanctioned escape hatch when the freshness probe missed an edit. Forwards fileChanged({kind:\"classpath\"}) before rendering, dropping the daemon's user classloader. Each use is logged + counted; please report on issue #924.","properties":{"reason":{"type":"string","description":"Human-readable reason for needing force (required)."}},"required":["reason"]}
+                "force":{"type":"object","description":"Sanctioned escape hatch when the freshness probe missed an edit. Forwards fileChanged({kind:\"source\"}) and fileChanged({kind:\"classpath\"}) before rendering, swapping the daemon's user classloader onto the jars on disk. Each use is logged + counted; please report on issue #924.","properties":{"reason":{"type":"string","description":"Human-readable reason for needing force (required)."}},"required":["reason"]}
               },
               "required":[]
             }
@@ -2155,8 +2157,9 @@ class DaemonMcpServer(
             "(`renderNow.overrides`). The server validates each set field against the daemon's " +
             "advertised `supportedOverrides` and rejects ones the backend would silently ignore. " +
             "Optional `force={reason}` is the sanctioned escape hatch for when the freshness " +
-            "probe missed a real edit — it forwards a `fileChanged({kind:\"classpath\"})` to every " +
-            "replica before rendering, dropping the daemon's user classloader. Use of `force` is a " +
+            "probe missed a real edit — it forwards `fileChanged({kind:\"source\"})` and " +
+            "`fileChanged({kind:\"classpath\"})` to every replica before rendering, swapping the " +
+            "daemon's user classloader onto the classes on disk. Use of `force` is a " +
             "freshness-logic gap; please post a comment on " +
             "https://github.com/yschimke/compose-ai-tools/issues/924 with the URI, reason, and the " +
             "edit that didn't land. Do NOT delete `build/classes/...` or run `./gradlew clean` to " +
@@ -2276,7 +2279,7 @@ class DaemonMcpServer(
                 "details":{"type":"array","items":{"type":"string","enum":["a11y","layout"]},"description":"Opt-in, default none. Also fetch the accessibility findings and overlay (a11y) and the layout bounds (layout) in this call. Each adds ONE summary line to the result; the full detail goes only into the card, where the person toggles Plain / A11y overlay / Audit (numbered findings) / Layout bounds (numbered boxes with a legend of each one's size, padding, gap and scale). Pass it only when the person asks about accessibility or layout."},
                 "force":{
                   "type":"object",
-                  "description":"Sanctioned escape hatch for stale renders. Forwards a fileChanged({kind:\"classpath\"}) to every replica of this URI's daemon before issuing renderNow, dropping the daemon's user classloader. Each use bumps a `forces.used` counter and is logged in `recent` (see `status`). Please report on https://github.com/yschimke/compose-ai-tools/issues/924.",
+                  "description":"Sanctioned escape hatch for stale renders. Forwards fileChanged({kind:\"source\"}) and fileChanged({kind:\"classpath\"}) to every replica of this URI's daemon before issuing renderNow, swapping the daemon's user classloader onto the classes on disk. Each use bumps a `forces.used` counter and is logged in `recent` (see `status`). Please report on https://github.com/yschimke/compose-ai-tools/issues/924.",
                   "properties":{
                     "reason":{"type":"string","description":"Human-readable reason for needing force (required). Stored in the recent-forces ring buffer for debugging."}
                   },
@@ -4290,6 +4293,7 @@ class DaemonMcpServer(
     supervisor.unregisterProject(id)
     storeOnlyProjects.remove(id)
     catalog.keys.removeIf { it.workspaceId == id }
+    staleNotes.keys.removeIf { it.workspaceId == id }
   }
 
   private fun toolListProjects(): CallToolResult {
@@ -5650,23 +5654,34 @@ class DaemonMcpServer(
     }
 
   /**
-   * Sanctioned classpath invalidation for `render_preview.force`: forwards
-   * `fileChanged({kind:"classpath"})` to every replica so `UserClassLoaderHolder` rotates before
-   * the next render. Bumps `forces.used` and records the reason for `status`. Each use is a
-   * freshness-logic gap; report on https://github.com/yschimke/compose-ai-tools/issues/924.
+   * Sanctioned classpath invalidation for `render_preview.force`, for jars rebuilt out of band
+   * (`./gradlew assemble` / `bazel build` in a shell). Forwards two `fileChanged`s to every
+   * replica:
+   * - `{kind:"source"}`, the only kind the daemon answers by swapping its user classloaders
+   *   (`UserClassLoaderHolder`), which reopens each jar as a fresh per-generation `JarFile` instead
+   *   of serving the old bytes; and
+   * - `{kind:"classpath"}`, the daemon's Tier-1 fingerprint check, which restarts it when the build
+   *   scripts changed the classpath itself. On its own it never swaps a classloader.
+   *
+   * Clears [staleNotes] for the module: the caller says the classes on disk are the ones to render.
+   * Bumps `forces.used` and records the reason for `status`. Each use is a freshness-logic gap;
+   * report on https://github.com/yschimke/compose-ai-tools/issues/924.
    */
   private fun invalidateClasspathForForce(uri: PreviewUri, reason: String) {
+    val addr = DaemonAddr(uri.workspaceId, uri.modulePath)
     val daemon = supervisor.daemonFor(uri.workspaceId, uri.modulePath)
-    // Use the catalogued source path when known (for daemon logs); the daemon only cares about
-    // `kind`.
-    val path =
-      catalog[DaemonAddr(uri.workspaceId, uri.modulePath)]?.get(uri.previewFqn)?.sourceFile
-        ?: "force-render://${uri.previewFqn}"
+    // Use the catalogued source path when known: the daemon logs it and re-runs discovery on it
+    // for the source change. A path it cannot read is skipped by that discovery.
+    val path = catalog[addr]?.get(uri.previewFqn)?.sourceFile ?: "force-render://${uri.previewFqn}"
     daemon.allClients().forEach { client ->
       runCatching {
         client.fileChanged(path = path, kind = FileKind.CLASSPATH, changeType = ChangeType.MODIFIED)
       }
+      runCatching {
+        client.fileChanged(path = path, kind = FileKind.SOURCE, changeType = ChangeType.MODIFIED)
+      }
     }
+    staleNotes.remove(addr)
     freshnessMetrics.recordForce(uri.toUri(), reason)
     System.err.println(
       "render_preview.force: ${uri.toUri()} reason='$reason' — please report on " +
@@ -7575,6 +7590,9 @@ class DaemonMcpServer(
     val compileWork = sortedMapOf<String, CompileWork>()
     project.daemons.values.forEach { daemon ->
       val addr = DaemonAddr(daemon.workspaceId, daemon.modulePath)
+      // The caller says the module changed on disk: an earlier failed compile no longer describes
+      // what the daemon loads. A recompile below records a fresh note if it fails again.
+      staleNotes.remove(addr)
       if (daemon.modulePath in compileTargets) {
         pendingSources.computeIfAbsent(addr) { ConcurrentHashMap.newKeySet() }.add(path)
         markSourceSeen(addr, File(path))

@@ -5039,8 +5039,8 @@ class DaemonMcpServer(
   private fun catalogUrisWithCachedRows(
     addr: DaemonAddr,
     byId: Map<String, PreviewEntry>,
+    rows: Map<String, List<PreviewParameterRow>> = previewRows.cachedRows(addr),
   ): List<PreviewUri> {
-    val rows = previewRows.cachedRows(addr)
     return byId.values.flatMap { entry ->
       val base = PreviewUri(addr.workspaceId, addr.modulePath, entry.fqn, entry.config)
       listOf(base) +
@@ -5048,6 +5048,30 @@ class DaemonMcpServer(
           runCatching { base.copy(previewFqn = row.id) }.getOrNull()
         }
     }
+  }
+
+  /**
+   * Subscribed URIs in [addr] naming a row of one of [byId]'s `@PreviewParameter` previews (an id
+   * that extends a parameterized base's, `<baseId>_…`), overrides stripped. Read off the
+   * subscriptions rather than [previewRows], so a refresh after an edit that cleared the rows still
+   * reaches a row a client subscribed to.
+   */
+  private fun subscribedRowUris(
+    addr: DaemonAddr,
+    byId: Map<String, PreviewEntry>,
+  ): List<PreviewUri> {
+    val bases = byId.values.filter { it.parameterProvider != null }
+    if (bases.isEmpty()) return emptyList()
+    return subscriptions
+      .subscribedUris()
+      .mapNotNull { PreviewUri.parseOrNull(it)?.copy(overridesJson = null) }
+      .filter { uri ->
+        uri.workspaceId == addr.workspaceId &&
+          uri.modulePath == addr.modulePath &&
+          !byId.containsKey(uri.previewFqn) &&
+          bases.any { uri.previewFqn.startsWith(it.fqn + "_") }
+      }
+      .distinct()
   }
 
   /** The catalog as [PreviewTray] and [PreviewMentions] read it; empty until discovery lands. */
@@ -7823,6 +7847,9 @@ class DaemonMcpServer(
     val compileWork = sortedMapOf<String, CompileWork>()
     project.daemons.values.forEach { daemon ->
       val addr = DaemonAddr(daemon.workspaceId, daemon.modulePath)
+      // The rows known before the edit: the compile or forward below clears the cache, and a watch
+      // on a row must still be refreshed.
+      val rowsBeforeEdit = previewRows.cachedRows(addr)
       if (daemon.modulePath in compileTargets) {
         // This module is recompiled now: the outcome decides its note, and a failure records a
         // fresh one. Another module's note stays: its classes are not being refreshed.
@@ -7855,7 +7882,8 @@ class DaemonMcpServer(
       val byId = catalog[DaemonAddr(daemon.workspaceId, daemon.modulePath)] ?: return@forEach
       // Build the candidate URI set for this daemon and intersect with current watches/subs.
       val candidates =
-        catalogUrisWithCachedRows(DaemonAddr(daemon.workspaceId, daemon.modulePath), byId)
+        (catalogUrisWithCachedRows(addr, byId, rowsBeforeEdit) + subscribedRowUris(addr, byId))
+          .distinctBy { it.toUri() }
       candidates.forEach { uri ->
         val subscribedUris = subscriptions.subscribedUrisMatching(uri)
         val refreshes = mutableMapOf<PreviewOverrides?, MutableSet<String>>()

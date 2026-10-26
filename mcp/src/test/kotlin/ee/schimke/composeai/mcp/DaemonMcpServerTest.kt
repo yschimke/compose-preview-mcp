@@ -8019,6 +8019,52 @@ class DaemonMcpServerTest {
   }
 
   @Test
+  fun `a source edit re-renders watched and subscribed PreviewParameter rows`() {
+    client.initialize()
+    val projectDir = tmp.newFolder("workspace")
+    tmp.newFolder("workspace", "module")
+    val workspaceId = registerWorkspace(projectDir, "demo")
+    val daemon = warmDaemonFor(workspaceId, ":module")
+    val base = "com.example.WidgetKt.WidgetPreview"
+    daemon.onPreviewRows = { widgetRows(base) }
+    daemon.emitDiscovery(base, previewParameterProvider = "com.example.P")
+    client.expectNotification("notifications/resources/list_changed", 2_000)
+    // Listing caches the rows; the edit below clears that cache before the refresh is planned.
+    listResources()
+
+    // A subscription to one row, and a watch matching only the other.
+    val darkUri = PreviewUri(workspaceId, ":module", "${base}_Dark mode").toUri()
+    client.request("resources/subscribe", buildJsonObject { put("uri", darkUri) })
+    client.callTool(
+      "watch",
+      buildJsonObject {
+        put("workspaceId", workspaceId.value)
+        put("module", ":module")
+        put("fqnGlob", "**_PARAM_0")
+      },
+    )
+
+    val response =
+      client.callTool(
+        "notify_file_changed",
+        buildJsonObject {
+          put("workspaceId", workspaceId.value)
+          put("path", "src/main/kotlin/com/example/Widget.kt")
+          put("kind", "source")
+          put("changeType", "modified")
+        },
+      )
+    assertThat(response.firstTextContent()).contains("re-rendered 2 watched preview(s)")
+    val rendered =
+      listOfNotNull(
+          daemon.renderRequests.poll(2_000, TimeUnit.MILLISECONDS),
+          daemon.renderRequests.poll(2_000, TimeUnit.MILLISECONDS),
+        )
+        .flatten()
+    assertThat(rendered).containsExactly("${base}_Dark mode", "${base}_PARAM_0")
+  }
+
+  @Test
   fun `a daemon without preview rows lists the PreviewParameter preview by its base id`() {
     client.initialize()
     val projectDir = tmp.newFolder("workspace")

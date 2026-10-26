@@ -115,6 +115,10 @@ class Subscriptions {
     watches.remove(session)
   }
 
+  /** Every URI some session is subscribed to, as it subscribed. */
+  fun subscribedUris(): Set<String> =
+    byUri.entries.filter { it.value.isNotEmpty() }.map { it.key }.toSet()
+
   /** Sessions currently subscribed to [uri], in any spelling of it ([subscribedUrisFor]). */
   fun sessionsSubscribedTo(uri: String): Set<Session> =
     subscribedUrisFor(uri).values.flatten().toSet()

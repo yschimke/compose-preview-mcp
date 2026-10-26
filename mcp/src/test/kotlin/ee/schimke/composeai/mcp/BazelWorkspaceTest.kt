@@ -27,7 +27,10 @@ class BazelWorkspaceTest {
   private val launcher by lazy { tmp.newFile("compose-preview") }
 
   /** Records calls; on success writes the descriptor where `bazel prepare` does. */
-  private class FakeCli(val exitCode: Int = 0) : GradleTaskRunner {
+  private class FakeCli(
+    val exitCode: Int = 0,
+    val failureOutput: String = "ERROR: build failed\n",
+  ) : GradleTaskRunner {
     val calls = mutableListOf<Pair<File, List<String>>>()
 
     override fun run(
@@ -37,7 +40,7 @@ class BazelWorkspaceTest {
       onLine: (String) -> Unit,
     ): GradleTaskRunner.Result {
       calls += wrapper to arguments
-      if (exitCode != 0) return GradleTaskRunner.Result(exitCode, "ERROR: build failed\n")
+      if (exitCode != 0) return GradleTaskRunner.Result(exitCode, failureOutput)
       File(projectRoot, ".compose-preview/outputs/abc/build/compose-previews").apply {
         mkdirs()
         File(this, "daemon-launch.json").writeText(DESCRIPTOR)
@@ -150,6 +153,54 @@ class BazelWorkspaceTest {
       ProjectBootstrap(runner = FakeCli(exitCode = 1), cli = { launcher }).ensurePrepared(ws)
     assertThat((failed as ProjectBootstrap.Outcome.NotPrepared).reason)
       .contains("ERROR: build failed")
+  }
+
+  /** #95: Bazel's errors come before the CLI's summary line in the merged output. */
+  private val bazelFailure =
+    """
+    INFO: Analyzed target //app/ui:lib (0 packages loaded, 0 targets configured).
+    ERROR: /ws/app/ui/BUILD.bazel:3:11: Compiling Kotlin to JVM //app/ui:lib failed: (Exit 1)
+    app/ui/Greeting.kt:7:5: error: unresolved reference 'Txt'.
+    INFO: Elapsed time: 1.2s
+    FAILED: Build did NOT complete successfully
+    compose-preview bazel: Build command exited 1: bazel build //app/ui:lib
+    """
+      .trimIndent()
+
+  @Test
+  fun `a failed bazel prepare keeps the error lines, not only the last one`() {
+    val ws = workspace()
+    val cli = FakeCli(exitCode = 1, failureOutput = bazelFailure)
+    val gradle = SourceCompiler { _, _, _ -> error("Gradle must not compile a Bazel workspace") }
+    val outcome =
+      BuildSystemSourceCompiler(gradle = gradle, runner = cli, cli = { launcher })
+        .compile(ws, "//app/ui:lib", listOf(File(ws, "app/ui/Greeting.kt")))
+
+    val reason = (outcome as SourceCompileOutcome.Failed).reason
+    assertThat(reason).contains("ERROR: /ws/app/ui/BUILD.bazel:3:11")
+    assertThat(reason).contains("error: unresolved reference 'Txt'")
+    assertThat(reason).contains("FAILED: Build did NOT complete successfully")
+    assertThat(reason).contains("Build command exited 1")
+    assertThat(reason).doesNotContain("Elapsed time")
+
+    val bootstrap =
+      ProjectBootstrap(
+          runner = FakeCli(exitCode = 1, failureOutput = bazelFailure),
+          cli = { launcher },
+        )
+        .ensurePrepared(ws)
+    assertThat((bootstrap as ProjectBootstrap.Outcome.NotPrepared).reason)
+      .contains("error: unresolved reference 'Txt'")
+  }
+
+  @Test
+  fun `a failure summary without diagnostics keeps the last ten lines`() {
+    val output = (1..15).joinToString("\n") { "line $it" }
+    val summary = CommandFailure.summarize(output)
+    assertThat(summary.lines()).hasSize(10)
+    assertThat(summary.lines().first()).isEqualTo("line 6")
+    assertThat(summary.lines().last()).isEqualTo("line 15")
+    assertThat(CommandFailure.summarize("\n  \n")).isEqualTo("no output")
   }
 
   @Test

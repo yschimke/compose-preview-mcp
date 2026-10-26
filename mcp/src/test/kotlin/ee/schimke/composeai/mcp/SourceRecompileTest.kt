@@ -1076,6 +1076,141 @@ class SourceRecompileTest {
     assertThat(daemon.fileChanges.poll(2_000, TimeUnit.MILLISECONDS)).isNotNull()
   }
 
+  /** A render showing the stale note a failed recompile leaves, for the #95 tests below. */
+  private fun staleFixture(): Fixture {
+    lateinit var fixture: Fixture
+    start(fakeCompiler { fixture.classes })
+    fixture = fixture()
+    render(fixture)
+    nextFailure = SourceCompileOutcome.Failed("bazel prepare failed: ERROR: Txt is unresolved")
+    edit(fixture, """@Preview fun Header() { Txt("broken") }""")
+    assertThat(render(fixture).texts.filter { it.startsWith("stale:") }).hasSize(1)
+    return fixture
+  }
+
+  /** #95: `force` says the jars were rebuilt out of band, so the note no longer applies. */
+  @Test
+  fun `a forced render clears the stale note`() {
+    val fixture = staleFixture()
+    val result =
+      client.callTool(
+        "render_preview",
+        buildJsonObject {
+          put("uri", PreviewUri(fixture.workspaceId, ":app", PREVIEW_ID).toUri())
+          put("inline", false)
+          put("force", buildJsonObject { put("reason", "rebuilt with bazel build") })
+        },
+        timeoutMs = 10_000,
+      )
+    assertThat(result.textContents().none { it.startsWith("stale:") }).isTrue()
+    assertThat(render(fixture).texts.none { it.startsWith("stale:") }).isTrue()
+  }
+
+  /** #95: a notification the server does not compile for still says the module changed. */
+  @Test
+  fun `notify_file_changed for the noted file clears the stale note, another file does not`() {
+    val fixture = staleFixture()
+    fun notify(path: String) =
+      client.callTool(
+        "notify_file_changed",
+        buildJsonObject {
+          put("workspaceId", fixture.workspaceId.value)
+          put("path", path)
+          put("kind", "classpath")
+        },
+        timeoutMs = 10_000,
+      )
+    notify(File(fixture.source.parentFile, "unrelated.jar").absolutePath)
+    assertThat(render(fixture).texts.filter { it.startsWith("stale:") }).hasSize(1)
+    // Built outside (`bazel build`) and notified: the noted file's outputs were refreshed.
+    notify(fixture.source.absolutePath)
+    assertThat(render(fixture).texts.none { it.startsWith("stale:") }).isTrue()
+  }
+
+  /** #95 review: a notification for module A must not clear module B's note. */
+  @Test
+  fun `notify_file_changed for one module keeps another module's stale note`() {
+    lateinit var fixture: Fixture
+    start(
+      SourceCompiler { _, modulePath, sources ->
+        if (modulePath == ":lib") SourceCompileOutcome.Failed("lib is broken: Unresolved 'Txt'")
+        else {
+          fixture.classes.writeText(sources.single().readText())
+          SourceCompileOutcome.Ok(durationMs = 1)
+        }
+      }
+    )
+    fixture = fixture()
+    val projectDir = File(fixture.source.path.substringBefore("/app/src/"))
+    val libSource = File(projectDir, "lib/src/main/kotlin/com/example/Lib.kt")
+    libSource.parentFile.mkdirs()
+    libSource.writeText("""@Preview fun LibPreview() { Text("Lib") }""")
+    File(projectDir, "lib/build.gradle.kts").writeText("")
+    val libPng = tmp.newFile("lib-render.png").apply { writeText("lib") }
+    supervisor.daemonFor(fixture.workspaceId, ":lib")
+    val lib = factory.daemons.getValue(fixture.workspaceId to ":lib")
+    lib.emitDiscovery(LIB_ID, sourceFile = "lib/src/main/kotlin/com/example/Lib.kt")
+    client.expectNotification("notifications/resources/list_changed", 2_000)
+    lib.autoRenderPngPath = { id -> if (id == LIB_ID) libPng.absolutePath else null }
+    fun renderLib(): List<String> =
+      client
+        .callTool(
+          "render_preview",
+          buildJsonObject {
+            put("uri", PreviewUri(fixture.workspaceId, ":lib", LIB_ID).toUri())
+            put("inline", false)
+          },
+          timeoutMs = 10_000,
+        )
+        .textContents()
+        .filter { it.startsWith("stale:") }
+
+    renderLib()
+    libSource.writeText("""@Preview fun LibPreview() { Txt("broken") }""")
+    libSource.setLastModified(libSource.lastModified() + 2_000)
+    assertThat(renderLib()).hasSize(1)
+
+    edit(fixture, """@Preview fun Header() { Text("A edited") }""")
+    notifyChanged(fixture)
+    assertThat(render(fixture).bytes).contains("A edited")
+    assertThat(renderLib().single()).contains("lib is broken")
+  }
+
+  /** #95: a notified edit that fails to compile again keeps its (fresh) note. */
+  @Test
+  fun `notify_file_changed whose recompile fails again keeps the note`() {
+    val fixture = staleFixture()
+    nextFailure = SourceCompileOutcome.Failed("still broken: Unresolved reference 'Txt'")
+    edit(fixture, """@Preview fun Header() { Txt("still broken") }""")
+    notifyChanged(fixture)
+    val line = render(fixture).texts.single { it.startsWith("stale:") }
+    assertThat(line).contains("still broken")
+  }
+
+  /** #95: re-registering starts a fresh daemon on the classes on disk; the old note must go. */
+  @Test
+  fun `unregister_project clears the stale note`() {
+    val fixture = staleFixture()
+    val projectDir = File(fixture.source.path.substringBefore("/app/src/"))
+    client.callTool(
+      "unregister_project",
+      buildJsonObject { put("workspaceId", fixture.workspaceId.value) },
+    )
+    client.expectNotification("notifications/resources/list_changed", 2_000)
+    val workspaceId = registerWorkspace(projectDir)
+    assertThat(workspaceId).isEqualTo(fixture.workspaceId)
+    supervisor.daemonFor(workspaceId, ":app")
+    daemon = factory.daemons.getValue(workspaceId to ":app")
+    daemon.emitDiscovery(PREVIEW_ID, sourceFile = "app/src/main/kotlin/com/example/MainActivity.kt")
+    client.expectNotification("notifications/resources/list_changed", 2_000)
+    daemon.autoRenderPngPath = { id ->
+      if (id == PREVIEW_ID) fixture.classes.absolutePath else null
+    }
+    nextFailure = null
+
+    assertThat(render(fixture).texts.none { it.startsWith("stale:") }).isTrue()
+  }
+
   @Test
   fun `without a compiler the server keeps forwarding fileChanged straight away`() {
     start(compiler = null)
@@ -1662,5 +1797,6 @@ class SourceRecompileTest {
 
   private companion object {
     const val PREVIEW_ID = "com.example.HeaderPreview"
+    const val LIB_ID = "com.example.LibPreview"
   }
 }

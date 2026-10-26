@@ -7369,7 +7369,7 @@ class DaemonMcpServerTest {
   // `render_preview.force`: the sanctioned escape hatch for stale renders (see #924).
 
   @Test
-  fun `render_preview with force forwards fileChanged classpath before renderNow`() {
+  fun `render_preview with force forwards fileChanged source and classpath before renderNow`() {
     client.initialize()
     val projectDir = tmp.newFolder("workspace")
     val moduleDir = tmp.newFolder("workspace", "module")
@@ -7405,6 +7405,13 @@ class DaemonMcpServerTest {
     assertThat(fileChanged["changeType"]?.jsonPrimitive?.contentOrNull).isEqualTo("modified")
     // Path defaults to the catalogued source file when present.
     assertThat(fileChanged["path"]?.jsonPrimitive?.contentOrNull)
+      .isEqualTo("src/main/kotlin/com/example/Preview.kt")
+    // `classpath` alone never swaps the daemon's user classloader; `source` does.
+    val sourceChanged = daemon.fileChanges.poll(2_000, TimeUnit.MILLISECONDS)
+    assertWithMessage("force must also forward fileChanged(source) so the classloader rotates")
+      .that(sourceChanged?.get("kind")?.jsonPrimitive?.contentOrNull)
+      .isEqualTo("source")
+    assertThat(sourceChanged!!["path"]?.jsonPrimitive?.contentOrNull)
       .isEqualTo("src/main/kotlin/com/example/Preview.kt")
 
     assertThat(daemon.renderRequests.poll(2_000, TimeUnit.MILLISECONDS))

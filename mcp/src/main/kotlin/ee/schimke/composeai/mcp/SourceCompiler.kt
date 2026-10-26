@@ -32,7 +32,9 @@ sealed interface SourceCompileOutcome {
 
   data class Ok(val durationMs: Long, override val work: CompileWork? = null) : SourceCompileOutcome
 
-  /** The compile ran and failed, usually a compile error; [reason] is one line for the agent. */
+  /**
+   * The compile ran and failed, usually a compile error; [reason] is a short summary for the agent.
+   */
   data class Failed(val reason: String, override val work: CompileWork? = null) :
     SourceCompileOutcome
 
@@ -98,11 +100,47 @@ class BuildSystemSourceCompiler(
       result.timedOut -> SourceCompileOutcome.Failed("compose-preview bazel prepare timed out")
       result.exitCode != 0 ->
         SourceCompileOutcome.Failed(
-          "compose-preview bazel prepare failed: " +
-            result.output.lines().lastOrNull { it.isNotBlank() }.orEmpty()
+          "compose-preview bazel prepare failed: " + CommandFailure.summarize(result.output)
         )
       else -> SourceCompileOutcome.Ok(durationMs)
     }
+  }
+}
+
+/**
+ * What a failed compose-preview CLI command (`bazel prepare`, `bundle prepare`) said. Its output is
+ * stdout and stderr merged, so Bazel's `ERROR:` / `FAILED:` lines and the compiler diagnostics
+ * under them come before the CLI's own one-line summary: keeping only the last line kept the
+ * summary and dropped the error.
+ */
+internal object CommandFailure {
+  private const val MAX_LINES = 10
+  private const val MAX_LINE_CHARS = 400
+
+  /**
+   * The diagnostic lines ([isDiagnostic]) plus the final summary line, else the last [MAX_LINES]
+   * non-blank lines; at most [MAX_LINES] lines, joined with newlines.
+   */
+  fun summarize(output: String): String {
+    val lines = output.lines().map(String::trimEnd).filter(String::isNotBlank)
+    if (lines.isEmpty()) return "no output"
+    val diagnostics = lines.filter(::isDiagnostic)
+    val kept =
+      if (diagnostics.isEmpty()) lines.takeLast(MAX_LINES)
+      else {
+        val summary = lines.last()
+        val head = diagnostics.filter { it != summary }.take(MAX_LINES - 1)
+        head + summary
+      }
+    return kept.joinToString("\n") { it.trim().take(MAX_LINE_CHARS) }
+  }
+
+  private fun isDiagnostic(line: String): Boolean {
+    val trimmed = line.trimStart()
+    return trimmed.startsWith("ERROR:") ||
+      trimmed.startsWith("FAILED:") ||
+      trimmed.startsWith("e: ") ||
+      trimmed.contains(": error:")
   }
 }
 

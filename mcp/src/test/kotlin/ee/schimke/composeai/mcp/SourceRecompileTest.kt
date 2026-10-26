@@ -1108,18 +1108,72 @@ class SourceRecompileTest {
 
   /** #95: a notification the server does not compile for still says the module changed. */
   @Test
-  fun `notify_file_changed clears the stale note`() {
+  fun `notify_file_changed for the noted file clears the stale note, another file does not`() {
     val fixture = staleFixture()
-    client.callTool(
-      "notify_file_changed",
-      buildJsonObject {
-        put("workspaceId", fixture.workspaceId.value)
-        put("path", File(fixture.source.parentFile, "app.jar").absolutePath)
-        put("kind", "classpath")
-      },
-      timeoutMs = 10_000,
-    )
+    fun notify(path: String) =
+      client.callTool(
+        "notify_file_changed",
+        buildJsonObject {
+          put("workspaceId", fixture.workspaceId.value)
+          put("path", path)
+          put("kind", "classpath")
+        },
+        timeoutMs = 10_000,
+      )
+    notify(File(fixture.source.parentFile, "unrelated.jar").absolutePath)
+    assertThat(render(fixture).texts.filter { it.startsWith("stale:") }).hasSize(1)
+    // Built outside (`bazel build`) and notified: the noted file's outputs were refreshed.
+    notify(fixture.source.absolutePath)
     assertThat(render(fixture).texts.none { it.startsWith("stale:") }).isTrue()
+  }
+
+  /** #95 review: a notification for module A must not clear module B's note. */
+  @Test
+  fun `notify_file_changed for one module keeps another module's stale note`() {
+    lateinit var fixture: Fixture
+    start(
+      SourceCompiler { _, modulePath, sources ->
+        if (modulePath == ":lib") SourceCompileOutcome.Failed("lib is broken: Unresolved 'Txt'")
+        else {
+          fixture.classes.writeText(sources.single().readText())
+          SourceCompileOutcome.Ok(durationMs = 1)
+        }
+      }
+    )
+    fixture = fixture()
+    val projectDir = File(fixture.source.path.substringBefore("/app/src/"))
+    val libSource = File(projectDir, "lib/src/main/kotlin/com/example/Lib.kt")
+    libSource.parentFile.mkdirs()
+    libSource.writeText("""@Preview fun LibPreview() { Text("Lib") }""")
+    File(projectDir, "lib/build.gradle.kts").writeText("")
+    val libPng = tmp.newFile("lib-render.png").apply { writeText("lib") }
+    supervisor.daemonFor(fixture.workspaceId, ":lib")
+    val lib = factory.daemons.getValue(fixture.workspaceId to ":lib")
+    lib.emitDiscovery(LIB_ID, sourceFile = "lib/src/main/kotlin/com/example/Lib.kt")
+    client.expectNotification("notifications/resources/list_changed", 2_000)
+    lib.autoRenderPngPath = { id -> if (id == LIB_ID) libPng.absolutePath else null }
+    fun renderLib(): List<String> =
+      client
+        .callTool(
+          "render_preview",
+          buildJsonObject {
+            put("uri", PreviewUri(fixture.workspaceId, ":lib", LIB_ID).toUri())
+            put("inline", false)
+          },
+          timeoutMs = 10_000,
+        )
+        .textContents()
+        .filter { it.startsWith("stale:") }
+
+    renderLib()
+    libSource.writeText("""@Preview fun LibPreview() { Txt("broken") }""")
+    libSource.setLastModified(libSource.lastModified() + 2_000)
+    assertThat(renderLib()).hasSize(1)
+
+    edit(fixture, """@Preview fun Header() { Text("A edited") }""")
+    notifyChanged(fixture)
+    assertThat(render(fixture).bytes).contains("A edited")
+    assertThat(renderLib().single()).contains("lib is broken")
   }
 
   /** #95: a notified edit that fails to compile again keeps its (fresh) note. */
@@ -1743,5 +1797,6 @@ class SourceRecompileTest {
 
   private companion object {
     const val PREVIEW_ID = "com.example.HeaderPreview"
+    const val LIB_ID = "com.example.LibPreview"
   }
 }

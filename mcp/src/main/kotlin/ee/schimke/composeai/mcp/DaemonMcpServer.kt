@@ -7514,6 +7514,9 @@ class DaemonMcpServer(
   }
     .getOrDefault(file.absoluteFile)
 
+  private fun sameFile(a: String, b: String): Boolean =
+    a == b || canonicalOf(File(a)) == canonicalOf(File(b))
+
   private fun toolNotifyFileChanged(args: JsonObject): CallToolResult {
     val path =
       args["path"]?.jsonPrimitive?.contentOrNull
@@ -7590,10 +7593,10 @@ class DaemonMcpServer(
     val compileWork = sortedMapOf<String, CompileWork>()
     project.daemons.values.forEach { daemon ->
       val addr = DaemonAddr(daemon.workspaceId, daemon.modulePath)
-      // The caller says the module changed on disk: an earlier failed compile no longer describes
-      // what the daemon loads. A recompile below records a fresh note if it fails again.
-      staleNotes.remove(addr)
       if (daemon.modulePath in compileTargets) {
+        // This module is recompiled now: the outcome decides its note, and a failure records a
+        // fresh one. Another module's note stays: its classes are not being refreshed.
+        staleNotes.remove(addr)
         pendingSources.computeIfAbsent(addr) { ConcurrentHashMap.newKeySet() }.add(path)
         markSourceSeen(addr, File(path))
         detectSourceChanges(daemon)
@@ -7608,6 +7611,9 @@ class DaemonMcpServer(
         }
         forwarded += daemon.allClients().size
       } else {
+        // A notification for a file the note is about (built outside, e.g. `bazel build`) says
+        // the module's outputs were refreshed; any other file leaves the note standing.
+        if (staleNotes[addr]?.sources?.any { sameFile(it, path) } == true) staleNotes.remove(addr)
         // File invalidation must reach EVERY replica — each replica has its own independent
         // discovery + render cache, so missing one would leave it serving stale bytes.
         daemon.allClients().forEach { client ->

@@ -24,8 +24,9 @@ import kotlinx.serialization.json.putJsonObject
  * [DaemonMcpServer] renders the rest when there are no more than a variant grid holds, the renders
  * the grid would have made anyway; a matrix uses the cells the same call just rendered.
  *
- * Option URIs go out [OpenAiForms.encodeUri]'d, since the field is `format: "uri"` and a
- * multipreview's name has spaces; [OpenAiForms.selectedUri] maps the answer back.
+ * Option URIs go out [OpenAiForms.encodeUri]'d, since the field is `format: "uri"`: a
+ * [PreviewUri.toUri] already percent-encodes a multipreview name's spaces and passes unchanged, and
+ * a raw spelling is encoded; [OpenAiForms.selectedUri] maps the answer back.
  */
 object PreviewPickers {
   /** Long edge of a picker thumbnail, in pixels. */

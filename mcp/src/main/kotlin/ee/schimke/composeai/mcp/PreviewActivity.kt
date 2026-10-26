@@ -79,12 +79,12 @@ class PreviewActivity(private val clock: () -> Long = System::currentTimeMillis)
 
   /** Pins [uri] to the tray; false when it is not a `compose-preview://` URI. */
   fun pin(uri: String): Boolean {
-    if (PreviewUri.parseOrNull(uri) == null) return false
-    pins[uri] = next()
+    val parsed = PreviewUri.parseOrNull(uri) ?: return false
+    pins[parsed.toUri()] = next()
     return true
   }
 
-  fun unpin(uri: String): Boolean = pins.remove(uri) != null
+  fun unpin(uri: String): Boolean = pins.remove(PreviewUri.canonical(uri)) != null
 
   /** Changed source paths, most recent first. */
   fun changedSources(): List<Pair<String, Mark>> =

@@ -2,6 +2,8 @@ package ee.schimke.composeai.mcp
 
 import com.google.common.truth.Truth.assertThat
 import ee.schimke.composeai.daemon.client.WorkspaceId
+import ee.schimke.composeai.daemon.protocol.PreviewOverrides
+import kotlinx.serialization.json.JsonElement
 import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
@@ -140,5 +142,86 @@ class PreviewResourceTest {
     assertThat(WatchEntry(workspaceId = ws, fqnGlobPattern = "com.example.*").matches(uri)).isTrue()
     // Wrong glob doesn't match.
     assertThat(WatchEntry(workspaceId = ws, fqnGlobPattern = "org.other.**").matches(uri)).isFalse()
+  }
+
+  @Test
+  fun `a multipreview name is percent-encoded in the URI and decoded back`() {
+    // #98: `@WearPreviewDevices` ids hold spaces; the URI must be valid RFC 3986.
+    val ws = WorkspaceId("ws-abc12345")
+    val fqn = "com.example.ActionButtonPreview_Devices - Large Round"
+    val uri = PreviewUri(ws, ":app", fqn, config = "round")
+    val wire = uri.toUri()
+    assertThat(wire)
+      .isEqualTo(
+        "compose-preview://ws-abc12345/_app/" +
+          "com.example.ActionButtonPreview_Devices%20-%20Large%20Round?config=round"
+      )
+    assertThat(java.net.URI(wire).scheme).isEqualTo("compose-preview")
+    assertThat(PreviewUri.parse(wire)).isEqualTo(uri)
+    // A raw spelling from before the encoding still parses, to the same preview.
+    val raw = "compose-preview://ws-abc12345/_app/$fqn?config=round"
+    assertThat(PreviewUri.parse(raw)).isEqualTo(uri)
+    assertThat(PreviewUri.canonical(raw)).isEqualTo(wire)
+    // `%`, `#` and non-ASCII round-trip; a `%` that starts no escape stays literal.
+    for (odd in listOf("a.B_100%", "a.B_#1", "a.B_Ünï 😀", "a.B_%zz")) {
+      assertThat(PreviewUri.parse(PreviewUri(ws, ":app", odd).toUri()).previewFqn).isEqualTo(odd)
+    }
+    assertThat(PreviewUri.parse("compose-preview://ws/_app/a.B_%zz").previewFqn)
+      .isEqualTo("a.B_%zz")
+    // An encoded '/' or '?' would not be a JVM preview id.
+    assertThat(PreviewUri.parseOrNull("compose-preview://ws/_app/a%2FB")).isNull()
+    assertThat(PreviewUri.parseOrNull("compose-preview://ws/_app/a%3FB")).isNull()
+    // An ordinary id is unchanged.
+    assertThat(PreviewUri(ws, ":app", "com.example.Red").toUri())
+      .isEqualTo("compose-preview://ws-abc12345/_app/com.example.Red")
+  }
+
+  @Test
+  fun `subscriptions match a preview however its URI was spelled`() {
+    val subscriptions = Subscriptions()
+    val session = NoopSession()
+    val encoded = "compose-preview://ws/_app/a.B_Devices%20-%20Small"
+    val raw = "compose-preview://ws/_app/a.B_Devices - Small"
+    subscriptions.subscribe(raw, session)
+    assertThat(subscriptions.sessionsSubscribedTo(encoded)).containsExactly(session)
+    // Notifications name the URI the client subscribed to.
+    assertThat(subscriptions.subscribedUrisFor(encoded).keys).containsExactly(raw)
+    assertThat(subscriptions.subscribedUrisMatching(PreviewUri.parse(encoded)).keys)
+      .containsExactly(raw)
+    subscriptions.unsubscribe(encoded, session)
+    assertThat(subscriptions.sessionsSubscribedTo(raw)).isEmpty()
+  }
+
+  @Test
+  fun `canonical overrides fold the preview's own font scale and empty overrides`() {
+    assertThat(canonicalOverrides(null)).isNull()
+    assertThat(canonicalOverrides(PreviewOverrides())).isNull()
+    assertThat(canonicalOverrides(PreviewOverrides(fontScale = 1.0f))).isNull()
+    assertThat(canonicalOverrides(PreviewOverrides(device = "id:wearos_small_round")))
+      .isEqualTo(
+        canonicalOverrides(PreviewOverrides(device = "id:wearos_small_round", fontScale = 1f))
+      )
+    assertThat(canonicalOverrides(PreviewOverrides(fontScale = 1.5f)))
+      .isEqualTo(PreviewOverrides(fontScale = 1.5f))
+    // A preview declaring its own fontScale: 1.0 is a real change, its own value is not.
+    assertThat(canonicalOverrides(PreviewOverrides(fontScale = 1.0f), declaredFontScale = 2f))
+      .isEqualTo(PreviewOverrides(fontScale = 1.0f))
+    assertThat(canonicalOverrides(PreviewOverrides(fontScale = 2f), declaredFontScale = 2f))
+      .isNull()
+  }
+
+  private class NoopSession : Session {
+    override fun notifyResourceUpdated(uri: String) = Unit
+
+    override fun notifyResourceListChanged() = Unit
+
+    override fun notifyToolListChanged() = Unit
+
+    override fun notifyProgress(
+      token: JsonElement,
+      progress: Double,
+      total: Double?,
+      message: String?,
+    ) = Unit
   }
 }

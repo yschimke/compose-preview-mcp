@@ -190,16 +190,19 @@ object OpenAiForms {
 
   /**
    * [uri] as a valid RFC 3986 URI: everything outside the unreserved set and `:/?@!$&'()*+,;=` is
-   * percent-encoded as UTF-8 (`%` included) so [decodeUri] reverses it exactly. Hosts that validate
-   * the `uri` format reject the spaces in multipreview names.
+   * percent-encoded as UTF-8, `%` included unless it already starts a valid `%XX` escape. A
+   * `compose-preview://` URI from [PreviewUri.toUri] is already encoded, so it goes out unchanged
+   * rather than double-encoded (`%20` → `%2520`); a raw one (a multipreview name's spaces), which
+   * hosts that validate the `uri` format reject, is encoded. [decodeUri] reverses it.
    */
   fun encodeUri(uri: String): String {
-    if (uri.all { it.isUriSafe() }) return uri
+    if (uri.indices.all { uri[it].isUriSafe() || uri.isEscapeAt(it) }) return uri
+    val bytes = uri.encodeToByteArray()
     return buildString {
       // Byte by byte: a non-ASCII byte is never safe, so every multi-byte character is escaped.
-      uri.encodeToByteArray().forEach { byte ->
+      bytes.forEachIndexed { index, byte ->
         val char = (byte.toInt() and 0xFF).toChar()
-        if (char.isUriSafe()) append(char)
+        if (char.isUriSafe() || (char == '%' && bytes.isEscapeAt(index))) append(char)
         else {
           append('%')
           append(HEX[(byte.toInt() shr 4) and 0xF])
@@ -208,6 +211,17 @@ object OpenAiForms {
       }
     }
   }
+
+  private fun String.isEscapeAt(i: Int): Boolean =
+    this[i] == '%' &&
+      i + 2 < length &&
+      this[i + 1].digitToIntOrNull(16) != null &&
+      this[i + 2].digitToIntOrNull(16) != null
+
+  private fun ByteArray.isEscapeAt(i: Int): Boolean =
+    i + 2 < size &&
+      (this[i + 1].toInt() and 0xFF).toChar().digitToIntOrNull(16) != null &&
+      (this[i + 2].toInt() and 0xFF).toChar().digitToIntOrNull(16) != null
 
   /** Reverses [encodeUri]; null when [encoded] holds a malformed escape. */
   fun decodeUri(encoded: String): String? {
@@ -256,6 +270,10 @@ object OpenAiForms {
     answer.takeIf { it in offered }
       ?: decodeUri(answer)?.takeIf { it in offered }
       ?: offered.firstOrNull { encodeUri(it) == answer }
+      // A host that decoded an already-encoded preview URI (`%20` back to a space).
+      ?: PreviewUri.canonical(answer).let { canonical ->
+        offered.firstOrNull { PreviewUri.canonical(it) == canonical }
+      }
 
   /**
    * The URIs a multi-select field submitted, in order, or null unless an array of distinct offered

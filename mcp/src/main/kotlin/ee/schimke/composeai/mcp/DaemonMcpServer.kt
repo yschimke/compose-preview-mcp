@@ -8,6 +8,7 @@ import ee.schimke.composeai.daemon.protocol.ChangeType
 import ee.schimke.composeai.daemon.protocol.CompileResultKind
 import ee.schimke.composeai.daemon.protocol.CompileSourcesParams
 import ee.schimke.composeai.daemon.protocol.DaemonLaunchDescriptor
+import ee.schimke.composeai.daemon.protocol.DataFetchParams
 import ee.schimke.composeai.daemon.protocol.FileKind
 import ee.schimke.composeai.daemon.protocol.FocusOverride
 import ee.schimke.composeai.daemon.protocol.KeyboardOverride
@@ -386,6 +387,15 @@ class DaemonMcpServer(
    * the module's entries.
    */
   private val dataProductCache = ConcurrentHashMap<DataAttachKey, DataAttachmentEntry>()
+
+  /**
+   * The [canonicalOverridesFor] overrides of each preview's latest render this server queued, so
+   * `get_preview_data(overrides)` knows whether the daemon's on-disk data products are already that
+   * configuration's. Absent when the latest render was not one of ours.
+   */
+  private val latestRenderOverrides = ConcurrentHashMap<PreviewIdKey, RenderedAt>()
+
+  private data class RenderedAt(val overrides: PreviewOverrides?)
 
   private val watchPropagator =
     WatchPropagator(
@@ -2607,7 +2617,23 @@ class DaemonMcpServer(
                 "uri":{"type":"string","description":"compose-preview://<workspace>/<module>/<fqn>?config=<qualifier>"},
                 "kind":{"type":"string","description":"Data-product kind, e.g. a11y/hierarchy, a11y/atf, layout/inspector, compose/semantics, test/failure."},
                 "params":{"type":"object","description":"Optional per-kind parameters (e.g. {nodeId} for layout/inspector). Forwarded verbatim to the daemon's data/fetch."},
-                "inline":{"type":"boolean","description":"Default true. When false, the daemon returns a `path` to a sibling JSON file instead of inlining the payload."}
+                "inline":{"type":"boolean","description":"Default true. When false, the daemon returns a `path` to a sibling JSON file instead of inlining the payload."},
+                "overrides":{
+                  "type":"object",
+                  "description":"Per-call display overrides, same shape as render_preview.overrides: the data product is the one of a render at these overrides (rendered first when the latest render was another configuration). A `uri` from render_preview or render_matrix carrying ?overrides= is folded in here.",
+                  "properties":{
+                    "widthPx":{"type":"integer"},
+                    "heightPx":{"type":"integer"},
+                    "density":{"type":"number"},
+                    "localeTag":{"type":"string"},
+                    "fontScale":{"type":"number"},
+                    "uiMode":{"type":"string","enum":["light","dark"]},
+                    "orientation":{"type":"string","enum":["portrait","landscape"]},
+                    "device":{"type":"string"},
+                    "captureAdvanceMs":{"type":"integer"},
+                    "inspectionMode":{"type":"boolean"}
+                  }
+                }
               },
               "required":["uri","kind"]
             }
@@ -3169,8 +3195,9 @@ class DaemonMcpServer(
       (args["storyId"] ?: args["id"])?.jsonPrimitive?.contentOrNull
         ?: return errorCallToolResult("get-documentation-for-story: missing 'storyId'")
     val story =
-      StorybookMcp.stories(catalogResources()).firstOrNull { it.storyId == id || it.uri == id }
-        ?: return errorCallToolResult("get-documentation-for-story: no such story: $id")
+      StorybookMcp.stories(catalogResources()).firstOrNull {
+        it.storyId == id || PreviewUri.canonical(it.uri) == PreviewUri.canonical(id)
+      } ?: return errorCallToolResult("get-documentation-for-story: no such story: $id")
     val parsed = PreviewUri.parseOrNull(story.uri)
     val payload = buildJsonObject {
       put("schema", "compose-preview-mcp-storybook/v1")
@@ -5559,7 +5586,20 @@ class DaemonMcpServer(
   ): Boolean =
     previousFileRenderHashes
       .computeIfAbsent(session) { ConcurrentHashMap() }
-      .put(FileRenderKey(uri.toUri(), overrides), sha) != sha
+      .put(
+        FileRenderKey(
+          uri.copy(overridesJson = null).toUri(),
+          canonicalOverridesFor(uri, overrides),
+        ),
+        sha,
+      ) != sha
+
+  /** [overrides] as [canonicalOverrides] reduces them against [uri]'s declared `fontScale`. */
+  private fun canonicalOverridesFor(uri: PreviewUri, overrides: PreviewOverrides?) =
+    canonicalOverrides(
+      overrides,
+      catalog[DaemonAddr(uri.workspaceId, uri.modulePath)]?.get(uri.previewFqn)?.declaredFontScale,
+    )
 
   private class RenderedCell(
     val cell: MatrixCell,
@@ -6399,6 +6439,15 @@ class DaemonMcpServer(
     // be able to read. Local callers that prefer disk reads pass `inline: false` explicitly.
     val inline = args["inline"]?.jsonPrimitive?.contentOrNull?.toBooleanStrictOrNull() ?: true
     val perKindParams = args["params"] as? JsonObject
+    val overrides =
+      args["overrides"]
+        ?.takeUnless { it is JsonNull }
+        ?.let {
+          runCatching { decodePreviewOverrides(it) }
+            .getOrElse { e ->
+              return errorCallToolResult("get_preview_data: invalid overrides: ${e.message}")
+            }
+        }
     if (supervisor.project(uri.workspaceId) == null) {
       return errorCallToolResult(
         "get_preview_data: workspace '${uri.workspaceId.value}' not registered"
@@ -6410,26 +6459,63 @@ class DaemonMcpServer(
       .getOrElse {
         return errorCallToolResult("get_preview_data: daemon spawn failed: ${it.message}")
       }
-    // Serve from cache when a previous renderFinished attached this kind (the cache mirrors the
-    // latest render, so hits are fresh). Skip it when the requested transport (`inline`) differs
-    // from the cached shape, or when per-kind `params` select a sub-view.
+    if (overrides != null) {
+      val violations = validateOverrides(overrides, daemon)
+      if (violations.isNotEmpty()) {
+        return errorCallToolResult("get_preview_data: ${violations.joinToString("; ")}")
+      }
+    }
+    val canonical = canonicalOverridesFor(uri, overrides)
+    // Serve from cache when a previous renderFinished at these overrides attached this kind (the
+    // cache mirrors the latest render, so hits are fresh). Skip it when the requested transport
+    // (`inline`) differs from the cached shape, or when per-kind `params` select a sub-view.
     if (perKindParams == null) {
       val cached =
-        dataProductCache[DataAttachKey(uri.workspaceId, uri.modulePath, uri.previewFqn, kind)]
+        dataProductCache[
+          DataAttachKey(uri.workspaceId, uri.modulePath, uri.previewFqn, kind, canonical)]
       if (cached != null && transportMatches(cached, inline)) {
         return renderCachedAttachment(kind, cached, inline)
       }
     }
+    // The daemon reads a data product off its latest render of the preview and ignores `force`
+    // for a kind that does not re-render, so a configuration other than the latest render's (as
+    // far as this server knows it) renders first: after a `render_matrix`, the latest render is its
+    // last cell. `overrides` + `force` in the fetch then make a re-rendering kind produce this
+    // configuration's artefact rather than reuse another's.
+    val latest =
+      latestRenderOverrides[PreviewIdKey(uri.workspaceId, uri.modulePath, uri.previewFqn)]
+    val rerender =
+      if (canonical == null) latest != null && latest.overrides != null
+      else latest != RenderedAt(canonical)
+    if (rerender) {
+      runCatching { awaitNextRender(uri, overrides = overrides) }
+        .onFailure {
+          return errorCallToolResult(
+            "get_preview_data: render at the requested overrides failed: ${it.message}"
+          )
+        }
+    }
+    val fetchParams =
+      if (canonical == null) perKindParams
+      else
+        JsonObject(
+          perKindParams.orEmpty() +
+            mapOf(
+              DataFetchParams.PARAM_OVERRIDES to
+                json.encodeToJsonElement(PreviewOverrides.serializer(), overrides!!),
+              DataFetchParams.PARAM_FORCE_RERENDER to JsonPrimitive(true),
+            )
+        )
     return runCatching {
       // Fetch first; on `DataProductNotAvailable` (-32021, never rendered) render once and retry.
       // Other errors propagate.
       val result =
         try {
-          daemon.client.dataFetch(uri.previewFqn, kind, perKindParams, inline)
+          daemon.client.dataFetch(uri.previewFqn, kind, fetchParams, inline)
         } catch (e: DataProductWireException) {
           if (e.code != DataProductWireException.NOT_AVAILABLE) throw e
-          awaitNextRender(uri)
-          daemon.client.dataFetch(uri.previewFqn, kind, perKindParams, inline)
+          awaitNextRender(uri, overrides = overrides)
+          daemon.client.dataFetch(uri.previewFqn, kind, fetchParams, inline)
         }
       renderDataFetchResult(result)
     }
@@ -7420,14 +7506,14 @@ class DaemonMcpServer(
     // first-ref / last-ref transitions.
     return runCatching {
       if (subscribe) {
-        val firstRef = subscriptions.subscribeData(uriStr, kind, session)
+        val firstRef = subscriptions.subscribeData(uri.toUri(), kind, session)
         if (firstRef) daemon.client.dataSubscribe(uri.previewFqn, kind)
         textCallToolResult(
           "$toolName: ok ($kind for ${uri.previewFqn}, " +
             if (firstRef) "first session)" else "shared with N≥2 sessions)"
         )
       } else {
-        val lastRef = subscriptions.unsubscribeData(uriStr, kind, session)
+        val lastRef = subscriptions.unsubscribeData(uri.toUri(), kind, session)
         if (lastRef) daemon.client.dataUnsubscribe(uri.previewFqn, kind)
         textCallToolResult(
           "$toolName: ok ($kind for ${uri.previewFqn}, " +
@@ -7611,9 +7697,10 @@ class DaemonMcpServer(
       candidates.forEach { uri ->
         val subscribedUris = subscriptions.subscribedUrisMatching(uri)
         val refreshes = mutableMapOf<PreviewOverrides?, MutableSet<String>>()
+        // A subscription to the plain preview, in any spelling (`?config=` and FQN encoding).
         if (
           subscriptions.sessionsWatching(uri).isNotEmpty() ||
-            subscribedUris.containsKey(uri.toUri())
+            subscribedUris.keys.any { PreviewUri.parseOrNull(it)?.overridesJson == null }
         ) {
           refreshes.getOrPut(null) { mutableSetOf() }.add(uri.toUri())
         }
@@ -7693,6 +7780,11 @@ class DaemonMcpServer(
           bodyLine = entry["bodyLine"]?.jsonPrimitive?.intOrNull,
           sourceLastModifiedMs = sourceLastModifiedMs,
           sourceContentHash = sourceContentHash,
+          // An incremental rescan sends no `params`; keep what the full discovery said.
+          declaredFontScale =
+            ((entry["params"] as? JsonObject)?.get("fontScale") as? JsonPrimitive)
+              ?.contentOrNull
+              ?.toFloatOrNull() ?: byId[id]?.declaredFontScale,
         )
     }
     removed.forEach { byId.remove(it) }
@@ -7755,7 +7847,18 @@ class DaemonMcpServer(
     // 2. Refresh the data-product cache for this URI: attached kinds are fresh; missing kinds are
     //    dropped (the daemon stops attaching unsubscribed kinds, so a cached payload would go
     //    stale).
-    refreshDataProductCache(daemon, previewId, params["dataProducts"])
+    refreshDataProductCache(daemon, previewId, params["dataProducts"], completedGroup?.overrides)
+    if (completedGroup != null) {
+      latestRenderOverrides[key] =
+        RenderedAt(
+          canonicalOverrides(
+            completedGroup.overrides,
+            catalog[DaemonAddr(daemon.workspaceId, daemon.modulePath)]
+              ?.get(previewId)
+              ?.declaredFontScale,
+          )
+        )
+    } else latestRenderOverrides.remove(key)
     // 3. Build the matching URI and notify subscribers + watchers.
     val entry = catalog[DaemonAddr(daemon.workspaceId, daemon.modulePath)]?.get(previewId)
     val uri =
@@ -7770,14 +7873,15 @@ class DaemonMcpServer(
     val notifications = mutableMapOf<String, MutableSet<Session>>()
     if (!completedGroup?.notificationUris.isNullOrEmpty()) {
       completedGroup!!.notificationUris.forEach { updatedUri ->
-        notifications
-          .getOrPut(updatedUri) { mutableSetOf() }
-          .addAll(subscriptions.sessionsSubscribedTo(updatedUri))
+        // Each subscriber hears about the URI it subscribed to, in its own spelling.
+        subscriptions.subscribedUrisFor(updatedUri).forEach { (subscribedUri, targets) ->
+          notifications.getOrPut(subscribedUri) { mutableSetOf() }.addAll(targets)
+        }
       }
     } else if (completedGroup?.overrides == null) {
-      notifications
-        .getOrPut(uriStr) { mutableSetOf() }
-        .addAll(subscriptions.sessionsSubscribedTo(uriStr))
+      subscriptions.subscribedUrisFor(uriStr).forEach { (subscribedUri, targets) ->
+        notifications.getOrPut(subscribedUri) { mutableSetOf() }.addAll(targets)
+      }
     } else {
       subscriptions.subscribedUrisMatching(uri).forEach { (subscribedUri, targets) ->
         val parsed = PreviewUri.parseOrNull(subscribedUri) ?: return@forEach
@@ -7809,7 +7913,15 @@ class DaemonMcpServer(
     daemon: SupervisedDaemon,
     previewId: String,
     attachmentsField: JsonElement?,
+    overrides: PreviewOverrides? = null,
   ) {
+    val canonical =
+      canonicalOverrides(
+        overrides,
+        catalog[DaemonAddr(daemon.workspaceId, daemon.modulePath)]
+          ?.get(previewId)
+          ?.declaredFontScale,
+      )
     // Drop everything the cache had for this preview — the daemon's latest render is the truth.
     dataProductCache.keys.removeIf {
       it.workspaceId == daemon.workspaceId &&
@@ -7825,7 +7937,7 @@ class DaemonMcpServer(
       val payload = obj["payload"]
       val path = obj["path"]?.jsonPrimitive?.contentOrNull
       val extras = obj["extras"]
-      val key = DataAttachKey(daemon.workspaceId, daemon.modulePath, previewId, kind)
+      val key = DataAttachKey(daemon.workspaceId, daemon.modulePath, previewId, kind, canonical)
       dataProductCache[key] = DataAttachmentEntry(schemaVersion, payload, path, extras)
     }
   }
@@ -7836,6 +7948,9 @@ class DaemonMcpServer(
    */
   private fun evictDataProductsForDaemon(workspaceId: WorkspaceId, modulePath: String) {
     dataProductCache.keys.removeIf { it.workspaceId == workspaceId && it.modulePath == modulePath }
+    latestRenderOverrides.keys.removeIf {
+      it.workspaceId == workspaceId && it.modulePath == modulePath
+    }
   }
 
   private fun onRenderFailed(daemon: SupervisedDaemon, params: JsonObject?) {
@@ -7981,9 +8096,14 @@ class DaemonMcpServer(
      * misses. Null until first hashed.
      */
     val sourceContentHash: String? = null,
+    /** `@Preview(fontScale = …)` from discovery's `params`, when it sent them. */
+    val declaredFontScale: Float? = null,
   )
 
-  /** Session-local comparison identity for path-shaped renders. */
+  /**
+   * Session-local comparison identity for path-shaped renders: the preview's canonical URI and its
+   * [canonicalOverridesFor] overrides, so `fontScale: 1.0` and no `fontScale` are one render.
+   */
   private data class FileRenderKey(val uri: String, val overrides: PreviewOverrides?)
 
   /**
@@ -8017,12 +8137,16 @@ class DaemonMcpServer(
     val next: PendingRenderGroup?,
   )
 
-  /** Cache key for [dataProductCache]: the preview plus the data-product `kind`. */
+  /**
+   * Cache key for [dataProductCache]: the preview, the data-product `kind`, and the
+   * [canonicalOverridesFor] overrides of the render that attached it.
+   */
   private data class DataAttachKey(
     val workspaceId: WorkspaceId,
     val modulePath: String,
     val previewId: String,
     val kind: String,
+    val overrides: PreviewOverrides? = null,
   )
 
   /**
@@ -8310,6 +8434,7 @@ class DaemonMcpServer(
         "render_preview_overlay",
         "record_preview",
         "run_extension_command",
+        "get_preview_data",
       )
 
     /**

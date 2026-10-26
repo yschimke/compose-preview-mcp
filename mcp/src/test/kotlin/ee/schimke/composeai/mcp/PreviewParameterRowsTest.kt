@@ -114,4 +114,49 @@ class PreviewParameterRowsTest {
       executor.shutdownNow()
     }
   }
+
+  @Test
+  fun `a blocking lookup runs a request still queued behind a busy pool on its own thread`() {
+    val release = java.util.concurrent.CountDownLatch(1)
+    val executor = java.util.concurrent.Executors.newSingleThreadExecutor()
+    try {
+      // The pool's one thread is held, so the next request waits in its queue.
+      rows.rowsAsync("m", "busy", executor) {
+        release.await()
+        result("busy_PARAM_0")
+      }
+      val queued = rows.rowsAsync("m", "base", executor) { result("base_PARAM_0") }
+      assertThat(queued.isDone).isFalse()
+      val started = System.nanoTime()
+      assertThat(rows.rowsBlocking("m", "base", 10_000) { result("base_PARAM_0") }.map { it.id })
+        .containsExactly("base_PARAM_0")
+      assertThat((System.nanoTime() - started) / 1_000_000).isLessThan(2_000)
+      // The listing's future is the same request, answered by the blocking caller.
+      assertThat(queued.isDone).isTrue()
+    } finally {
+      release.countDown()
+      executor.shutdownNow()
+    }
+  }
+
+  @Test
+  fun `a blocking lookup waits for a running request at most its timeout`() {
+    val release = java.util.concurrent.CountDownLatch(1)
+    val running = java.util.concurrent.CountDownLatch(1)
+    val executor = java.util.concurrent.Executors.newSingleThreadExecutor()
+    try {
+      rows.rowsAsync("m", "base", executor) {
+        running.countDown()
+        release.await()
+        result("base_PARAM_0")
+      }
+      running.await()
+      val started = System.nanoTime()
+      assertThat(rows.rowsBlocking("m", "base", 300) { error("not asked twice") }).isEmpty()
+      assertThat((System.nanoTime() - started) / 1_000_000).isLessThan(2_000)
+    } finally {
+      release.countDown()
+      executor.shutdownNow()
+    }
+  }
 }

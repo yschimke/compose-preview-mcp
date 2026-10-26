@@ -207,8 +207,11 @@ class FakeDaemon : DaemonSpawn {
   @Volatile
   var onPreviewRows: ((String) -> ee.schimke.composeai.daemon.protocol.PreviewRowsResult)? = null
 
+  /**
+   * Answers `preview/rows`; wider than the server's row pool, so blocked handlers never fill it.
+   */
   private val previewRowsResponder =
-    java.util.concurrent.Executors.newFixedThreadPool(4) { r ->
+    java.util.concurrent.Executors.newFixedThreadPool(16) { r ->
       Thread(r, "fake-daemon-preview-rows").apply { isDaemon = true }
     }
 

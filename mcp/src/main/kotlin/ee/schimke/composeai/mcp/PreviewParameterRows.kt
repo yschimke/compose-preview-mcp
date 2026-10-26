@@ -4,6 +4,8 @@ import ee.schimke.composeai.daemon.protocol.PreviewRowsResult
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.Executor
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
 
 /** One `@PreviewParameter` row: [id] is the daemon's addressable previewId, used verbatim. */
@@ -35,9 +37,15 @@ internal class PreviewParameterRows<K : Any> {
   private val cache = ConcurrentHashMap<K, ConcurrentHashMap<String, Cached>>()
   private val generations = ConcurrentHashMap<K, AtomicLong>()
 
+  /**
+   * One request for (key, base id) at [generation]. [claimed] goes true when a thread starts it: a
+   * pool worker, or a [rowsBlocking] caller that took over a request still queued behind others.
+   */
   private class InFlight(
     val generation: Long,
-    val future: CompletableFuture<List<PreviewParameterRow>>,
+    val future: CompletableFuture<List<PreviewParameterRow>> = CompletableFuture(),
+    val claimed: AtomicBoolean = AtomicBoolean(false),
+    val queued: AtomicBoolean = AtomicBoolean(false),
   )
 
   private val inFlight = ConcurrentHashMap<Pair<K, String>, InFlight>()
@@ -57,6 +65,27 @@ internal class PreviewParameterRows<K : Any> {
   }
 
   /**
+   * [baseId]'s rows for a caller that needs them now, never queued behind [rowsAsync]'s pool: a
+   * request nobody has started (none yet, or one still waiting for a pool thread) runs on the
+   * calling thread, and one already running is waited on for at most [timeoutMs] from this call.
+   * Empty when that wait runs out, as for a failed fetch.
+   */
+  fun rowsBlocking(
+    key: K,
+    baseId: String,
+    timeoutMs: Long,
+    fetch: () -> PreviewRowsResult?,
+  ): List<PreviewParameterRow> {
+    cached(key, baseId)?.let {
+      return it
+    }
+    val (slot, flight) = flightFor(key, baseId)
+    if (runIfUnclaimed(key, baseId, slot, flight, fetch)) return flight.future.join()
+    return runCatching { flight.future.get(timeoutMs, TimeUnit.MILLISECONDS) }
+      .getOrElse { emptyList() }
+  }
+
+  /**
    * [baseId]'s rows as a future: already complete when cached, else [fetch] run on [executor] (or
    * the request another caller already started for this generation). Never completes exceptionally;
    * a failed fetch completes with no rows, as [rows] returns.
@@ -70,34 +99,49 @@ internal class PreviewParameterRows<K : Any> {
     cached(key, baseId)?.let {
       return CompletableFuture.completedFuture(it)
     }
-    val generation = generation(key).get()
-    val slot = key to baseId
-    var started: CompletableFuture<List<PreviewParameterRow>>? = null
-    val flight =
-      inFlight.compute(slot) { _, existing ->
-        if (existing != null && existing.generation == generation) existing
-        else
-          InFlight(generation, CompletableFuture<List<PreviewParameterRow>>().also { started = it })
-      }!!
-    started?.let { future ->
-      runCatching {
-        executor.execute {
-          val rows =
-            try {
-              fetchAndCache(key, baseId, generation, fetch)
-            } finally {
-              inFlight.remove(slot, flight)
-            }
-          future.complete(rows)
-        }
-      }
+    val (slot, flight) = flightFor(key, baseId)
+    if (!flight.claimed.get() && flight.queued.compareAndSet(false, true)) {
+      runCatching { executor.execute { runIfUnclaimed(key, baseId, slot, flight, fetch) } }
         .onFailure {
           // A shut-down executor: nothing will answer, so answer "no rows" now.
-          inFlight.remove(slot, flight)
-          future.complete(emptyList())
+          if (flight.claimed.compareAndSet(false, true)) {
+            inFlight.remove(slot, flight)
+            flight.future.complete(emptyList())
+          }
         }
     }
     return flight.future
+  }
+
+  /** The request for [baseId] at the current generation, joined or newly registered. */
+  private fun flightFor(key: K, baseId: String): Pair<Pair<K, String>, InFlight> {
+    val generation = generation(key).get()
+    val slot = key to baseId
+    val flight =
+      inFlight.compute(slot) { _, existing ->
+        if (existing != null && existing.generation == generation) existing
+        else InFlight(generation)
+      }!!
+    return slot to flight
+  }
+
+  /** Runs [flight] on this thread unless another thread already took it; true when this one did. */
+  private fun runIfUnclaimed(
+    key: K,
+    baseId: String,
+    slot: Pair<K, String>,
+    flight: InFlight,
+    fetch: () -> PreviewRowsResult?,
+  ): Boolean {
+    if (!flight.claimed.compareAndSet(false, true)) return false
+    val rows =
+      try {
+        fetchAndCache(key, baseId, flight.generation, fetch)
+      } finally {
+        inFlight.remove(slot, flight)
+      }
+    flight.future.complete(rows)
+    return true
   }
 
   private fun fetchAndCache(

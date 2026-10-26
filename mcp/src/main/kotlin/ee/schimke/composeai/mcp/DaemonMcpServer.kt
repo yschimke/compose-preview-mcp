@@ -5019,8 +5019,23 @@ class DaemonMcpServer(
    * then the one preview, as before. Waits for the daemon's answer: for a caller that needs a row's
    * id to resolve it, such as a render by name. A listing uses [parameterRowsAsync].
    */
-  private fun parameterRows(addr: DaemonAddr, entry: PreviewEntry): List<PreviewParameterRow> =
-    parameterRowsAsync(addr, entry).join()
+  private fun parameterRows(addr: DaemonAddr, entry: PreviewEntry): List<PreviewParameterRow> {
+    if (entry.parameterProvider == null) return emptyList()
+    previewRows.cached(addr, entry.fqn)?.let {
+      return it
+    }
+    val client = rowsClient(addr) ?: return emptyList()
+    // Not through [previewRowsExecutor]: a backlog of listings' requests must not queue it.
+    return previewRows.rowsBlocking(addr, entry.fqn, PREVIEW_ROWS_TIMEOUT.inWholeMilliseconds) {
+      client.previewRows(entry.fqn, timeout = PREVIEW_ROWS_TIMEOUT)
+    }
+  }
+
+  /**
+   * The client of [addr]'s running daemon `preview/rows` is asked of, or null with none running.
+   */
+  private fun rowsClient(addr: DaemonAddr) =
+    supervisor.project(addr.workspaceId)?.daemons?.get(addr.modulePath)?.allClients()?.firstOrNull()
 
   /** [parameterRows] as a future that completes once the daemon answers (never exceptionally). */
   private fun parameterRowsAsync(
@@ -5034,13 +5049,7 @@ class DaemonMcpServer(
       return java.util.concurrent.CompletableFuture.completedFuture(it)
     }
     val client =
-      supervisor
-        .project(addr.workspaceId)
-        ?.daemons
-        ?.get(addr.modulePath)
-        ?.allClients()
-        ?.firstOrNull()
-        ?: return java.util.concurrent.CompletableFuture.completedFuture(emptyList())
+      rowsClient(addr) ?: return java.util.concurrent.CompletableFuture.completedFuture(emptyList())
     return previewRows.rowsAsync(addr, entry.fqn, previewRowsExecutor) {
       client.previewRows(entry.fqn, timeout = PREVIEW_ROWS_TIMEOUT)
     }
@@ -5061,16 +5070,16 @@ class DaemonMcpServer(
     entries: Collection<PreviewEntry>,
     deadlineNanos: Long,
   ): List<ListedPreview> {
-    val pending = entries.associateWith { parameterRowsAsync(addr, it) }
+    // One snapshot: [entries] may be a live catalog view that discovery changes under us.
+    val pending = entries.map { it to parameterRowsAsync(addr, it) }
     val remaining = deadlineNanos - System.nanoTime()
-    if (remaining > 0 && pending.values.any { !it.isDone }) {
+    if (remaining > 0 && pending.any { !it.second.isDone }) {
       runCatching {
-        java.util.concurrent.CompletableFuture.allOf(*pending.values.toTypedArray())
+        java.util.concurrent.CompletableFuture.allOf(*pending.map { it.second }.toTypedArray())
           .get(remaining, java.util.concurrent.TimeUnit.NANOSECONDS)
       }
     }
-    return entries.flatMap { entry ->
-      val future = pending.getValue(entry)
+    return pending.flatMap { (entry, future) ->
       val rows =
         if (future.isDone) future.join()
         else {

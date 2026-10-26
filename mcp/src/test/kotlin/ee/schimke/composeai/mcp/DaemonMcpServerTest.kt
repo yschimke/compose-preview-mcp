@@ -8113,6 +8113,90 @@ class DaemonMcpServerTest {
   }
 
   @Test
+  fun `a discovery during a listing's wait for rows does not fail the listing`() {
+    client.initialize()
+    val projectDir = tmp.newFolder("workspace")
+    tmp.newFolder("workspace", "module")
+    val workspaceId = registerWorkspace(projectDir, "demo")
+    val daemon = warmDaemonFor(workspaceId, ":module")
+    val slow = "com.example.WidgetKt.SlowPreview"
+    val release = java.util.concurrent.CountDownLatch(1)
+    daemon.onPreviewRows = { id ->
+      release.await(30, TimeUnit.SECONDS)
+      widgetRows(id)
+    }
+    daemon.emitDiscovery(slow, previewParameterProvider = "com.example.P")
+    client.expectNotification("notifications/resources/list_changed", 2_000)
+    // Long-lived, so the fake's pipe never sees its last writer exit mid-test.
+    val emitter = java.util.concurrent.Executors.newSingleThreadScheduledExecutor()
+    try {
+      // Lands while the listing below waits out its deadline for the slow rows.
+      emitter.schedule(
+        { daemon.emitDiscovery("com.example.Late") },
+        500,
+        TimeUnit.MILLISECONDS,
+      )
+      val listed =
+        listResources().resources.map { it.uri }.filter { it.startsWith("compose-preview") }
+      assertThat(listed).contains(PreviewUri(workspaceId, ":module", slow).toUri())
+      client.expectNotification("notifications/resources/list_changed", 2_000)
+      assertThat(
+          listResources().resources.map { it.uri }.filter { it.startsWith("compose-preview") }
+        )
+        .contains(PreviewUri(workspaceId, ":module", "com.example.Late").toUri())
+    } finally {
+      release.countDown()
+      emitter.shutdown()
+    }
+  }
+
+  @Test
+  fun `rendering a row by name is not queued behind a busy row pool`() {
+    client.initialize()
+    val projectDir = tmp.newFolder("workspace")
+    tmp.newFolder("workspace", "module")
+    val workspaceId = registerWorkspace(projectDir, "demo")
+    val daemon = warmDaemonFor(workspaceId, ":module")
+    val target = "com.example.WidgetKt.WidgetPreview"
+    val release = java.util.concurrent.CountDownLatch(1)
+    daemon.onPreviewRows = { id ->
+      if (id != target) release.await(30, TimeUnit.SECONDS)
+      widgetRows(id)
+    }
+    try {
+      // More blocked requests than the pool has threads: a listing fills it and queues the rest.
+      val blocked = (1..6).map { "com.example.BusyKt.Busy$it" }
+      blocked.forEach { daemon.emitDiscovery(it, previewParameterProvider = "com.example.P") }
+      repeat(blocked.size) {
+        client.expectNotification("notifications/resources/list_changed", 2_000)
+      }
+      listResources()
+      daemon.emitDiscovery(target, previewParameterProvider = "com.example.P")
+      client.expectNotification("notifications/resources/list_changed", 2_000)
+      val png = tmp.newFile("row.png")
+      writeSolidPng(png, 0xff00ff00.toInt())
+      daemon.autoRenderPngPath = { png.absolutePath }
+
+      val started = System.nanoTime()
+      val byName =
+        client.callTool(
+          "render_preview",
+          buildJsonObject {
+            put("preview", "WidgetPreview_PARAM_0")
+            put("observe", "hash")
+          },
+          timeoutMs = 15_000,
+        )
+      assertThat(byName.isError()).isFalse()
+      assertThat((System.nanoTime() - started) / 1_000_000).isLessThan(5_000)
+      assertThat(daemon.renderRequests.poll(2_000, TimeUnit.MILLISECONDS))
+        .containsExactly("${target}_PARAM_0")
+    } finally {
+      release.countDown()
+    }
+  }
+
+  @Test
   fun `rendering a row by name waits for a slow preview rows answer`() {
     client.initialize()
     val projectDir = tmp.newFolder("workspace")

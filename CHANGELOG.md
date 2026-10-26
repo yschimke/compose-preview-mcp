@@ -1,5 +1,27 @@
 # Changelog
 
+## [4.12.0](https://github.com/yschimke/compose-preview-mcp/compare/v4.11.0...v4.12.0) (2026-10-26)
+
+
+### Features
+
+* **mcp:** get_preview_data overrides, percent-encoded preview URIs ([#100](https://github.com/yschimke/compose-preview-mcp/issues/100)) ([64c1a53](https://github.com/yschimke/compose-preview-mcp/commit/64c1a53b596de41f48004b37af7e9b0e7e98a7b0))
+* **mcp:** list and render @PreviewParameter rows ([#101](https://github.com/yschimke/compose-preview-mcp/issues/101)) ([9f15613](https://github.com/yschimke/compose-preview-mcp/commit/9f15613fa43eedde0005289ea1de93ea1ca42e03))
+
+
+### Bug Fixes
+
+* **deps:** update dependency ee.schimke.composeai:compose-ai-tools-bom to v2.73.0 ([#86](https://github.com/yschimke/compose-preview-mcp/issues/86)) ([fffad87](https://github.com/yschimke/compose-preview-mcp/commit/fffad873ef9182077d9c1d33a52b0905cca564f9))
+* **deps:** update dependency ee.schimke.composeai:compose-ai-tools-bom to v2.73.1 ([#89](https://github.com/yschimke/compose-preview-mcp/issues/89)) ([4d601f1](https://github.com/yschimke/compose-preview-mcp/commit/4d601f15665b1bab9487146aba15cd6aa56e5f85))
+* **deps:** update dependency ee.schimke.composeai:compose-ai-tools-bom to v2.73.2 ([#91](https://github.com/yschimke/compose-preview-mcp/issues/91)) ([95bbf91](https://github.com/yschimke/compose-preview-mcp/commit/95bbf91e6173ec6b1b0504ca68da183004d07f6b))
+* **deps:** update dependency ee.schimke.composeai:compose-ai-tools-bom to v2.74.0 ([#93](https://github.com/yschimke/compose-preview-mcp/issues/93)) ([1da706c](https://github.com/yschimke/compose-preview-mcp/commit/1da706c87384eef21285e670d4b66ba9d9f60a4a))
+* **deps:** update dependency ee.schimke.composeai:compose-preview-daemon-bom to v3.24.1 ([#83](https://github.com/yschimke/compose-preview-mcp/issues/83)) ([3cd45bd](https://github.com/yschimke/compose-preview-mcp/commit/3cd45bd82182d565103c6f404274fb83e8079d82))
+* **deps:** update dependency ee.schimke.composeai:compose-preview-daemon-bom to v3.24.4 ([#90](https://github.com/yschimke/compose-preview-mcp/issues/90)) ([e1f4cf8](https://github.com/yschimke/compose-preview-mcp/commit/e1f4cf84398133ea8af7a2782a382568baa6121c))
+* **deps:** update dependency ee.schimke.composeai:compose-preview-daemon-bom to v3.25.1 ([#92](https://github.com/yschimke/compose-preview-mcp/issues/92)) ([e83e87d](https://github.com/yschimke/compose-preview-mcp/commit/e83e87dceca54d5b02085543e678eccd9c31d148))
+* **deps:** update dependency ee.schimke.composeai:remote-compose-player-js-dist to v2.17.5 ([#85](https://github.com/yschimke/compose-preview-mcp/issues/85)) ([1d6350c](https://github.com/yschimke/compose-preview-mcp/commit/1d6350cdb792616d3ddd7c313223763a4bf49521))
+* **deps:** update dependency ee.schimke.composeai:remote-compose-player-js-dist to v2.19.0 ([#94](https://github.com/yschimke/compose-preview-mcp/issues/94)) ([2097d71](https://github.com/yschimke/compose-preview-mcp/commit/2097d7187a05a1b507ed06cc5eb56358e99d9a4e))
+* **mcp:** rotate the classloader on force, clear stale notes, keep Bazel errors ([#99](https://github.com/yschimke/compose-preview-mcp/issues/99)) ([33a23e2](https://github.com/yschimke/compose-preview-mcp/commit/33a23e295ff2595db247c967c595639304902148))
+
 ## [4.11.0](https://github.com/yschimke/compose-preview-mcp/compare/v4.10.0...v4.11.0) (2026-10-23)
 
 

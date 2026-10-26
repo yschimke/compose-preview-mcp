@@ -7886,6 +7886,163 @@ class DaemonMcpServerTest {
     assertThat(request).doesNotContain("from-one")
   }
 
+  private fun widgetRows(base: String) =
+    ee.schimke.composeai.daemon.protocol.PreviewRowsResult(
+      previewId = base,
+      rows =
+        listOf(
+          ee.schimke.composeai.daemon.protocol.PreviewRowDto(0, "PARAM_0", "${base}_PARAM_0"),
+          ee.schimke.composeai.daemon.protocol.PreviewRowDto(1, "Dark mode", "${base}_Dark mode"),
+        ),
+    )
+
+  private fun listResources() =
+    json.decodeFromJsonElement(
+      io.modelcontextprotocol.kotlin.sdk.types.ListResourcesResult.serializer(),
+      client.request("resources/list"),
+    )
+
+  private fun findPreviews(workspaceId: WorkspaceId, path: String) =
+    json
+      .parseToJsonElement(
+        client
+          .callTool(
+            "find_previews_for_file",
+            buildJsonObject {
+              put("workspaceId", workspaceId.value)
+              put("path", path)
+            },
+          )
+          .firstTextContent()
+      )
+      .jsonObject["previews"]!!
+      .jsonArray
+      .map { it.jsonObject }
+
+  @Test
+  fun `a PreviewParameter preview is listed and rendered once per daemon row`() {
+    client.initialize()
+    val projectDir = tmp.newFolder("workspace")
+    val moduleDir = tmp.newFolder("workspace", "module")
+    val sourcePath = "src/main/kotlin/com/example/Widget.kt"
+    moduleDir.resolve(sourcePath).apply { parentFile.mkdirs() }.writeText("@Preview fun W() {}")
+    val workspaceId = registerWorkspace(projectDir, "demo")
+    val daemon = warmDaemonFor(workspaceId, ":module")
+    val base = "com.example.WidgetKt.WidgetPreview"
+    daemon.onPreviewRows = { id -> if (id == base) widgetRows(base) else error("unexpected $id") }
+    daemon.emitDiscovery(base, sourceFile = sourcePath, previewParameterProvider = "com.example.P")
+    daemon.emitDiscovery("com.example.Plain", sourceFile = sourcePath)
+    repeat(2) { client.expectNotification("notifications/resources/list_changed", 2_000) }
+
+    val baseUri = PreviewUri(workspaceId, ":module", base).toUri()
+    val rowUris =
+      listOf("${base}_PARAM_0", "${base}_Dark mode").map {
+        PreviewUri(workspaceId, ":module", it).toUri()
+      }
+    // The label-derived row id holds a space: its URI is percent-encoded like any other.
+    assertThat(rowUris[1]).endsWith("WidgetPreview_Dark%20mode")
+
+    val listed = listResources().resources.filter { it.uri.startsWith("compose-preview://") }
+    assertThat(listed.map { it.uri })
+      .containsExactly(
+        PreviewUri(workspaceId, ":module", "com.example.Plain").toUri(),
+        rowUris[0],
+        rowUris[1],
+      )
+    val darkRow = listed.single { it.uri == rowUris[1] }
+    assertThat(darkRow.description).isEqualTo("$base [Dark mode]")
+    val darkMeta = darkRow.meta!!["parameterRow"]!!.jsonObject
+    assertThat(darkMeta["index"]!!.jsonPrimitive.content).isEqualTo("1")
+    assertThat(darkMeta["label"]!!.jsonPrimitive.content).isEqualTo("Dark mode")
+    assertThat(darkMeta["baseUri"]!!.jsonPrimitive.content).isEqualTo(baseUri)
+    assertThat(darkRow.meta!!["sourceFile"]).isNotNull()
+
+    val found = findPreviews(workspaceId, "module/$sourcePath")
+    assertThat(found.map { it["fqn"]!!.jsonPrimitive.content })
+      .containsExactly("com.example.Plain", "${base}_PARAM_0", "${base}_Dark mode")
+    assertThat(
+        found
+          .single { it["fqn"]!!.jsonPrimitive.content == "${base}_Dark mode" }["uri"]!!
+          .jsonPrimitive
+          .content
+      )
+      .isEqualTo(rowUris[1])
+
+    // Asked once: the second and third listings read the cache.
+    assertThat(daemon.previewRowsRequests.toList()).containsExactly(base)
+
+    val png = tmp.newFile("row.png")
+    writeSolidPng(png, 0xff00ff00.toInt())
+    daemon.autoRenderPngPath = { png.absolutePath }
+    // By uri, in its percent-encoded spelling: the daemon gets the row id verbatim.
+    val byUri =
+      client.callTool(
+        "render_preview",
+        buildJsonObject {
+          put("uri", rowUris[1])
+          put("observe", "hash")
+        },
+      )
+    assertThat(byUri.isError()).isFalse()
+    assertThat(daemon.renderRequests.poll(2_000, TimeUnit.MILLISECONDS))
+      .containsExactly("${base}_Dark mode")
+    // By name, the row's function-name suffix.
+    val byName =
+      client.callTool(
+        "render_preview",
+        buildJsonObject {
+          put("preview", "WidgetPreview_PARAM_0")
+          put("observe", "hash")
+        },
+      )
+    assertThat(byName.isError()).isFalse()
+    assertThat(daemon.renderRequests.poll(2_000, TimeUnit.MILLISECONDS))
+      .containsExactly("${base}_PARAM_0")
+    // render_matrix takes a row uri as one of the catalogued previews.
+    val matrix =
+      client.callTool(
+        "render_matrix",
+        buildJsonObject {
+          put("uri", rowUris[1])
+          putJsonObject("axes") { putJsonArray("uiMode") { add(JsonPrimitive("light")) } }
+        },
+      )
+    assertThat(matrix.isError()).isFalse()
+    assertThat(daemon.renderRequests.poll(2_000, TimeUnit.MILLISECONDS))
+      .containsExactly("${base}_Dark mode")
+
+    // Rediscovering the preview forgets its rows; the next listing asks again.
+    daemon.emitDiscovery(base, sourceFile = sourcePath, previewParameterProvider = "com.example.P")
+    client.expectNotification("notifications/resources/list_changed", 2_000)
+    listResources()
+    assertThat(daemon.previewRowsRequests.toList()).containsExactly(base, base)
+  }
+
+  @Test
+  fun `a daemon without preview rows lists the PreviewParameter preview by its base id`() {
+    client.initialize()
+    val projectDir = tmp.newFolder("workspace")
+    val moduleDir = tmp.newFolder("workspace", "module")
+    val sourcePath = "src/main/kotlin/com/example/Widget.kt"
+    moduleDir.resolve(sourcePath).apply { parentFile.mkdirs() }.writeText("@Preview fun W() {}")
+    val workspaceId = registerWorkspace(projectDir, "demo")
+    val daemon = warmDaemonFor(workspaceId, ":module")
+    val base = "com.example.WidgetKt.WidgetPreview"
+    // No onPreviewRows: `preview/rows` is method-not-found, as on a daemon before 3.26.0.
+    daemon.emitDiscovery(base, sourceFile = sourcePath, previewParameterProvider = "com.example.P")
+    client.expectNotification("notifications/resources/list_changed", 2_000)
+
+    val baseUri = PreviewUri(workspaceId, ":module", base).toUri()
+    val listed = listResources().resources.filter { it.uri.startsWith("compose-preview://") }
+    assertThat(listed.map { it.uri }).containsExactly(baseUri)
+    assertThat(listed.single().meta?.get("parameterRow")).isNull()
+    val found = findPreviews(workspaceId, "module/$sourcePath")
+    assertThat(found.map { it["uri"]!!.jsonPrimitive.content }).containsExactly(baseUri)
+    assertThat(found.single()["parameterRow"]).isNull()
+    // The unsupported answer is cached like rows: one request across both listings.
+    assertThat(daemon.previewRowsRequests.toList()).containsExactly(base)
+  }
+
   private fun registerWorkspace(projectDir: java.io.File, rootName: String): WorkspaceId {
     val resp =
       client.callTool(

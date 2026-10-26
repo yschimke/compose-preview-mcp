@@ -200,6 +200,16 @@ class FakeDaemon : DaemonSpawn {
       >)? =
     null
 
+  /**
+   * Answers `preview/rows` for a previewId; null (the default) answers "method not found" like a
+   * daemon that predates the request.
+   */
+  @Volatile
+  var onPreviewRows: ((String) -> ee.schimke.composeai.daemon.protocol.PreviewRowsResult)? = null
+
+  /** The previewIds of every `preview/rows` request the fake observed. */
+  val previewRowsRequests = java.util.concurrent.LinkedBlockingQueue<String>()
+
   /** Captures each `compileSources` params object, e.g. to assert its `changes`. */
   @Volatile var onCompileSourcesParams: (JsonObject?) -> Unit = {}
 
@@ -303,6 +313,7 @@ class FakeDaemon : DaemonSpawn {
     sourceFile: String? = null,
     functionName: String = previewId.substringAfterLast('.'),
     bodyLine: Int? = null,
+    previewParameterProvider: String? = null,
   ) {
     val params = buildJsonObject {
       putJsonArray("added") {
@@ -314,6 +325,11 @@ class FakeDaemon : DaemonSpawn {
             put("displayName", displayName)
             if (sourceFile != null) put("sourceFile", sourceFile)
             if (bodyLine != null) put("bodyLine", bodyLine)
+            if (previewParameterProvider != null) {
+              putJsonObject("params") {
+                put("previewParameterProviderClassName", previewParameterProvider)
+              }
+            }
           }
         )
       }
@@ -701,6 +717,22 @@ class FakeDaemon : DaemonSpawn {
               .build(),
           ),
         )
+      }
+      "preview/rows" -> {
+        val previewId = params?.get("previewId")?.jsonPrimitive?.contentOrNull.orEmpty()
+        previewRowsRequests.offer(previewId)
+        val handler = onPreviewRows
+        if (handler == null) {
+          sendError(id, -32601, "method not found: $method")
+        } else {
+          sendResponse(
+            id,
+            json.encodeToJsonElement(
+              ee.schimke.composeai.daemon.protocol.PreviewRowsResult.serializer(),
+              handler(previewId),
+            ),
+          )
+        }
       }
       "compileWarmUp" -> {
         val handler = onCompileWarmUp

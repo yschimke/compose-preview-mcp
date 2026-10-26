@@ -345,6 +345,12 @@ class DaemonMcpServer(
   private val catalog: ConcurrentHashMap<DaemonAddr, ConcurrentHashMap<String, PreviewEntry>> =
     ConcurrentHashMap()
 
+  /**
+   * `@PreviewParameter` rows per (workspace, module), asked of the daemon lazily (`preview/rows`)
+   * and forgotten on recompile, classpath change and rediscovery (issue #97).
+   */
+  private val previewRows = PreviewParameterRows<DaemonAddr>()
+
   /** Changed sources, renders, subscriptions and pins: the Previews tray and `@`-mentions. */
   private val previewActivity = PreviewActivity()
 
@@ -407,17 +413,9 @@ class DaemonMcpServer(
     WatchPropagator(
       subscriptions = subscriptions,
       previewIdProvider = { daemon ->
-        val byId =
-          catalog[DaemonAddr(daemon.workspaceId, daemon.modulePath)]
-            ?: return@WatchPropagator emptyList()
-        byId.values.map { entry ->
-          PreviewUri(
-            workspaceId = daemon.workspaceId,
-            modulePath = daemon.modulePath,
-            previewFqn = entry.fqn,
-            config = entry.config,
-          )
-        }
+        val addr = DaemonAddr(daemon.workspaceId, daemon.modulePath)
+        val byId = catalog[addr] ?: return@WatchPropagator emptyList()
+        catalogUrisWithCachedRows(addr, byId)
       },
     )
 
@@ -535,6 +533,7 @@ class DaemonMcpServer(
     router.on("historyAdded") { daemon, params -> onHistoryAdded(daemon, params) }
     router.onClose { daemon ->
       catalog.remove(DaemonAddr(daemon.workspaceId, daemon.modulePath))
+      previewRows.invalidate(DaemonAddr(daemon.workspaceId, daemon.modulePath))
       evictDataProductsForDaemon(daemon.workspaceId, daemon.modulePath)
       watchPropagator.forget(daemon)
     }
@@ -656,28 +655,36 @@ class DaemonMcpServer(
     openAiProbe?.resources()?.let(out::addAll)
     if (profile == McpToolProfile.NATIVE) out.addAll(previewLibrary.resources())
     for ((addr, byId) in catalog) {
-      for (entry in byId.values) {
+      // A `@PreviewParameter` preview is listed as one resource per row (issue #97).
+      for ((id, entry, row) in listedPreviews(addr, byId.values)) {
         val uri =
-          PreviewUri(
-            workspaceId = addr.workspaceId,
-            modulePath = addr.modulePath,
-            previewFqn = entry.fqn,
-            config = entry.config,
-          )
+          runCatching {
+            PreviewUri(
+              workspaceId = addr.workspaceId,
+              modulePath = addr.modulePath,
+              previewFqn = id,
+              config = entry.config,
+            )
+          }
+            .getOrNull() ?: continue
+        val baseDescription = entry.displayName ?: entry.fqn
         out.add(
           ResourceDescriptor(
             uri = uri.toUri(),
-            name = entry.fqn.substringAfterLast('.'),
-            description = entry.displayName ?: entry.fqn,
+            name = id.substringAfterLast('.'),
+            description = if (row == null) baseDescription else "$baseDescription [${row.label}]",
             mimeType = "image/png",
             // The viewer's "open in editor" action reads the source location from here.
             meta =
-              entry.resolvedSourcePath?.let { sourceFile ->
+              if (entry.resolvedSourcePath == null && row == null) null
+              else
                 buildJsonObject {
-                  put("sourceFile", sourceFile)
-                  entry.bodyLine?.let { put("sourceLine", it) }
-                }
-              },
+                  entry.resolvedSourcePath?.let { sourceFile ->
+                    put("sourceFile", sourceFile)
+                    entry.bodyLine?.let { put("sourceLine", it) }
+                  }
+                  row?.let { putParameterRow(it, uri.copy(previewFqn = entry.fqn)) }
+                },
           )
         )
       }
@@ -910,8 +917,9 @@ class DaemonMcpServer(
     if (inProcessDeclined.contains(client) || !compileWarmUpAsked.add(client)) return
     val previews = catalog[DaemonAddr(uri.workspaceId, uri.modulePath)]
     val sources =
-      (listOfNotNull(previews?.get(uri.previewFqn)?.resolvedSourcePath) +
-          previews?.values?.mapNotNull { it.resolvedSourcePath }.orEmpty())
+      (listOfNotNull(
+          entryFor(DaemonAddr(uri.workspaceId, uri.modulePath), uri.previewFqn)?.resolvedSourcePath
+        ) + previews?.values?.mapNotNull { it.resolvedSourcePath }.orEmpty())
         .distinct()
         .take(COMPILE_WARM_UP_MAX_SOURCES)
     runCatching {
@@ -954,8 +962,10 @@ class DaemonMcpServer(
   private fun ensureSourceFreshBeforeRender(uri: PreviewUri, daemon: SupervisedDaemon): Boolean {
     freshnessMetrics.probesTotal.incrementAndGet()
     val addr = DaemonAddr(uri.workspaceId, uri.modulePath)
+    // A `@PreviewParameter` row shares its base preview's source, and its catalog entry.
+    val catalogKey = catalogKeyOf(addr, uri.previewFqn)
     val entry =
-      catalog[addr]?.get(uri.previewFqn)
+      catalog[addr]?.get(catalogKey)
         ?: run {
           freshnessMetrics.probesNoEntry.incrementAndGet()
           return false
@@ -978,7 +988,7 @@ class DaemonMcpServer(
         ?: run {
           // First sighting via mtime: record and bail. The hash is filled in on the first slow-path
           // probe.
-          catalog[addr]?.computeIfPresent(uri.previewFqn) { _, current ->
+          catalog[addr]?.computeIfPresent(catalogKey) { _, current ->
             current.copy(sourceLastModifiedMs = currentModifiedMs)
           }
           freshnessMetrics.probesFirstSighting.incrementAndGet()
@@ -1000,7 +1010,7 @@ class DaemonMcpServer(
             }
         val knownHash = entry.sourceContentHash
         if (knownHash == null) {
-          catalog[addr]?.computeIfPresent(uri.previewFqn) { _, current ->
+          catalog[addr]?.computeIfPresent(catalogKey) { _, current ->
             current.copy(sourceContentHash = currentHash)
           }
           freshnessMetrics.probesUnchangedNoBaseline.incrementAndGet()
@@ -1023,6 +1033,7 @@ class DaemonMcpServer(
         .computeIfAbsent(addr) { ConcurrentHashMap.newKeySet() }
         .add(sourceFile.absolutePath)
     } else {
+      previewRows.invalidate(addr)
       daemon.allClients().forEach { client ->
         runCatching {
           client.fileChanged(
@@ -1034,7 +1045,7 @@ class DaemonMcpServer(
       }
     }
     val refreshedHash = runCatching { sha256Hex(sourceFile) }.getOrNull()
-    catalog[addr]?.computeIfPresent(uri.previewFqn) { _, current ->
+    catalog[addr]?.computeIfPresent(catalogKey) { _, current ->
       current.copy(
         sourceLastModifiedMs = currentModifiedMs,
         sourceContentHash = refreshedHash ?: current.sourceContentHash,
@@ -1058,6 +1069,8 @@ class DaemonMcpServer(
       val sources =
         pendingSources.remove(addr)?.toList()?.sorted()?.takeIf { it.isNotEmpty() } ?: return null
       val trigger = pendingTrigger.remove(addr) ?: TRIGGER_DETECTED
+      // The recompiled classes may change a `@PreviewParameter` provider's values.
+      previewRows.invalidate(addr)
       // Whatever the outcome, this compile answers every change seen so far: a failure is reported
       // as stale until the next edit, not retried on every render.
       sourceTrees[daemon.workspaceId]?.let { compiledGeneration[addr] = it.generation }
@@ -2031,7 +2044,9 @@ class DaemonMcpServer(
         description =
           "Find catalogued previews declared by a Kotlin source file. `path` may be absolute, or " +
             "relative to the selected workspace (or every registered workspace when workspaceId is " +
-            "omitted). Returns an empty previews array when no discovered preview uses that file.",
+            "omitted). Returns an empty previews array when no discovered preview uses that file. " +
+            "A @PreviewParameter preview is listed once per row, each with its own uri and a " +
+            "`parameterRow` {index, label, baseUri}.",
         inputSchema =
           parseSchema(
             """
@@ -2328,7 +2343,9 @@ class DaemonMcpServer(
         description =
           "Find catalogued previews declared by a Kotlin source file. `path` may be absolute, or " +
             "relative to the selected workspace (or every registered workspace when workspaceId is " +
-            "omitted). Returns an empty previews array when no discovered preview uses that file.",
+            "omitted). Returns an empty previews array when no discovered preview uses that file. " +
+            "A @PreviewParameter preview is listed once per row, each with its own uri and a " +
+            "`parameterRow` {index, label, baseUri}.",
         inputSchema =
           parseSchema(
             """
@@ -3943,11 +3960,36 @@ class DaemonMcpServer(
       .filter { (addr, _) -> scope == null || addr.workspaceId in scope }
       .flatMap { (addr, byId) ->
         val preference = rootPreference(supervisor.project(addr.workspaceId)?.path)
-        byId.values.mapNotNull { entry ->
+        byId.values.flatMap { entry ->
           val exact = matchesName(entry.fqn)
-          if (!exact && previewBaseIds(entry).none(::matchesName)) return@mapNotNull null
-          val uri = PreviewUri(addr.workspaceId, addr.modulePath, entry.fqn, entry.config).toUri()
-          Match(exact, preference, uri)
+          val own =
+            if (!exact && previewBaseIds(entry).none(::matchesName)) null
+            else
+              Match(
+                exact,
+                preference,
+                PreviewUri(addr.workspaceId, addr.modulePath, entry.fqn, entry.config).toUri(),
+              )
+          // A `@PreviewParameter` row's id extends its base's (`…Preview_PARAM_2`,
+          // `…Preview_Dark`):
+          // ask for the rows only when the name could be one of them.
+          val rows =
+            if (
+              entry.parameterProvider == null ||
+                !name.substringAfterLast('.').startsWith(entry.fqn.substringAfterLast('.') + "_")
+            )
+              emptyList()
+            else
+              parameterRows(addr, entry)
+                .filter { matchesName(it.id) }
+                .mapNotNull { row ->
+                  runCatching {
+                    PreviewUri(addr.workspaceId, addr.modulePath, row.id, entry.config).toUri()
+                  }
+                    .getOrNull()
+                    ?.let { Match(true, preference, it) }
+                }
+          listOfNotNull(own) + rows
         }
       }
       .sortedWith(
@@ -4923,6 +4965,91 @@ class DaemonMcpServer(
       target
     }
 
+  /**
+   * The catalog key for [previewId] in [addr]: itself when discovered, else the base preview of a
+   * `@PreviewParameter` row: one [previewRows] has listed, or a `<baseId>_PARAM_<index>` id whose
+   * base takes a provider. Unknown ids come back unchanged.
+   */
+  private fun catalogKeyOf(addr: DaemonAddr, previewId: String): String {
+    val byId = catalog[addr] ?: return previewId
+    if (byId.containsKey(previewId)) return previewId
+    previewRows.baseOf(addr, previewId)?.let {
+      return it
+    }
+    val base = previewId.substringBeforeLast(PARAM_ROW_INFIX, "")
+    val index = previewId.substringAfterLast(PARAM_ROW_INFIX, "")
+    return if (
+      base.isNotEmpty() &&
+        index.isNotEmpty() &&
+        index.all(Char::isDigit) &&
+        byId[base]?.parameterProvider != null
+    )
+      base
+    else previewId
+  }
+
+  /** [previewId]'s catalog entry, a `@PreviewParameter` row resolving to its base's. */
+  private fun entryFor(addr: DaemonAddr, previewId: String): PreviewEntry? =
+    catalog[addr]?.get(catalogKeyOf(addr, previewId))
+
+  /**
+   * [entry]'s `@PreviewParameter` rows, asked of [addr]'s running daemon (`preview/rows`) the first
+   * time and cached until a recompile, classpath change or rediscovery. Empty for an ordinary
+   * preview, with no daemon running, and for a daemon that cannot enumerate rows: the base id is
+   * then the one preview, as before.
+   */
+  private fun parameterRows(addr: DaemonAddr, entry: PreviewEntry): List<PreviewParameterRow> {
+    if (entry.parameterProvider == null) return emptyList()
+    previewRows.cached(addr, entry.fqn)?.let {
+      return it
+    }
+    val client =
+      supervisor
+        .project(addr.workspaceId)
+        ?.daemons
+        ?.get(addr.modulePath)
+        ?.allClients()
+        ?.firstOrNull() ?: return emptyList()
+    return previewRows.rows(addr, entry.fqn) {
+      client.previewRows(entry.fqn, timeout = PREVIEW_ROWS_TIMEOUT)
+    }
+  }
+
+  /** [entries], each `@PreviewParameter` preview expanded into its rows (see [parameterRows]). */
+  private fun listedPreviews(addr: DaemonAddr, entries: Collection<PreviewEntry>) =
+    entries.flatMap { entry ->
+      val rows = parameterRows(addr, entry)
+      if (rows.isEmpty()) listOf(ListedPreview(entry.fqn, entry))
+      else rows.map { ListedPreview(it.id, entry, it) }
+    }
+
+  /** `parameterRow: {index, label, baseUri}` on a listed `@PreviewParameter` row. */
+  private fun JsonObjectBuilder.putParameterRow(row: PreviewParameterRow, baseUri: PreviewUri) {
+    putJsonObject("parameterRow") {
+      put("index", row.index)
+      put("label", row.label)
+      put("baseUri", baseUri.toUri())
+    }
+  }
+
+  /**
+   * [byId]'s preview URIs plus every row [previewRows] already holds, without asking the daemon:
+   * what watches and source-change refreshes match against.
+   */
+  private fun catalogUrisWithCachedRows(
+    addr: DaemonAddr,
+    byId: Map<String, PreviewEntry>,
+  ): List<PreviewUri> {
+    val rows = previewRows.cachedRows(addr)
+    return byId.values.flatMap { entry ->
+      val base = PreviewUri(addr.workspaceId, addr.modulePath, entry.fqn, entry.config)
+      listOf(base) +
+        rows[entry.fqn].orEmpty().mapNotNull { row ->
+          runCatching { base.copy(previewFqn = row.id) }.getOrNull()
+        }
+    }
+  }
+
   /** The catalog as [PreviewTray] and [PreviewMentions] read it; empty until discovery lands. */
   private fun previewCatalog(): List<CatalogPreview> = catalog.flatMap { (addr, byId) ->
     byId.values.map { entry ->
@@ -4963,21 +5090,24 @@ class DaemonMcpServer(
     val previews = mutableListOf<JsonObject>()
     for ((addr, byId) in catalog) {
       val targetPath = targetByWorkspace[addr.workspaceId] ?: continue
-      for (entry in byId.values) {
+      val inFile = byId.values.filter { it.resolvedSourcePath == targetPath }
+      for ((id, entry, row) in listedPreviews(addr, inFile)) {
         val uri =
-          PreviewUri(
-            workspaceId = addr.workspaceId,
-            modulePath = addr.modulePath,
-            previewFqn = entry.fqn,
-            config = entry.config,
-          )
-        val sourcePath = entry.resolvedSourcePath ?: continue
-        if (sourcePath != targetPath) continue
+          runCatching {
+            PreviewUri(
+              workspaceId = addr.workspaceId,
+              modulePath = addr.modulePath,
+              previewFqn = id,
+              config = entry.config,
+            )
+          }
+            .getOrNull() ?: continue
         previews += buildJsonObject {
           put("uri", uri.toUri())
-          put("fqn", entry.fqn)
+          put("fqn", id)
           entry.displayName?.let { put("displayName", it) }
           entry.bodyLine?.let { put("bodyLine", it) }
+          row?.let { putParameterRow(it, uri.copy(previewFqn = entry.fqn)) }
         }
       }
     }
@@ -5351,7 +5481,10 @@ class DaemonMcpServer(
     val uri =
       PreviewUri.parseOrNull(uriArg) ?: return PreviewNameResolution.Missing("invalid uri: $uriArg")
     val byId = catalog[DaemonAddr(uri.workspaceId, uri.modulePath)]
-    if (byId.isNullOrEmpty() || byId.values.any { it.fqn == uri.previewFqn }) {
+    if (
+      byId.isNullOrEmpty() ||
+        entryFor(DaemonAddr(uri.workspaceId, uri.modulePath), uri.previewFqn) != null
+    ) {
       return PreviewNameResolution.Found(uriArg, emptyList())
     }
     val variants =
@@ -5608,7 +5741,7 @@ class DaemonMcpServer(
   private fun canonicalOverridesFor(uri: PreviewUri, overrides: PreviewOverrides?) =
     canonicalOverrides(
       overrides,
-      catalog[DaemonAddr(uri.workspaceId, uri.modulePath)]?.get(uri.previewFqn)?.declaredFontScale,
+      entryFor(DaemonAddr(uri.workspaceId, uri.modulePath), uri.previewFqn)?.declaredFontScale,
     )
 
   private class RenderedCell(
@@ -5718,7 +5851,8 @@ class DaemonMcpServer(
     val daemon = supervisor.daemonFor(uri.workspaceId, uri.modulePath)
     // Use the catalogued source path when known: the daemon logs it and re-runs discovery on it
     // for the source change. A path it cannot read is skipped by that discovery.
-    val path = catalog[addr]?.get(uri.previewFqn)?.sourceFile ?: "force-render://${uri.previewFqn}"
+    val path = entryFor(addr, uri.previewFqn)?.sourceFile ?: "force-render://${uri.previewFqn}"
+    previewRows.invalidate(addr)
     daemon.allClients().forEach { client ->
       runCatching {
         client.fileChanged(path = path, kind = FileKind.CLASSPATH, changeType = ChangeType.MODIFIED)
@@ -7227,10 +7361,9 @@ class DaemonMcpServer(
     evidence: List<ee.schimke.composeai.daemon.protocol.RecordingScriptEvidence>,
   ): String {
     val resolvedFunctionName =
-      catalog[DaemonAddr(uri.workspaceId, uri.modulePath)]
-        ?.get(uri.previewFqn)
-        ?.functionName
-        ?.takeIf { it.isNotBlank() }
+      entryFor(DaemonAddr(uri.workspaceId, uri.modulePath), uri.previewFqn)?.functionName?.takeIf {
+        it.isNotBlank()
+      }
     val method =
       resolvedFunctionName ?: uri.previewFqn.substringAfterLast('.').ifBlank { "preview" }
     val pascal = method.replaceFirstChar { it.uppercaseChar() }
@@ -7711,6 +7844,7 @@ class DaemonMcpServer(
         // A notification for a file the note is about (built outside, e.g. `bazel build`) says
         // the module's outputs were refreshed; any other file leaves the note standing.
         if (staleNotes[addr]?.sources?.any { sameFile(it, path) } == true) staleNotes.remove(addr)
+        previewRows.invalidate(addr)
         // File invalidation must reach EVERY replica — each replica has its own independent
         // discovery + render cache, so missing one would leave it serving stale bytes.
         daemon.allClients().forEach { client ->
@@ -7721,14 +7855,7 @@ class DaemonMcpServer(
       val byId = catalog[DaemonAddr(daemon.workspaceId, daemon.modulePath)] ?: return@forEach
       // Build the candidate URI set for this daemon and intersect with current watches/subs.
       val candidates =
-        byId.values.map { entry ->
-          PreviewUri(
-            workspaceId = daemon.workspaceId,
-            modulePath = daemon.modulePath,
-            previewFqn = entry.fqn,
-            config = entry.config,
-          )
-        }
+        catalogUrisWithCachedRows(DaemonAddr(daemon.workspaceId, daemon.modulePath), byId)
       candidates.forEach { uri ->
         val subscribedUris = subscriptions.subscribedUrisMatching(uri)
         val refreshes = mutableMapOf<PreviewOverrides?, MutableSet<String>>()
@@ -7804,6 +7931,7 @@ class DaemonMcpServer(
       // Seed the content hash at discovery so the first frozen-mtime edit is caught. On failure it
       // stays null and the probe uses mtime only.
       val sourceContentHash = resolved?.let { runCatching { sha256Hex(it) }.getOrNull() }
+      val entryParams = entry["params"] as? JsonObject
       byId[id] =
         PreviewEntry(
           fqn = id,
@@ -7817,12 +7945,22 @@ class DaemonMcpServer(
           sourceContentHash = sourceContentHash,
           // An incremental rescan sends no `params`; keep what the full discovery said.
           declaredFontScale =
-            ((entry["params"] as? JsonObject)?.get("fontScale") as? JsonPrimitive)
-              ?.contentOrNull
-              ?.toFloatOrNull() ?: byId[id]?.declaredFontScale,
+            (entryParams?.get("fontScale") as? JsonPrimitive)?.contentOrNull?.toFloatOrNull()
+              ?: byId[id]?.declaredFontScale,
+          parameterProvider =
+            if (entryParams == null) byId[id]?.parameterProvider
+            else
+              (entryParams["previewParameterProviderClassName"] as? JsonPrimitive)
+                ?.contentOrNull
+                ?.takeIf { it.isNotBlank() },
         )
     }
     removed.forEach { byId.remove(it) }
+    // A rediscovered preview may have a new provider, or new values in it.
+    previewRows.invalidate(
+      addr,
+      (added + changed).mapNotNull { it["id"]?.jsonPrimitive?.contentOrNull } + removed,
+    )
     sessions.forEach { it.notifyResourceListChanged() }
     watchPropagator.recompute(daemon)
   }
@@ -7844,7 +7982,7 @@ class DaemonMcpServer(
         freshnessMetrics.samplingDeterministic.incrementAndGet()
       } else {
         freshnessMetrics.samplingNondeterministic.incrementAndGet()
-        val entryForUri = catalog[DaemonAddr(daemon.workspaceId, daemon.modulePath)]?.get(previewId)
+        val entryForUri = entryFor(DaemonAddr(daemon.workspaceId, daemon.modulePath), previewId)
         val probeUri =
           PreviewUri(
             workspaceId = daemon.workspaceId,
@@ -7888,14 +8026,13 @@ class DaemonMcpServer(
         RenderedAt(
           canonicalOverrides(
             completedGroup.overrides,
-            catalog[DaemonAddr(daemon.workspaceId, daemon.modulePath)]
-              ?.get(previewId)
+            entryFor(DaemonAddr(daemon.workspaceId, daemon.modulePath), previewId)
               ?.declaredFontScale,
           )
         )
     } else latestRenderOverrides.remove(key)
     // 3. Build the matching URI and notify subscribers + watchers.
-    val entry = catalog[DaemonAddr(daemon.workspaceId, daemon.modulePath)]?.get(previewId)
+    val entry = entryFor(DaemonAddr(daemon.workspaceId, daemon.modulePath), previewId)
     val uri =
       PreviewUri(
         workspaceId = daemon.workspaceId,
@@ -7953,9 +8090,7 @@ class DaemonMcpServer(
     val canonical =
       canonicalOverrides(
         overrides,
-        catalog[DaemonAddr(daemon.workspaceId, daemon.modulePath)]
-          ?.get(previewId)
-          ?.declaredFontScale,
+        entryFor(DaemonAddr(daemon.workspaceId, daemon.modulePath), previewId)?.declaredFontScale,
       )
     // Drop everything the cache had for this preview — the daemon's latest render is the truth.
     dataProductCache.keys.removeIf {
@@ -8068,6 +8203,7 @@ class DaemonMcpServer(
     // `forgetDaemon` returns true, so the respawn is scheduled once.
     val firstClassedDirty = supervisor.forgetDaemon(workspaceId, modulePath)
     catalog.remove(DaemonAddr(workspaceId, modulePath))
+    previewRows.invalidate(DaemonAddr(workspaceId, modulePath))
     evictDataProductsForDaemon(workspaceId, modulePath)
     watchPropagator.forget(daemon)
     sessions.forEach { it.notifyResourceListChanged() }
@@ -8133,6 +8269,21 @@ class DaemonMcpServer(
     val sourceContentHash: String? = null,
     /** `@Preview(fontScale = …)` from discovery's `params`, when it sent them. */
     val declaredFontScale: Float? = null,
+    /**
+     * `params.previewParameterProviderClassName`: the preview takes a `@PreviewParameter`, so the
+     * daemon can enumerate rows for it ([parameterRows]).
+     */
+    val parameterProvider: String? = null,
+  )
+
+  /**
+   * One entry of a listing: a preview, or one row of a `@PreviewParameter` preview ([row] set, [id]
+   * the row's addressable id, [entry] its base).
+   */
+  private data class ListedPreview(
+    val id: String,
+    val entry: PreviewEntry,
+    val row: PreviewParameterRow? = null,
   )
 
   /**
@@ -8356,6 +8507,15 @@ class DaemonMcpServer(
 
     /** How long a daemon may take to warm its compiler; it only logs if it takes longer. */
     private val COMPILE_WARM_UP_TIMEOUT = 300.seconds
+
+    /**
+     * Bounds one `preview/rows` request: a listing waits on it, and a failed request is retried on
+     * the next listing rather than cached.
+     */
+    private val PREVIEW_ROWS_TIMEOUT = 10.seconds
+
+    /** The daemon's index-addressed `@PreviewParameter` row id: `<baseId>_PARAM_<index>`. */
+    private const val PARAM_ROW_INFIX = "_PARAM_"
 
     /**
      * Preview files a warm-up is given at most: the daemon cycles through them, and each needs only

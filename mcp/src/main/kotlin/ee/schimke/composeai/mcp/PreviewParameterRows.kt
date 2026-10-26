@@ -1,7 +1,9 @@
 package ee.schimke.composeai.mcp
 
 import ee.schimke.composeai.daemon.protocol.PreviewRowsResult
+import java.util.concurrent.CompletableFuture
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.Executor
 import java.util.concurrent.atomic.AtomicLong
 
 /** One `@PreviewParameter` row: [id] is the daemon's addressable previewId, used verbatim. */
@@ -21,6 +23,10 @@ internal data class PreviewParameterRow(val id: String, val index: Int, val labe
  *
  * Each key carries a generation, so an answer that was in flight across an [invalidate] is dropped
  * rather than cached over the fresh state.
+ *
+ * [rowsAsync] shares one request per (key, base id, generation) between concurrent callers, so a
+ * listing that stopped waiting and the next one that asks again attach to the same request rather
+ * than queueing a second one behind it.
  */
 internal class PreviewParameterRows<K : Any> {
 
@@ -28,6 +34,13 @@ internal class PreviewParameterRows<K : Any> {
 
   private val cache = ConcurrentHashMap<K, ConcurrentHashMap<String, Cached>>()
   private val generations = ConcurrentHashMap<K, AtomicLong>()
+
+  private class InFlight(
+    val generation: Long,
+    val future: CompletableFuture<List<PreviewParameterRow>>,
+  )
+
+  private val inFlight = ConcurrentHashMap<Pair<K, String>, InFlight>()
 
   /** The cached rows of [baseId], or null when it has not been asked yet. */
   fun cached(key: K, baseId: String): List<PreviewParameterRow>? = cache[key]?.get(baseId)?.rows
@@ -40,7 +53,59 @@ internal class PreviewParameterRows<K : Any> {
     cached(key, baseId)?.let {
       return it
     }
+    return fetchAndCache(key, baseId, generation(key).get(), fetch)
+  }
+
+  /**
+   * [baseId]'s rows as a future: already complete when cached, else [fetch] run on [executor] (or
+   * the request another caller already started for this generation). Never completes exceptionally;
+   * a failed fetch completes with no rows, as [rows] returns.
+   */
+  fun rowsAsync(
+    key: K,
+    baseId: String,
+    executor: Executor,
+    fetch: () -> PreviewRowsResult?,
+  ): CompletableFuture<List<PreviewParameterRow>> {
+    cached(key, baseId)?.let {
+      return CompletableFuture.completedFuture(it)
+    }
     val generation = generation(key).get()
+    val slot = key to baseId
+    var started: CompletableFuture<List<PreviewParameterRow>>? = null
+    val flight =
+      inFlight.compute(slot) { _, existing ->
+        if (existing != null && existing.generation == generation) existing
+        else
+          InFlight(generation, CompletableFuture<List<PreviewParameterRow>>().also { started = it })
+      }!!
+    started?.let { future ->
+      runCatching {
+        executor.execute {
+          val rows =
+            try {
+              fetchAndCache(key, baseId, generation, fetch)
+            } finally {
+              inFlight.remove(slot, flight)
+            }
+          future.complete(rows)
+        }
+      }
+        .onFailure {
+          // A shut-down executor: nothing will answer, so answer "no rows" now.
+          inFlight.remove(slot, flight)
+          future.complete(emptyList())
+        }
+    }
+    return flight.future
+  }
+
+  private fun fetchAndCache(
+    key: K,
+    baseId: String,
+    generation: Long,
+    fetch: () -> PreviewRowsResult?,
+  ): List<PreviewParameterRow> {
     val result =
       runCatching(fetch)
         .onFailure {

@@ -201,11 +201,16 @@ class FakeDaemon : DaemonSpawn {
     null
 
   /**
-   * Answers `preview/rows` for a previewId; null (the default) answers "method not found" like a
-   * daemon that predates the request.
+   * Answers `preview/rows` for a previewId, on a thread of its own so it may block; null (the
+   * default) answers "method not found" like a daemon that predates the request.
    */
   @Volatile
   var onPreviewRows: ((String) -> ee.schimke.composeai.daemon.protocol.PreviewRowsResult)? = null
+
+  private val previewRowsResponder =
+    java.util.concurrent.Executors.newFixedThreadPool(4) { r ->
+      Thread(r, "fake-daemon-preview-rows").apply { isDaemon = true }
+    }
 
   /** The previewIds of every `preview/rows` request the fake observed. */
   val previewRowsRequests = java.util.concurrent.LinkedBlockingQueue<String>()
@@ -301,6 +306,7 @@ class FakeDaemon : DaemonSpawn {
     if (!running.compareAndSet(true, false)) return
     runCatching { daemonToMcp.close() }
     runCatching { daemonReadIn.close() }
+    runCatching { previewRowsResponder.shutdownNow() }
   }
 
   /**
@@ -725,13 +731,18 @@ class FakeDaemon : DaemonSpawn {
         if (handler == null) {
           sendError(id, -32601, "method not found: $method")
         } else {
-          sendResponse(
-            id,
-            json.encodeToJsonElement(
-              ee.schimke.composeai.daemon.protocol.PreviewRowsResult.serializer(),
-              handler(previewId),
-            ),
-          )
+          // Answered off the reader thread, so a handler that blocks (a slow daemon) holds up
+          // only this request, as a real daemon's would. Pooled, long-lived threads: a piped
+          // stream's reader fails once the thread that last wrote to it has exited.
+          previewRowsResponder.execute {
+            sendResponse(
+              id,
+              json.encodeToJsonElement(
+                ee.schimke.composeai.daemon.protocol.PreviewRowsResult.serializer(),
+                handler(previewId),
+              ),
+            )
+          }
         }
       }
       "compileWarmUp" -> {

@@ -351,6 +351,24 @@ class DaemonMcpServer(
    */
   private val previewRows = PreviewParameterRows<DaemonAddr>()
 
+  /**
+   * Runs `preview/rows` requests off the listing thread, several at once, so one slow daemon answer
+   * does not hold up the rest (see [listedPreviews]). Long-lived threads: a thread that writes a
+   * request and exits breaks a piped transport's reader.
+   */
+  private val previewRowsExecutor: java.util.concurrent.ExecutorService =
+    java.util.concurrent.Executors.newFixedThreadPool(PREVIEW_ROWS_THREADS) { r ->
+      Thread(r, "mcp-preview-rows").apply { isDaemon = true }
+    }
+
+  /**
+   * Row requests a listing stopped waiting for. Each sends one
+   * `notifications/resources/list_changed` when it lands with rows, however many listings gave up
+   * on it, so clients re-list.
+   */
+  private val lateRowRequests: MutableSet<java.util.concurrent.CompletableFuture<*>> =
+    ConcurrentHashMap.newKeySet()
+
   /** Changed sources, renders, subscriptions and pins: the Previews tray and `@`-mentions. */
   private val previewActivity = PreviewActivity()
 
@@ -563,6 +581,7 @@ class DaemonMcpServer(
     runCatching { freshnessExecutor.shutdownNow() }
     runCatching { renderDispatchExecutor.shutdownNow() }
     runCatching { compileWarmUpExecutor.shutdownNow() }
+    runCatching { previewRowsExecutor.shutdownNow() }
     runCatching { budgetedCallScope.cancel() }
     runCatching { activeDesignRoots.close() }
     runCatching { rcViewer.shutdown() }
@@ -654,9 +673,10 @@ class DaemonMcpServer(
     uiBuilderDesign?.resourceDescriptors()?.let(out::addAll)
     openAiProbe?.resources()?.let(out::addAll)
     if (profile == McpToolProfile.NATIVE) out.addAll(previewLibrary.resources())
+    val rowsDeadline = System.nanoTime() + PREVIEW_ROWS_LISTING_DEADLINE.inWholeNanoseconds
     for ((addr, byId) in catalog) {
       // A `@PreviewParameter` preview is listed as one resource per row (issue #97).
-      for ((id, entry, row) in listedPreviews(addr, byId.values)) {
+      for ((id, entry, row) in listedPreviews(addr, byId.values, rowsDeadline)) {
         val uri =
           runCatching {
             PreviewUri(
@@ -4996,12 +5016,22 @@ class DaemonMcpServer(
    * [entry]'s `@PreviewParameter` rows, asked of [addr]'s running daemon (`preview/rows`) the first
    * time and cached until a recompile, classpath change or rediscovery. Empty for an ordinary
    * preview, with no daemon running, and for a daemon that cannot enumerate rows: the base id is
-   * then the one preview, as before.
+   * then the one preview, as before. Waits for the daemon's answer: for a caller that needs a row's
+   * id to resolve it, such as a render by name. A listing uses [parameterRowsAsync].
    */
-  private fun parameterRows(addr: DaemonAddr, entry: PreviewEntry): List<PreviewParameterRow> {
-    if (entry.parameterProvider == null) return emptyList()
+  private fun parameterRows(addr: DaemonAddr, entry: PreviewEntry): List<PreviewParameterRow> =
+    parameterRowsAsync(addr, entry).join()
+
+  /** [parameterRows] as a future that completes once the daemon answers (never exceptionally). */
+  private fun parameterRowsAsync(
+    addr: DaemonAddr,
+    entry: PreviewEntry,
+  ): java.util.concurrent.CompletableFuture<List<PreviewParameterRow>> {
+    if (entry.parameterProvider == null) {
+      return java.util.concurrent.CompletableFuture.completedFuture(emptyList())
+    }
     previewRows.cached(addr, entry.fqn)?.let {
-      return it
+      return java.util.concurrent.CompletableFuture.completedFuture(it)
     }
     val client =
       supervisor
@@ -5009,19 +5039,67 @@ class DaemonMcpServer(
         ?.daemons
         ?.get(addr.modulePath)
         ?.allClients()
-        ?.firstOrNull() ?: return emptyList()
-    return previewRows.rows(addr, entry.fqn) {
+        ?.firstOrNull()
+        ?: return java.util.concurrent.CompletableFuture.completedFuture(emptyList())
+    return previewRows.rowsAsync(addr, entry.fqn, previewRowsExecutor) {
       client.previewRows(entry.fqn, timeout = PREVIEW_ROWS_TIMEOUT)
     }
   }
 
-  /** [entries], each `@PreviewParameter` preview expanded into its rows (see [parameterRows]). */
-  private fun listedPreviews(addr: DaemonAddr, entries: Collection<PreviewEntry>) =
-    entries.flatMap { entry ->
-      val rows = parameterRows(addr, entry)
+  /**
+   * [entries], each `@PreviewParameter` preview expanded into its rows (see [parameterRows]).
+   *
+   * Uncached rows are asked for all at once and waited on only until [deadlineNanos] (a
+   * [System.nanoTime] instant shared by the whole listing), so a slow daemon costs a listing that
+   * bound rather than [PREVIEW_ROWS_TIMEOUT] per preview. A preview whose rows are not back by then
+   * is listed by its base id; its request carries on, fills the cache, and sends
+   * `notifications/resources/list_changed` when it lands with rows, so the client's next listing
+   * shows them.
+   */
+  private fun listedPreviews(
+    addr: DaemonAddr,
+    entries: Collection<PreviewEntry>,
+    deadlineNanos: Long,
+  ): List<ListedPreview> {
+    val pending = entries.associateWith { parameterRowsAsync(addr, it) }
+    val remaining = deadlineNanos - System.nanoTime()
+    if (remaining > 0 && pending.values.any { !it.isDone }) {
+      runCatching {
+        java.util.concurrent.CompletableFuture.allOf(*pending.values.toTypedArray())
+          .get(remaining, java.util.concurrent.TimeUnit.NANOSECONDS)
+      }
+    }
+    return entries.flatMap { entry ->
+      val future = pending.getValue(entry)
+      val rows =
+        if (future.isDone) future.join()
+        else {
+          notifyWhenRowsLand(addr, entry.fqn, future)
+          emptyList()
+        }
       if (rows.isEmpty()) listOf(ListedPreview(entry.fqn, entry))
       else rows.map { ListedPreview(it.id, entry, it) }
     }
+  }
+
+  /**
+   * Sends `notifications/resources/list_changed` once [future] lands with rows that are still the
+   * cached ones (an invalidation in between already re-announced the list), whichever listings gave
+   * up on it.
+   */
+  private fun notifyWhenRowsLand(
+    addr: DaemonAddr,
+    baseId: String,
+    future: java.util.concurrent.CompletableFuture<List<PreviewParameterRow>>,
+  ) {
+    if (!lateRowRequests.add(future)) return
+    future.thenAccept { rows ->
+      lateRowRequests.remove(future)
+      if (rows.isNotEmpty() && previewRows.cached(addr, baseId) == rows) {
+        sessions.forEach { it.notifyResourceListChanged() }
+      }
+    }
+  }
 
   /** `parameterRow: {index, label, baseUri}` on a listed `@PreviewParameter` row. */
   private fun JsonObjectBuilder.putParameterRow(row: PreviewParameterRow, baseUri: PreviewUri) {
@@ -5112,10 +5190,11 @@ class DaemonMcpServer(
       project.workspaceId to target.canonicalPath
     }
     val previews = mutableListOf<JsonObject>()
+    val rowsDeadline = System.nanoTime() + PREVIEW_ROWS_LISTING_DEADLINE.inWholeNanoseconds
     for ((addr, byId) in catalog) {
       val targetPath = targetByWorkspace[addr.workspaceId] ?: continue
       val inFile = byId.values.filter { it.resolvedSourcePath == targetPath }
-      for ((id, entry, row) in listedPreviews(addr, inFile)) {
+      for ((id, entry, row) in listedPreviews(addr, inFile, rowsDeadline)) {
         val uri =
           runCatching {
             PreviewUri(
@@ -8537,10 +8616,20 @@ class DaemonMcpServer(
     private val COMPILE_WARM_UP_TIMEOUT = 300.seconds
 
     /**
-     * Bounds one `preview/rows` request: a listing waits on it, and a failed request is retried on
-     * the next listing rather than cached.
+     * Bounds one `preview/rows` request: a render by row name waits on it, and a failed request is
+     * retried on the next lookup rather than cached.
      */
     private val PREVIEW_ROWS_TIMEOUT = 10.seconds
+
+    /**
+     * How long one listing (`resources/list`, `find_previews_for_file`) waits, in all, for the
+     * `@PreviewParameter` rows it does not have cached; the rest are listed by base id until they
+     * land.
+     */
+    private val PREVIEW_ROWS_LISTING_DEADLINE = 2.seconds
+
+    /** Concurrent `preview/rows` requests, across every daemon. */
+    private const val PREVIEW_ROWS_THREADS = 4
 
     /** The daemon's index-addressed `@PreviewParameter` row id: `<baseId>_PARAM_<index>`. */
     private const val PARAM_ROW_INFIX = "_PARAM_"

@@ -1,7 +1,28 @@
 package ee.schimke.composeai.mcp
 
 import ee.schimke.composeai.daemon.client.WorkspaceId
+import ee.schimke.composeai.daemon.protocol.PreviewOverrides
 import java.util.Base64
+
+/**
+ * [overrides] reduced to what changes the render, so two spellings of one configuration key the
+ * same cache entry: a `fontScale` equal to the preview's own ([declaredFontScale], `1.0` when the
+ * preview declares none) is dropped, and overrides that set nothing are `null`. Used wherever
+ * overrides identify a render (`changedSinceLastRender`, the data-product cache): `render_matrix`
+ * sends `fontScale: 1.0` for the cell `render_preview` renders without one.
+ */
+internal fun canonicalOverrides(
+  overrides: PreviewOverrides?,
+  declaredFontScale: Float? = null,
+): PreviewOverrides? {
+  if (overrides == null) return null
+  val fontScale = overrides.fontScale
+  val reduced =
+    if (fontScale != null && fontScale == (declaredFontScale ?: 1.0f))
+      overrides.copy(fontScale = null)
+    else overrides
+  return reduced.takeUnless { it == PreviewOverrides() }
+}
 
 /**
  * Parsed `compose-preview://<workspace>/<module>/<fqn>?config=<qualifier>` URI. The three-segment
@@ -31,9 +52,15 @@ data class PreviewUri(
     }
   }
 
+  /**
+   * The canonical string for this preview: the FQN segment is percent-encoded ([encodeFqn]), so a
+   * multipreview name's spaces go out as `%20` and the URI is valid RFC 3986. [parseOrNull] reads
+   * both that and the raw form, and `parseOrNull(s)?.toUri()` ([canonical]) is how two spellings of
+   * one preview compare equal.
+   */
   fun toUri(): String {
     val moduleSegment = encodeModule(modulePath)
-    val base = "$SCHEME://${workspaceId.value}/$moduleSegment/$previewFqn"
+    val base = "$SCHEME://${workspaceId.value}/$moduleSegment/${encodeFqn(previewFqn)}"
     val query = buildList {
       config?.let { add("config=$it") }
       overridesJson?.let {
@@ -62,8 +89,9 @@ data class PreviewUri(
       if (parts.size < 3) return null
       val workspace = parts[0]
       val moduleEncoded = parts[1]
-      val fqn = parts.subList(2, parts.size).joinToString("/")
+      val fqn = decodeFqn(parts.subList(2, parts.size).joinToString("/"))
       if (workspace.isBlank() || moduleEncoded.isBlank() || fqn.isBlank()) return null
+      if ('/' in fqn || '?' in fqn) return null
       val configValue =
         query
           ?.split('&')
@@ -91,6 +119,61 @@ data class PreviewUri(
 
     fun parse(s: String): PreviewUri =
       requireNotNull(parseOrNull(s)) { "Malformed compose-preview URI: '$s'" }
+
+    /**
+     * [s] in the form [toUri] writes, so a client's raw-space or percent-encoded spelling of a
+     * preview compares equal to the server's; [s] itself when it is not a preview URI.
+     */
+    fun canonical(s: String): String = parseOrNull(s)?.toUri() ?: s
+
+    /**
+     * Percent-encodes, as UTF-8, every character of [fqn] outside RFC 3986's `pchar` set (the
+     * unreserved characters, sub-delims, `:` and `@`): a space, `%`, `#`, `"`, a bracket, anything
+     * non-ASCII. A JVM preview id never holds `/` or `?` (the init block refuses them).
+     */
+    internal fun encodeFqn(fqn: String): String {
+      if (fqn.all(::isPathSafe)) return fqn
+      return buildString {
+        fqn.encodeToByteArray().forEach { byte ->
+          val char = (byte.toInt() and 0xFF).toChar()
+          if (isPathSafe(char)) append(char)
+          else {
+            append('%')
+            append(HEX[(byte.toInt() shr 4) and 0xF])
+            append(HEX[byte.toInt() and 0xF])
+          }
+        }
+      }
+    }
+
+    /**
+     * Reverses [encodeFqn]. Lenient for URIs written before the FQN was encoded: raw spaces and
+     * other characters pass through, and a `%` that does not start a valid escape stays literal.
+     */
+    internal fun decodeFqn(segment: String): String {
+      if ('%' !in segment) return segment
+      val bytes = java.io.ByteArrayOutputStream()
+      var i = 0
+      while (i < segment.length) {
+        val char = segment[i]
+        val high = if (char == '%') segment.getOrNull(i + 1)?.digitToIntOrNull(16) else null
+        val low = if (high != null) segment.getOrNull(i + 2)?.digitToIntOrNull(16) else null
+        if (high != null && low != null) {
+          bytes.write(high * 16 + low)
+          i += 3
+        } else {
+          val end = if (char.isHighSurrogate() && i + 1 < segment.length) i + 2 else i + 1
+          bytes.write(segment.substring(i, end).encodeToByteArray())
+          i = end
+        }
+      }
+      return bytes.toByteArray().decodeToString()
+    }
+
+    private const val HEX = "0123456789ABCDEF"
+
+    private fun isPathSafe(c: Char): Boolean =
+      c in 'a'..'z' || c in 'A'..'Z' || c in '0'..'9' || c in "-._~" || c in "!$&'()*+,;=:@"
 
     private const val LABEL_PREFIX = "~"
 

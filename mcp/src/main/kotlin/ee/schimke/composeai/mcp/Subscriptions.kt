@@ -33,8 +33,9 @@ class Subscriptions {
     set.add(session)
   }
 
+  /** Drops [session]'s subscription to [uri], however either spelled the preview. */
   fun unsubscribe(uri: String, session: Session) {
-    byUri[uri]?.remove(session)
+    subscribedUrisFor(uri).keys.forEach { byUri[it]?.remove(session) }
   }
 
   /**
@@ -114,8 +115,25 @@ class Subscriptions {
     watches.remove(session)
   }
 
-  /** Sessions currently subscribed to [uri]. */
-  fun sessionsSubscribedTo(uri: String): Set<Session> = byUri[uri]?.toSet() ?: emptySet()
+  /** Sessions currently subscribed to [uri], in any spelling of it ([subscribedUrisFor]). */
+  fun sessionsSubscribedTo(uri: String): Set<Session> =
+    subscribedUrisFor(uri).values.flatten().toSet()
+
+  /**
+   * Subscribed URIs naming the same resource as [uri] once both are canonical
+   * ([PreviewUri.canonical]: a raw-space and a `%20` spelling of one preview match), each with its
+   * sessions. Keys are what each client subscribed to, so a notification names the resource the
+   * client knows.
+   */
+  fun subscribedUrisFor(uri: String): Map<String, Set<Session>> {
+    val canonical = PreviewUri.canonical(uri)
+    return byUri.entries
+      .filter { (subscribed, sessions) ->
+        sessions.isNotEmpty() &&
+          (subscribed == uri || PreviewUri.canonical(subscribed) == canonical)
+      }
+      .associate { (subscribed, sessions) -> subscribed to sessions.toSet() }
+  }
 
   /**
    * Subscribed URIs for the same preview as [uri], including override-bearing variants. Keys are

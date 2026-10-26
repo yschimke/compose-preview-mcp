@@ -152,6 +152,25 @@ class PreviewPickersTest {
     assertThat(OpenAiForms.decodeUri(OpenAiForms.encodeUri(unicode))).isEqualTo(unicode)
     assertThat(OpenAiForms.encodeUri("a://1?x=y&z")).isEqualTo("a://1?x=y&z")
     assertThat(OpenAiForms.decodeUri("a%2")).isNull()
+    // #98: a PreviewUri is already encoded, so it is not encoded twice, and an answer the host
+    // decoded back to raw spaces still maps to it.
+    val previewUri =
+      PreviewUri(
+          ee.schimke.composeai.daemon.client.WorkspaceId("ws"),
+          ":app",
+          "com.example.VKt.Screen_Devices - Small Round",
+        )
+        .toUri()
+    assertThat(OpenAiForms.encodeUri(previewUri)).isEqualTo(previewUri)
+    val decodedAnswer = "compose-preview://ws/_app/com.example.VKt.Screen_Devices - Small Round"
+    assertThat(
+        OpenAiForms.selectedUri(
+          kotlinx.serialization.json.buildJsonObject { put("f", decodedAnswer) },
+          "f",
+          listOf(previewUri),
+        )
+      )
+      .isEqualTo(previewUri)
     assertThat(OpenAiForms.decodeUri("a%+1")).isNull()
 
     val option = OpenAiForms.ResourceOption(raw, "small")
@@ -457,11 +476,11 @@ class PreviewPickersTest {
     assertThat(plainRequests.get()).isEqualTo(0)
     val options = pickerOptions(openAiRequests.single())
     // The variants' names have spaces, which a `format: "uri"` field refuses: the options go out
-    // percent-encoded, as valid RFC 3986 URIs, and decode back to the previews.
+    // as the previews' own URIs, which percent-encode them as valid RFC 3986 URIs.
     val wireUris = options.map { it["uri"]!!.jsonPrimitive.content }
     wireUris.forEach { assertThat(java.net.URI(it).scheme).isEqualTo(PreviewUri.SCHEME) }
-    assertThat(wireUris.map { OpenAiForms.decodeUri(it) }).containsExactly(ws.large, ws.small)
-    val byUri = options.associateBy { OpenAiForms.decodeUri(it["uri"]!!.jsonPrimitive.content)!! }
+    assertThat(wireUris).containsExactly(ws.large, ws.small)
+    val byUri = options.associateBy { it["uri"]!!.jsonPrimitive.content }
     // Short labels: the shared function name is dropped, not truncated per row.
     assertThat(options.map { it["title"]!!.jsonPrimitive.content })
       .containsExactly("Devices - Large", "Devices - Small")
@@ -481,7 +500,7 @@ class PreviewPickersTest {
     assertThat(choice["message"]!!.jsonPrimitive.content).contains(ws.small)
     // One render of the pick, not a grid of every match.
     assertThat(result.textContents().none { "\"cells\"" in it }).isTrue()
-    assertThat(result.raw.toString()).contains(PreviewUri.parseOrNull(ws.small)!!.previewFqn)
+    assertThat(result.raw.toString()).contains(ws.small)
   }
 
   @Test
@@ -512,7 +531,7 @@ class PreviewPickersTest {
     assertThat(openAiRequests).hasSize(1)
     assertThat(variantChoice(result)["mode"]!!.jsonPrimitive.content).isEqualTo("cancelled")
     assertThat(result.textContents().size).isGreaterThan(1)
-    assertThat(result.raw.toString()).contains(PreviewUri.parseOrNull(ws.large)!!.previewFqn)
+    assertThat(result.raw.toString()).contains(ws.large)
   }
 
   @Test
@@ -540,7 +559,7 @@ class PreviewPickersTest {
     val client =
       connect(openAiForms = true) { request ->
         val options = pickerOptions(request)
-        picked = OpenAiForms.decodeUri(options.last()["uri"]!!.jsonPrimitive.content)
+        picked = options.last()["uri"]!!.jsonPrimitive.content
         buildJsonObject {
           put("action", "accept")
           // Answered with the URI exactly as offered on the wire.

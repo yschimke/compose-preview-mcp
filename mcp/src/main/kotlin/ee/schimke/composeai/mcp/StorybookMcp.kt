@@ -87,7 +87,8 @@ object StorybookMcp {
       }
     // Native-URI escape hatch: accept it only if it's actually in the catalog.
     if (PreviewUri.parseOrNull(storyIdOrUri) != null) {
-      return resources.firstOrNull { it.uri == storyIdOrUri }?.uri
+      val canonical = PreviewUri.canonical(storyIdOrUri)
+      return resources.firstOrNull { PreviewUri.canonical(it.uri) == canonical }?.uri
     }
     return null
   }

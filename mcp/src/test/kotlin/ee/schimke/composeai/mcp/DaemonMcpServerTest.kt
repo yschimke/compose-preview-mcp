@@ -1303,7 +1303,7 @@ class DaemonMcpServerTest {
     assertThat(conflicting.firstTextContent()).contains("differ from the 'overrides' argument")
     val unsupported =
       client.callTool(
-        "get_preview_data",
+        "get_preview_extras",
         buildJsonObject {
           put("uri", resourceUri)
           put("kind", "compose/semantics")
@@ -3909,6 +3909,29 @@ class DaemonMcpServerTest {
     assertThat(cells()).containsExactly(false, false)
     writeSolidPng(png, 0xffffff00.toInt())
     assertThat(cells()).containsExactly(true, true)
+  }
+
+  @Test
+  fun `a fontScale 1 matrix cell is the same render as render_preview without one`() {
+    // #98: `{fontScale: 1.0}` and no fontScale keyed different last renders, so the 1.0 cell of a
+    // matrix after a plain render_preview always said changedSinceLastRender.
+    val png = tmp.newFile("since-default.png").also { writeSolidPng(it, 0xff0000ff.toInt()) }
+    val (_, uri) = redPreviewDaemon(png)
+    client.callTool(
+      "render_preview",
+      buildJsonObject {
+        put("uri", uri)
+        put("inline", false)
+      },
+      timeoutMs = 10_000,
+    )
+    val cells =
+      json
+        .parseToJsonElement(fontScaleMatrix(uri, 1.0, 1.5).firstTextContent())
+        .jsonObject["cells"]!!
+        .jsonArray
+        .map { it.jsonObject["changedSinceLastRender"]!!.jsonPrimitive.content.toBoolean() }
+    assertThat(cells).containsExactly(false, true).inOrder()
   }
 
   @Test
@@ -6949,6 +6972,253 @@ class DaemonMcpServerTest {
     // Exactly one auto-render renderNow.
     val renderRequest = daemon.renderRequests.poll(2_000, TimeUnit.MILLISECONDS)
     assertThat(renderRequest).isEqualTo(listOf(previewId))
+  }
+
+  /** A daemon advertising `a11y/atf` that renders `com.example.Red` and records each fetch. */
+  private fun atfDaemon(
+    fetches: MutableList<JsonObject?>,
+    payloadFor: (JsonObject?) -> String = { "fetched" },
+  ): Pair<FakeDaemon, WorkspaceId> {
+    client.initialize()
+    val projectDir = tmp.newFolder("workspace")
+    tmp.newFolder("workspace", "module")
+    val workspaceId = registerWorkspace(projectDir, "demo")
+    val pngFile = tmp.newFile("atf-render.png")
+    Files.write(pngFile.toPath(), byteArrayOf(0x89.toByte(), 0x50, 0x4e, 0x47))
+    factory.daemonConfigurer = { daemon ->
+      daemon.advertisedDataProducts =
+        listOf(
+          ee.schimke.composeai.daemon.protocol.DataProductCapability(
+            kind = "a11y/atf",
+            schemaVersion = 1,
+            transport = ee.schimke.composeai.daemon.protocol.DataProductTransport.INLINE,
+            attachable = true,
+            fetchable = true,
+            requiresRerender = false,
+          )
+        )
+      daemon.dataFetchHandler = { _, kind, params, _ ->
+        fetches += params
+        FakeDaemon.DataFetchOutcome.Ok(
+          kind = kind,
+          schemaVersion = 1,
+          payload = buildJsonObject { put("findings", payloadFor(params)) },
+        )
+      }
+      daemon.autoRenderPngPath = { id ->
+        if (id == "com.example.Red") pngFile.absolutePath else null
+      }
+    }
+    val daemon = warmDaemonFor(workspaceId, ":module")
+    daemon.emitDiscovery("com.example.Red")
+    client.expectNotification("notifications/resources/list_changed", 2_000)
+    return daemon to workspaceId
+  }
+
+  @Test
+  fun `get_preview_data with overrides renders at them and fetches with overrides and force`() {
+    // #96: ATF findings for a fontScale 1.5 cell must come from a fontScale 1.5 render.
+    val fetches = java.util.concurrent.CopyOnWriteArrayList<JsonObject?>()
+    val (daemon, workspaceId) = atfDaemon(fetches)
+    val uri = PreviewUri(workspaceId, ":module", "com.example.Red").toUri()
+
+    val resp =
+      client.callTool(
+        "get_preview_data",
+        buildJsonObject {
+          put("uri", uri)
+          put("kind", "a11y/atf")
+          putJsonObject("overrides") { put("fontScale", 1.5) }
+        },
+        timeoutMs = 10_000,
+      )
+    assertThat(resp.raw["isError"]?.jsonPrimitive?.contentOrNull).isNotEqualTo("true")
+    assertThat(daemon.renderRequests.poll(2_000, TimeUnit.MILLISECONDS))
+      .isEqualTo(listOf("com.example.Red"))
+    assertThat(daemon.renderOverrides.last()?.fontScale).isEqualTo(1.5f)
+    val params = fetches.single()!!
+    assertThat(params["overrides"]!!.jsonObject["fontScale"]!!.jsonPrimitive.content.toFloat())
+      .isEqualTo(1.5f)
+    assertThat(params["force"]!!.jsonPrimitive.content).isEqualTo("true")
+
+    // The latest render is already at these overrides: no second render.
+    client.callTool(
+      "get_preview_data",
+      buildJsonObject {
+        put("uri", uri)
+        put("kind", "a11y/atf")
+        putJsonObject("overrides") { put("fontScale", 1.5) }
+      },
+      timeoutMs = 10_000,
+    )
+    assertThat(daemon.renderRequests.poll(300, TimeUnit.MILLISECONDS)).isNull()
+    assertThat(fetches).hasSize(2)
+
+    // Without overrides after that, the defaults render again rather than reading the 1.5 render.
+    client.callTool(
+      "get_preview_data",
+      buildJsonObject {
+        put("uri", uri)
+        put("kind", "a11y/atf")
+      },
+      timeoutMs = 10_000,
+    )
+    assertThat(daemon.renderRequests.poll(2_000, TimeUnit.MILLISECONDS))
+      .isEqualTo(listOf("com.example.Red"))
+    assertThat(daemon.renderOverrides.last()).isNull()
+    assertThat(fetches.last()).isNull()
+  }
+
+  @Test
+  fun `concurrent get_preview_data calls at different overrides each get their own render's data`() {
+    // #100 review: for a kind read off the latest render, another configuration's render landing
+    // between this call's render and its fetch handed it the other configuration's findings.
+    val fetches = java.util.concurrent.CopyOnWriteArrayList<JsonObject?>()
+    lateinit var daemonRef: FakeDaemon
+    val (daemon, workspaceId) =
+      atfDaemon(fetches) { "fontScale=${daemonRef.renderOverrides.lastOrNull()?.fontScale}" }
+    daemonRef = daemon
+    val uri = PreviewUri(workspaceId, ":module", "com.example.Red").toUri()
+    // Two sessions (an MCP session runs its own tool calls one at a time).
+    val (c2s, sfc) = pipedPair()
+    val (s2c, cfs) = pipedPair()
+    val otherSession = server.newSession(input = sfc, output = s2c).also { it.start() }
+    val otherClient = McpTestClient(input = cfs, output = c2s)
+    otherClient.initialize()
+    fun findings(via: McpTestClient, scale: Double): String =
+      json
+        .parseToJsonElement(
+          via
+            .callTool(
+              "get_preview_data",
+              buildJsonObject {
+                put("uri", uri)
+                put("kind", "a11y/atf")
+                putJsonObject("overrides") { put("fontScale", scale) }
+              },
+              timeoutMs = 20_000,
+            )
+            .firstTextContent()
+        )
+        .jsonObject["payload"]!!
+        .jsonObject["findings"]!!
+        .jsonPrimitive
+        .content
+
+    // Hold the first (1.5) render open until the 2.0 call has had time to queue behind it, then
+    // finish it: without the per-preview lock the 2.0 render is dispatched, and lands, before the
+    // 1.5 call fetches.
+    val autoRender = daemon.autoRenderPngPath
+    daemon.autoRenderPngPath = null
+    val pool = java.util.concurrent.Executors.newFixedThreadPool(2)
+    try {
+      val scaled = pool.submit<String> { findings(client, 1.5) }
+      assertThat(daemon.renderRequests.poll(5_000, TimeUnit.MILLISECONDS))
+        .isEqualTo(listOf("com.example.Red"))
+      val larger = pool.submit<String> { findings(otherClient, 2.0) }
+      Thread.sleep(500)
+      daemon.autoRenderPngPath = autoRender
+      daemon.emitRenderFinished("com.example.Red", autoRender!!("com.example.Red")!!)
+      assertThat(scaled.get(20, TimeUnit.SECONDS)).isEqualTo("fontScale=1.5")
+      assertThat(larger.get(20, TimeUnit.SECONDS)).isEqualTo("fontScale=2.0")
+    } finally {
+      pool.shutdownNow()
+      runCatching { otherClient.close() }
+      runCatching { otherSession.close() }
+    }
+  }
+
+  @Test
+  fun `get_preview_data folds an overrides-bearing resource_link uri`() {
+    val fetches = java.util.concurrent.CopyOnWriteArrayList<JsonObject?>()
+    val (daemon, workspaceId) = atfDaemon(fetches)
+    val uri =
+      PreviewUri(
+          workspaceId,
+          ":module",
+          "com.example.Red",
+          overridesJson = buildJsonObject { put("uiMode", "dark") }.toString(),
+        )
+        .toUri()
+
+    val resp =
+      client.callTool(
+        "get_preview_data",
+        buildJsonObject {
+          put("uri", uri)
+          put("kind", "a11y/atf")
+        },
+        timeoutMs = 10_000,
+      )
+    assertThat(resp.raw["isError"]?.jsonPrimitive?.contentOrNull).isNotEqualTo("true")
+    assertThat(daemon.renderOverrides.last()?.uiMode)
+      .isEqualTo(ee.schimke.composeai.daemon.protocol.UiMode.DARK)
+    assertThat(fetches.single()!!["overrides"]!!.jsonObject["uiMode"]!!.jsonPrimitive.content)
+      .isEqualTo("dark")
+  }
+
+  @Test
+  fun `get_preview_data never serves another configuration's cached attachment`() {
+    val fetches = java.util.concurrent.CopyOnWriteArrayList<JsonObject?>()
+    val (daemon, workspaceId) = atfDaemon(fetches)
+    val uri = PreviewUri(workspaceId, ":module", "com.example.Red").toUri()
+    client.request("resources/subscribe", buildJsonObject { put("uri", uri) })
+    val renderedPng = tmp.newFile("default-render.png").apply { writeBytes(byteArrayOf(1)) }
+    daemon.emitRenderFinishedWithDataProducts(
+      "com.example.Red",
+      renderedPng.absolutePath,
+      listOf(
+        buildJsonObject {
+          put("kind", "a11y/atf")
+          put("schemaVersion", 1)
+          putJsonObject("payload") { put("findings", "default-config") }
+        }
+      ),
+    )
+    client.expectNotification("notifications/resources/updated", 2_000)
+
+    fun findings(overrides: JsonObject?): JsonObject =
+      json
+        .parseToJsonElement(
+          client
+            .callTool(
+              "get_preview_data",
+              buildJsonObject {
+                put("uri", uri)
+                put("kind", "a11y/atf")
+                overrides?.let { put("overrides", it) }
+              },
+              timeoutMs = 10_000,
+            )
+            .firstTextContent()
+        )
+        .jsonObject
+
+    val scaled = findings(buildJsonObject { put("fontScale", 1.5) })
+    assertThat(scaled["cached"]).isNull()
+    assertThat(scaled["payload"]!!.jsonObject["findings"]!!.jsonPrimitive.content)
+      .isEqualTo("fetched")
+    assertThat(fetches).hasSize(1)
+    // That fetch rendered at fontScale 1.5, so the default attachment is gone; render the default
+    // configuration again with its attachment.
+    daemon.emitRenderFinishedWithDataProducts(
+      "com.example.Red",
+      renderedPng.absolutePath,
+      listOf(
+        buildJsonObject {
+          put("kind", "a11y/atf")
+          put("schemaVersion", 1)
+          putJsonObject("payload") { put("findings", "default-config") }
+        }
+      ),
+    )
+    client.expectNotification("notifications/resources/updated", 2_000)
+    // fontScale 1.0 is the preview's own: the same configuration as no overrides at all.
+    val unscaled = findings(buildJsonObject { put("fontScale", 1.0) })
+    assertThat(unscaled["cached"]?.jsonPrimitive?.contentOrNull).isEqualTo("true")
+    assertThat(unscaled["payload"]!!.jsonObject["findings"]!!.jsonPrimitive.content)
+      .isEqualTo("default-config")
+    assertThat(fetches).hasSize(1)
   }
 
   @Test

@@ -19,7 +19,7 @@ composeai-preview-daemon = "3.26.0"
 composeai-ui-builder = "3.109.0"
 # The TypeScript Remote Compose player the `.rc` viewer inlines (rc-players' browser bundle).
 # `harness/stage-rc-player.mjs` reads this line too.
-remote-compose-player-js = "2.19.0"
+remote-compose-player-js = "2.20.1"
 
 [libraries]
 kotlinx-coroutines-core = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-core", version.ref = "kotlinx-coroutines" }

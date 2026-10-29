@@ -38,6 +38,47 @@ module's `build/compose-previews/` copy unless `guidelines` names a file or URL)
   key from `COMPOSE_PREVIEW_MODEL_KEY` here, because the caller picks the endpoint. Endpoints report
   no cost, so `max_cost` does not apply.
 
+## Apps in Robolectric's simulator: `simulator_*`
+
+Four tools run an Android APK in Robolectric's simulator and let the agent drive it, over
+compose-ai-tools' `compose-preview launch <apk> --control stdio` (its `docs/SIMULATOR.md` has the
+control protocol and the constraints). No emulator, device or `adb`.
+
+- **`simulator_launch`** `{apk, headless?, showAgent?, qualifiers?, fontScale?, sdk?, java?}` starts
+  one and waits for its `ready` event: a simulator id, the package, display size and first
+  activity. The first launch of an APK converts its dex (tens of seconds); later ones come from the
+  CLI's cache. **The window stays up unless `headless`**, so the person watches the agent work: the
+  CLI draws each tap and swipe the agent sends over it and names the command along the bottom.
+  With no display (CI, a cloud sandbox) the CLI runs headless anyway.
+- **`simulator_command`** `{simulator?, cmd, …}` sends one control-channel command — `tap`,
+  `longPress`, `swipe`, `key`, `back`, `text`, `hierarchy`, `find`, `launch`, `finish`,
+  `activities`, `startActivity`, `startService`, `stopService`, `bindService`, `unbindService`,
+  `services`, `broadcast`, `notifications`, `query`, `components`, `qualifiers`, `wait`, `info` —
+  with its arguments beside `cmd`, and returns its result plus the `events` the app produced since
+  the last call (activities resumed or destroyed by its own navigation, services started, intents
+  nothing handled).
+- **`simulator_screenshot`** returns the display as an image block (never the window's overlay).
+- **`simulator_stop`** closes one. `simulator` is optional while only one runs; every simulator
+  ends with the server.
+
+Each simulator is a `compose-preview` child process speaking JSON lines; its stderr (the app's
+logs) is kept as a bounded tail and returned when it fails to start or exits. The CLI is found the
+way `init-script` finds it: `COMPOSE_PREVIEW_CLI`, then `PATH`, then `~/.local/bin`.
+
+**Developing against an unreleased CLI.** Point the server at a local compose-ai-tools build
+instead of a release:
+
+```sh
+(cd ../compose-ai-tools && ./gradlew :cli:installDist :samples:android:assembleDebug)
+./gradlew :mcp:installDist
+COMPOSE_PREVIEW_CLI=$PWD/../compose-ai-tools/cli/build/install/compose-preview/bin/compose-preview \
+  mcp/build/install/compose-preview-mcp/bin/compose-preview-mcp
+```
+
+and register that command with the agent host in place of `compose-preview mcp serve`. The
+simulator needs Java 21+ (`java`, or `COMPOSE_PREVIEW_SIMULATOR_JAVA` in the server's
+environment) and an Android SDK (`ANDROID_HOME`).
+
 ## `.uid` designs: `design_open`
 
 In ChatGPT or Codex desktop, opening a `.uid` UI Builder design opens it in the UI Builder editor

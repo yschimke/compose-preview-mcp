@@ -285,6 +285,9 @@ class DaemonMcpServer(
   private val rcViewer =
     RcViewerMcp(subscribers = { uri -> subscriptions.sessionsSubscribedTo(uri) })
 
+  /** APKs in Robolectric's simulator: the `simulator_*` tools over `compose-preview launch`. */
+  private val simulators = SimulatorMcp()
+
   /**
    * Counters surfaced via the `status` tool (probe outcomes, polling cycles, sampling determinism),
    * to diagnose stale renders without wire traces.
@@ -585,6 +588,7 @@ class DaemonMcpServer(
     runCatching { budgetedCallScope.cancel() }
     runCatching { activeDesignRoots.close() }
     runCatching { rcViewer.shutdown() }
+    runCatching { simulators.shutdown() }
     runCatching { uiBuilderDesign?.close() }
     synchronized(fileRenderCacheLock) { runCatching { fileRenderCacheDir.deleteRecursively() } }
   }
@@ -3010,6 +3014,7 @@ class DaemonMcpServer(
       listOf(PreviewTray.toolDef(), PreviewMentions.toolDef()) +
       listOf(PreviewGuidelinesMcp.promptToolDef(), PreviewGuidelinesMcp.checkToolDef()) +
       rcViewer.toolDefs() +
+      simulators.toolDefs() +
       (uiBuilderDesign?.toolDefs() ?: emptyList()) +
       (uiBuilderMcp?.toolDefs() ?: emptyList()) +
       (openAiProbe?.toolDefs() ?: emptyList()) +
@@ -3094,6 +3099,7 @@ class DaemonMcpServer(
       "preview-stories" -> toolStorybookPreviewStories(session, args)
       "run-story-tests" -> toolStorybookRunTests(args)
       RcViewerMcp.TOOL_NAME -> rcViewer.handle(name, args)!!
+      in SimulatorMcp.TOOL_NAMES -> simulators.handle(name, args)!!
       UiBuilderDesignMcp.TOOL_NAME ->
         uiBuilderDesign?.handle(name, args) ?: errorCallToolResult("unknown tool: $name")
       else ->

@@ -209,6 +209,11 @@ class DaemonMcpServerTest {
         PreviewSettingsMcp.DOCTOR_TOOL,
         PreviewSettingsMcp.REGISTER_PROJECT_TOOL,
         "rc_open",
+        // APKs in Robolectric's simulator, over `compose-preview launch --control stdio`.
+        SimulatorMcp.LAUNCH,
+        SimulatorMcp.COMMAND,
+        SimulatorMcp.SCREENSHOT,
+        SimulatorMcp.STOP,
         // Design guidelines over previews, on the `design-guidelines` engine.
         PreviewGuidelinesMcp.PROMPT_TOOL,
         PreviewGuidelinesMcp.CHECK_TOOL,

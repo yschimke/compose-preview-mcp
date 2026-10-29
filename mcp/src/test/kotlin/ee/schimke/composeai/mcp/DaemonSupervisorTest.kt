@@ -54,6 +54,29 @@ class DaemonSupervisorTest {
   }
 
   @Test
+  fun `a daemon that dies on its own is respawned by the next request`() {
+    // compose-ai-tools#6239: killing a module's daemon left it `spawned: false` until the project
+    // was re-registered, because the dead entry stayed in `daemons`.
+    val factory = FakeDaemonClientFactory()
+    val supervisor =
+      DaemonSupervisor(descriptorProvider = FakeDescriptorProvider(), clientFactory = factory)
+    val project = supervisor.registerProject(createTempDirectory("cp-respawn").toFile())
+    val first = supervisor.daemonFor(project.workspaceId, ":app")
+    val closed = java.util.concurrent.CountDownLatch(1)
+    supervisor.router().onClose { closed.countDown() }
+
+    factory.spawnHistory.single().shutdown()
+
+    assertThat(closed.await(5, java.util.concurrent.TimeUnit.SECONDS)).isTrue()
+    assertThat(project.daemons).doesNotContainKey(":app")
+    val second = supervisor.daemonFor(project.workspaceId, ":app")
+    assertThat(second).isNotSameInstanceAs(first)
+    assertThat(second.replicaCount()).isEqualTo(1)
+    assertThat(factory.spawnHistory).hasSize(2)
+    supervisor.shutdown()
+  }
+
+  @Test
   fun `replicas are asked to boot on demand`() {
     val factory = FakeDaemonClientFactory()
     val supervisor =

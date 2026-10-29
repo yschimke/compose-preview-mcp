@@ -320,6 +320,11 @@ class DaemonSupervisor(
       },
       onClose = {
         if (supervised.detachSpawn(spawn)) {
+          // A daemon that died on its own (killed, crashed, hit its TTL) must not stay registered:
+          // `daemonFor` would keep handing back the dead entry and the lazy-start path skips any
+          // module already in `daemons`, so nothing would respawn it until the project was
+          // re-registered (compose-ai-tools#6239). Only this entry: a replacement may be there.
+          project.daemons.remove(modulePath, supervised)
           router.dispatchClose(supervised)
         }
       },

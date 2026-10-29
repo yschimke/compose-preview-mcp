@@ -47,6 +47,13 @@ class DaemonSupervisor(
    */
   private val initializeTimeout: Duration = DEFAULT_INITIALIZE_TIMEOUT,
   /**
+   * Sent as `initialize.options.maxRenderMs`: how long the daemon lets one render run before it
+   * fails it with `renderFailed`. `null` keeps the daemon's own default (5 minutes), which outlasts
+   * [DaemonMcpServer]'s wait for a render, so a hung render surfaced only as the server's
+   * `awaitNextRender: timed out` with no error from the daemon (compose-ai-tools#6239).
+   */
+  private val maxRenderMs: Long? = null,
+  /**
    * Kinds passed through `initialize.options.attachDataProducts` to every daemon ("always-on"
    * products). Empty keeps the field absent. No production entry point sets it; kept for embedders
    * and tests.
@@ -340,6 +347,7 @@ class DaemonSupervisor(
           moduleId = descriptor.modulePath,
           moduleProjectDir = descriptor.workingDirectory,
           attachDataProducts = globalAttachDataProducts.takeIf { it.isNotEmpty() },
+          maxRenderMs = maxRenderMs,
           timeout = initializeTimeout,
         )
       // Cache the full result for `RenderSession.initializeResult`; respawns overwrite it.
@@ -429,6 +437,15 @@ class DaemonSupervisor(
      * `COMPOSE_PREVIEW_INITIALIZE_TIMEOUT_SECONDS`.
      */
     val DEFAULT_INITIALIZE_TIMEOUT: Duration = 120.seconds
+
+    /**
+     * Default [maxRenderMs]: [DaemonMcpServer.DEFAULT_RENDER_TIMEOUT_MS] less 10 s, so the daemon
+     * fails a hung render — with its classified error and `*.error.json` — while the server is
+     * still waiting. The server's wait also covers the source refresh, recompile and the daemon's
+     * queue before the render starts, hence the headroom. Override via `composeai.mcp.maxRenderMs`
+     * (`0` keeps the daemon's default).
+     */
+    const val DEFAULT_MAX_RENDER_MS: Long = DaemonMcpServer.DEFAULT_RENDER_TIMEOUT_MS - 10_000L
 
     /**
      * Default replicas for [cores] processors: half the cores less the primary, capped at

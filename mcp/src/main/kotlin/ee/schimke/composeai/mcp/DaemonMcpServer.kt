@@ -166,7 +166,7 @@ class DaemonMcpServer(
   private val historyStore: HistoryStore = HistoryStore.NOOP,
   private val serverInfo: Implementation =
     Implementation(name = "compose-preview-mcp", version = MCP_VERSION),
-  private val renderTimeoutMs: Long = 60_000,
+  private val renderTimeoutMs: Long = DEFAULT_RENDER_TIMEOUT_MS,
   /**
    * Cadence (ms) of the background source-freshness poller, which runs the same
    * `ensureSourceFreshBeforeRender` probe as the on-demand path so edits reach the daemon
@@ -8804,6 +8804,9 @@ class DaemonMcpServer(
 
     /** How long a budgeted call's finished result waits for its retry before it is dropped. */
     private const val UNCOLLECTED_CALL_RESULT_TTL_MS: Long = 60_000
+
+    /** How long a tool call waits for a render's `renderFinished` / `renderFailed`. */
+    const val DEFAULT_RENDER_TIMEOUT_MS: Long = 60_000
 
     /**
      * Default source-freshness poll cadence: cheap (a stat, occasionally a SHA-256, per preview)

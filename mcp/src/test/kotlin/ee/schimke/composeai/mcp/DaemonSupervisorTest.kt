@@ -219,6 +219,40 @@ class DaemonSupervisorTest {
   }
 
   @Test
+  fun `maxRenderMs reaches the daemon's initialize options`() {
+    // compose-ai-tools#6239: a hung render must fail in the daemon while the server still waits.
+    val factory = FakeDaemonClientFactory()
+    val captured = java.util.concurrent.LinkedBlockingQueue<kotlinx.serialization.json.JsonObject>()
+    factory.daemonConfigurer = { daemon -> daemon.onInitializeReceived = { captured.offer(it) } }
+    val supervisor =
+      DaemonSupervisor(
+        descriptorProvider = FakeDescriptorProvider(),
+        clientFactory = factory,
+        maxRenderMs = DaemonSupervisor.DEFAULT_MAX_RENDER_MS,
+      )
+    val project = supervisor.registerProject(createTempDirectory("cp-max-render").toFile())
+    supervisor.daemonFor(project.workspaceId, ":app")
+
+    val options = captured.poll(3, java.util.concurrent.TimeUnit.SECONDS)?.get("options")
+    assertThat(options.toString()).contains("\"maxRenderMs\":50000")
+    assertThat(DaemonSupervisor.DEFAULT_MAX_RENDER_MS)
+      .isLessThan(DaemonMcpServer.DEFAULT_RENDER_TIMEOUT_MS)
+    supervisor.shutdown()
+  }
+
+  @Test
+  fun `max render time reads milliseconds, zero keeps the daemon default`() {
+    assertThat(DaemonMcpMain.parseMaxRenderMs("30000")).isEqualTo(30_000L)
+    assertThat(DaemonMcpMain.parseMaxRenderMs(null))
+      .isEqualTo(DaemonSupervisor.DEFAULT_MAX_RENDER_MS)
+    assertThat(DaemonMcpMain.parseMaxRenderMs("0")).isNull()
+    assertThat(DaemonMcpMain.parseMaxRenderMs("-1"))
+      .isEqualTo(DaemonSupervisor.DEFAULT_MAX_RENDER_MS)
+    assertThat(DaemonMcpMain.parseMaxRenderMs("soon"))
+      .isEqualTo(DaemonSupervisor.DEFAULT_MAX_RENDER_MS)
+  }
+
+  @Test
   fun `initialize timeout reads positive seconds and falls back otherwise`() {
     assertThat(DaemonMcpMain.parseInitializeTimeout("300")).isEqualTo(300.seconds)
     assertThat(DaemonMcpMain.parseInitializeTimeout(null))

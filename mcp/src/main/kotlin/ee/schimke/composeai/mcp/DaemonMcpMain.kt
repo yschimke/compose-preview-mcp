@@ -54,6 +54,7 @@ object DaemonMcpMain {
         clientFactory = SubprocessDaemonClientFactory(),
         replicasPerDaemon = replicasPerDaemon,
         initializeTimeout = parseInitializeTimeout(),
+        maxRenderMs = parseMaxRenderMs(),
         workspaceStore = WorkspaceStore(WorkspaceStore.defaultFile()),
         // One build renders at a time; moving to another stops the last one's daemons. `0` lifts
         // the limit.
@@ -260,6 +261,26 @@ object DaemonMcpMain {
       return default
     }
     return seconds.seconds
+  }
+
+  /**
+   * `composeai.mcp.maxRenderMs`, else [DaemonSupervisor.DEFAULT_MAX_RENDER_MS]. `0` returns `null`,
+   * which leaves the daemon's own render timeout in place.
+   */
+  internal fun parseMaxRenderMs(
+    raw: String? = System.getProperty("composeai.mcp.maxRenderMs")
+  ): Long? {
+    val default = DaemonSupervisor.DEFAULT_MAX_RENDER_MS
+    if (raw.isNullOrBlank()) return default
+    val ms = raw.trim().toLongOrNull()
+    if (ms == null || ms < 0) {
+      System.err.println(
+        "compose-preview-mcp: ignoring invalid max render time '$raw' (want milliseconds, 0 for " +
+          "the daemon's default); falling back to default ${default}ms"
+      )
+      return default
+    }
+    return ms.takeIf { it > 0 }
   }
 
   internal fun parseReplicasPerDaemon(

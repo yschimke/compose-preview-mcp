@@ -13,8 +13,13 @@ import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.TimeoutException
 import java.util.concurrent.atomic.AtomicLong
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.TimeoutCancellationException
+import kotlinx.coroutines.future.await
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
@@ -57,7 +62,7 @@ class SimulatorMcp(
 
   suspend fun handle(name: String, args: JsonObject): CallToolResult? =
     when (name) {
-      LAUNCH -> withContext(Dispatchers.IO) { launch(args) }
+      LAUNCH -> launch(args)
       COMMAND -> withContext(Dispatchers.IO) { command(args) }
       SCREENSHOT -> withContext(Dispatchers.IO) { screenshot(args) }
       STOP -> withContext(Dispatchers.IO) { stop(args) }
@@ -71,7 +76,12 @@ class SimulatorMcp(
 
   // -----------------------------------------------------------------------------------------------
 
-  private fun launch(args: JsonObject): CallToolResult {
+  /**
+   * Waits for `ready` without holding a thread, so a host cancelling the call cancels the wait; the
+   * child is then closed rather than left running with an id nobody received. The simulator is
+   * registered only once launched, after the last point the call can be cancelled.
+   */
+  private suspend fun launch(args: JsonObject): CallToolResult {
     val apk = args.string("apk") ?: return error("simulator_launch: `apk` (a path) is required.")
     val file = File(apk).absoluteFile
     if (!file.isFile) return error("simulator_launch: no such APK: $file")
@@ -89,7 +99,9 @@ class SimulatorMcp(
     }
     val process =
       try {
-        start(cliArgs)
+        withContext(Dispatchers.IO) { start(cliArgs) }
+      } catch (e: CancellationException) {
+        throw e
       } catch (e: Exception) {
         return error("simulator_launch: could not start compose-preview: ${e.message}")
       }
@@ -97,14 +109,16 @@ class SimulatorMcp(
     val simulator = Simulator(id, file.name, process)
     val ready =
       try {
-        simulator.ready.get(readyTimeoutMs, TimeUnit.MILLISECONDS)
+        withTimeout(readyTimeoutMs) { simulator.ready.await() }
+      } catch (e: TimeoutCancellationException) {
+        withContext(Dispatchers.IO) { simulator.close() }
+        return notStarted(simulator, "no `ready` within ${readyTimeoutMs / 1000}s")
+      } catch (e: CancellationException) {
+        withContext(NonCancellable + Dispatchers.IO) { simulator.close() }
+        throw e
       } catch (e: Exception) {
-        simulator.close()
-        val cause =
-          if (e is TimeoutException) "no `ready` within ${readyTimeoutMs / 1000}s" else "$e"
-        return error(
-          "simulator_launch: the simulator did not start ($cause).\n" + simulator.stderrTail()
-        )
+        withContext(Dispatchers.IO) { simulator.close() }
+        return notStarted(simulator, "$e")
       }
     simulators[id] = simulator
     val result = buildJsonObject {
@@ -114,6 +128,9 @@ class SimulatorMcp(
     }
     return ok(result)
   }
+
+  private fun notStarted(simulator: Simulator, cause: String): CallToolResult =
+    error("simulator_launch: the simulator did not start ($cause).\n" + simulator.stderrTail())
 
   private fun command(args: JsonObject): CallToolResult {
     val simulator = simulator(args) ?: return noSimulator()

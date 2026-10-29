@@ -4,6 +4,10 @@ import com.google.common.truth.Truth.assertThat
 import ee.schimke.composeai.mcp.protocol.CallToolResult
 import ee.schimke.composeai.mcp.protocol.ContentBlock
 import java.io.File
+import java.util.concurrent.atomic.AtomicReference
+import kotlinx.coroutines.async
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
@@ -188,6 +192,32 @@ class SimulatorMcpTest {
     }
     assertThat(result.isError).isTrue()
     assertThat((result.content.first() as ContentBlock.Text).text).contains("needs Java 21+")
+  }
+
+  @Test
+  fun `a launch cancelled before ready closes its simulator`() {
+    val child = AtomicReference<Process>()
+    val slow =
+      SimulatorMcp(
+        start = {
+          ProcessBuilder("bash", "-c", "echo converting >&2; sleep 60").start().also(child::set)
+        },
+        readyTimeoutMs = 60_000,
+      )
+    runBlocking {
+      val call = async {
+        slow.handle(SimulatorMcp.LAUNCH, buildJsonObject { put("apk", apk().path) })
+      }
+      while (child.get() == null) delay(20)
+      delay(200)
+      call.cancelAndJoin()
+    }
+    assertThat(child.get().isAlive).isFalse()
+    // Nothing was registered, so no simulator answers.
+    val result = runBlocking {
+      slow.handle(SimulatorMcp.COMMAND, buildJsonObject { put("cmd", "info") })!!
+    }
+    assertThat((result.content.first() as ContentBlock.Text).text).contains("No simulator")
   }
 
   @Test

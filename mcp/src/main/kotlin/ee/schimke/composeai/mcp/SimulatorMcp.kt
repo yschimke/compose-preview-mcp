@@ -147,6 +147,10 @@ class SimulatorMcp(
       pair?.let { addAll(listOf("--pair", it.path)) }
       args.string("pairQualifiers")?.let { addAll(listOf("--pair-qualifiers", it)) }
       args.string("playServices")?.let { addAll(listOf("--play-services", it)) }
+      if (args.boolean("launcher") == true) add("--launcher")
+      (args["widgets"] as? JsonArray)?.forEach { widget ->
+        (widget as? JsonPrimitive)?.contentOrNull?.let { addAll(listOf("--widget", it)) }
+      }
     }
     val process =
       try {
@@ -481,7 +485,10 @@ class SimulatorMcp(
           "peer devices (simulator_command dataLayer). With `pair` (a Wear OS APK) a phone " +
           "and its watch run paired over a simulated Data Layer under one simulator id: " +
           "`info` then holds each device's, `device: watch` sends a command or screenshot to " +
-          "the watch, every event carries its `device`, and log lines start [phone] or [watch].",
+          "the watch, every event carries its `device`, and log lines start [phone] or [watch]. " +
+          "With `launcher` a home screen sits under the app: HOME, icons, shortcuts and the " +
+          "app's own widgets (simulator_command home, widget, …); `widgets` starts with some " +
+          "placed.",
       inputSchema =
         schema(
           """
@@ -504,7 +511,9 @@ class SimulatorMcp(
             "fingerprint":{"type":"string","description":"Build.FINGERPRINT in place of Robolectric's 'robolectric', which some apps check to skip real work under tests."},
             "pair":{"type":"string","description":"Absolute path to a Wear OS APK to run as this phone app's paired watch."},
             "pairQualifiers":{"type":"string","description":"The paired watch's display qualifiers (default a large round watch)."},
-            "playServices":{"type":"string","enum":["installed","none","outdated","disabled","invalid"],"description":"Google Play services as the app's availability checks see it: installed (default, SUCCESS), or none / outdated / disabled / invalid to test the app's error paths. simulator_command playServices {state} changes it while the app runs."}
+            "playServices":{"type":"string","enum":["installed","none","outdated","disabled","invalid"],"description":"Google Play services as the app's availability checks see it: installed (default, SUCCESS), or none / outdated / disabled / invalid to test the app's error paths. simulator_command playServices {state} changes it while the app runs."},
+            "launcher":{"type":"boolean","description":"A home screen under the app, as a phone's launcher: HOME and Back from the app's root go there, its icons reopen the app, a long press shows the app's shortcuts, and the app's widgets are placed, sized, updated and tapped there (simulator_command home, drawer, shortcuts, shortcut, widgets, widget, picker)."},
+            "widgets":{"type":"array","items":{"type":"string"},"description":"Widget providers (a receiver class or its short name) to place on the home screen at launch: the app starts once, then the home screen shows with them. Implies launcher."}
           }}
           """
         ),
@@ -578,7 +587,20 @@ class SimulatorMcp(
           "ambient-aware app gets onEnterAmbient/onUpdateAmbient/onExitAmbient, any other app " +
           "is stopped until wake); ambient {value?, op?: update}; tilt / wake (wrist-tilt " +
           "gesture); palm / sleep; key POWER|SLEEP|WAKEUP. A touch on a sleeping screen only " +
-          "wakes it. A selector is text/desc (exact), " +
+          "wakes it. Home screen (launched with launcher): home (key HOME too; the app stops, " +
+          "nothing is destroyed; returns the grid and what is on it); drawer {action?: " +
+          "open|close}; shortcuts {action?: list|open, activity?}; shortcut {shortcutId}; widgets " +
+          "(the app's providers with spans, resize mode, configure, preview, and the widgets " +
+          "placed); widget {action: add {provider, cellX?, cellY?, spanX?, spanY?, configure?} " +
+          "(runs its configure activity when it has one) | remove {widgetId} | resize " +
+          "{widgetId, spanX, spanY} | update {widgetId?} (APPWIDGET_UPDATE) | reconfigure " +
+          "{widgetId} | pin {answer: accept|reject} (answers the app's requestPinAppWidget)}; " +
+          "picker {action?: open|close}. Home views carry sim:id/… resource ids (icon, widget, " +
+          "widget_resize, drawer_icon, shortcut, picker_preview, pin_accept, …) and a widget's " +
+          "own views are tappable by text. info adds surface: app|home|drawer|picker; events " +
+          "home, widget {state: bound|configuring|configured|placed|updated|clicked|resized|" +
+          "dataChanged|removed|pinRequested, widgetId, reason} and shortcut. " +
+          "A selector is text/desc (exact), " +
           "textContains/" +
           "descContains, resourceId (a Compose testTag when exposed), cls, clickable. An intent " +
           "is {action, data, type, package, component ('.Cls' or 'pkg/cls'), categories, " +
@@ -590,7 +612,7 @@ class SimulatorMcp(
           {"type":"object","required":["cmd"],"properties":{
             "simulator":{"type":"string","description":"Simulator id from simulator_launch; optional when only one runs."},
             "device":{"type":"string","enum":["phone","watch"],"description":"With a paired launch: which device runs the command (default phone)."},
-            "cmd":{"type":"string","enum":["info","hierarchy","find","tap","longPress","swipe","key","back","text","launch","finish","activities","startActivity","startService","stopService","bindService","unbindService","services","broadcast","notifications","query","components","qualifiers","permissions","wait","ping","dataLayer","companion","shell","settings","logcat","files","content","network","wifi","bluetooth","display","forceStop","clearData","getprop","package","packages","screen","ambient","tilt","wake","palm","sleep","playServices"]},
+            "cmd":{"type":"string","enum":["info","hierarchy","find","tap","longPress","swipe","key","back","text","launch","finish","activities","startActivity","startService","stopService","bindService","unbindService","services","broadcast","notifications","query","components","qualifiers","permissions","wait","ping","dataLayer","companion","shell","settings","logcat","files","content","network","wifi","bluetooth","display","forceStop","clearData","getprop","package","packages","screen","ambient","tilt","wake","palm","sleep","playServices","home","drawer","shortcuts","shortcut","widgets","widget","picker"]},
             "text":{"type":"string"},"textContains":{"type":"string"},"desc":{"type":"string"},"descContains":{"type":"string"},
             "resourceId":{"type":"string"},"cls":{"type":"string"},"clickable":{"type":"boolean"},"index":{"type":"integer"},
             "x":{"type":"number"},"y":{"type":"number"},"x1":{"type":"number"},"y1":{"type":"number"},"x2":{"type":"number"},"y2":{"type":"number"},
@@ -613,7 +635,10 @@ class SimulatorMcp(
             "serviceUuids":{"type":"array","items":{"type":"string"}},"serviceData":{"type":"object"},"manufacturerData":{"type":"object"},
             "txPower":{"type":"integer"},"connectable":{"type":"boolean"},"gatt":{"type":"object"},"characteristic":{"type":"string"},"size":{"type":"string"},"density":{"type":["string","integer"]},
             "name":{"type":"string"},"package":{"type":"string"},"holdMs":{"type":"integer"},"longPress":{"type":"boolean"},
-            "action":{"type":"string","enum":["connect","disconnect","capabilities","put","delete","message","request","reply","config","channelOpen","channelWrite","channelEof","channelClose"],"description":"dataLayer: what the peer you play does"},
+            "action":{"type":"string","enum":["connect","disconnect","capabilities","put","delete","message","request","reply","config","channelOpen","channelWrite","channelEof","channelClose","add","remove","resize","update","reconfigure","pin","open","close","list"],"description":"dataLayer: what the peer you play does. widget: add|remove|resize|update|reconfigure|pin. drawer / picker: open|close. shortcuts: list|open."},
+            "provider":{"type":"string","description":"widget add: the widget provider, a receiver class or its short name"},"widgetId":{"type":"integer","description":"widget: which placed widget (id is the command's own)"},
+            "cellX":{"type":"integer"},"cellY":{"type":"integer"},"spanX":{"type":"integer"},"spanY":{"type":"integer"},"configure":{"type":"boolean","description":"widget add: run the configure activity even when the provider makes it optional"},
+            "shortcutId":{"type":"string","description":"shortcut: which app shortcut to open"},"activity":{"type":"string","description":"shortcuts: the launcher activity whose shortcuts to list or show"},
             "node":{"type":"string","description":"dataLayer: the peer node id (connect names a new one)"},"nearby":{"type":"boolean"},"capabilities":{"type":"array","items":{"type":"string"}},
             "dataMap":{"type":"object","description":"dataLayer: payload as a DataMap"},"assets":{"type":"object"},
             "channel":{"type":"string","description":"dataLayer channel*: the channel token"},"errorCode":{"type":"integer"},"disassociate":{"type":"integer","description":"companion: an association id to remove"},

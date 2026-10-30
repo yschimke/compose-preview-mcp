@@ -44,7 +44,7 @@ Eight tools run an Android APK in Robolectric's simulator and let the agent driv
 compose-ai-tools' `compose-preview launch <apk> --control stdio` (its `docs/SIMULATOR.md` has the
 control protocol and the constraints). No emulator, device or `adb`.
 
-- **`simulator_launch`** `{apk, headless?, showAgent?, qualifiers?, fontScale?, sdk?, java?, pair?, project?, module?, variant?, live?}` starts
+- **`simulator_launch`** `{apk, headless?, showAgent?, qualifiers?, fontScale?, sdk?, java?, pair?, project?, module?, variant?, live?, launcher?, widgets?}` starts
   one and waits for its `ready` event: a simulator id, the package, display size and first
   activity. The first launch of an APK converts its dex (tens of seconds); later ones come from the
   CLI's cache. **The window stays up unless `headless`**, so the person watches the agent work: the
@@ -58,7 +58,10 @@ control protocol and the constraints). No emulator, device or `adb`.
   `info`, and the screen's power: `screen` (`state: on | ambient | off`, `timeoutMs`, `alwaysOn`,
   `burnIn`, `lowBit`), `ambient`, `tilt` / `wake` and `palm` / `sleep`, which drive a Wear app's
   ambient callbacks, and `companion` (the app's `CompanionDeviceManager` associations and how
-  `associate()` is answered: `policy: accept | reject | ask`, `answer`) — with its arguments beside `cmd`, and returns its result plus the `events` the app produced since
+  `associate()` is answered: `policy: accept | reject | ask`, `answer`), and with `launcher` on the
+  launch the home screen's `home`, `drawer`, `shortcuts`, `shortcut`, `widgets`, `widget`
+  (`action: add | remove | resize | update | reconfigure | pin`, `provider`, `widgetId`,
+  `spanX`/`spanY`) and `picker` — with its arguments beside `cmd`, and returns its result plus the `events` the app produced since
   the last call (activities resumed or destroyed by its own navigation, services started, intents
   nothing handled).
 - **`simulator_screenshot`** returns the display as an image block (never the window's overlay).

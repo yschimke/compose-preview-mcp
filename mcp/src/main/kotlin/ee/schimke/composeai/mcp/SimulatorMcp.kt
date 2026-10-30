@@ -552,7 +552,10 @@ class SimulatorMcp(
           "value? (hex or {text}), answer?, policy?} (BLE peripherals for the app's scans, a GATT " +
           "server whose writes arrive as gatt events; ACTION_REQUEST_ENABLE is a " +
           "bluetoothRequest event); display {size?: WxH|reset, density?: N|reset}; forceStop; " +
-          "clearData; getprop {name?}; package; packages. Wearable Data Layer (launched with " +
+          "clearData; kill (the app killed in the background, its state saved through a Parcel; the " +
+          "next launch or startActivity re-creates the task from it); recreate (the top activity, as " +
+          "Activity.recreate()); savedState (the top activity's state: bundle JSON and base64 " +
+          "savedState, which launch / startActivity {savedState} take back); getprop {name?}; package; packages. Wearable Data Layer (launched with " +
           "dataLayer: agent): dataLayer (state: node, peers, capabilities, data items); " +
           "dataLayer {action: connect {node?, name?, package?, capabilities?, nearby?} | " +
           "disconnect {node?} | capabilities {node?, capabilities} | put {node?, path, text|data|" +
@@ -590,13 +593,13 @@ class SimulatorMcp(
           {"type":"object","required":["cmd"],"properties":{
             "simulator":{"type":"string","description":"Simulator id from simulator_launch; optional when only one runs."},
             "device":{"type":"string","enum":["phone","watch"],"description":"With a paired launch: which device runs the command (default phone)."},
-            "cmd":{"type":"string","enum":["info","hierarchy","find","tap","longPress","swipe","key","back","text","launch","finish","activities","startActivity","startService","stopService","bindService","unbindService","services","broadcast","notifications","query","components","qualifiers","permissions","wait","ping","dataLayer","companion","shell","settings","logcat","files","content","network","wifi","bluetooth","display","forceStop","clearData","getprop","package","packages","screen","ambient","tilt","wake","palm","sleep","playServices"]},
+            "cmd":{"type":"string","enum":["info","hierarchy","find","tap","longPress","swipe","key","back","text","launch","finish","activities","startActivity","startService","stopService","bindService","unbindService","services","broadcast","notifications","query","components","qualifiers","permissions","wait","ping","dataLayer","companion","shell","settings","logcat","files","content","network","wifi","bluetooth","display","forceStop","clearData","kill","recreate","savedState","getprop","package","packages","screen","ambient","tilt","wake","palm","sleep","playServices"]},
             "text":{"type":"string"},"textContains":{"type":"string"},"desc":{"type":"string"},"descContains":{"type":"string"},
             "resourceId":{"type":"string"},"cls":{"type":"string"},"clickable":{"type":"boolean"},"index":{"type":"integer"},
             "x":{"type":"number"},"y":{"type":"number"},"x1":{"type":"number"},"y1":{"type":"number"},"x2":{"type":"number"},"y2":{"type":"number"},
             "durationMs":{"type":"integer"},"steps":{"type":"integer"},"ms":{"type":"integer"},"settleMs":{"type":"integer"},
             "key":{"type":["string","integer","array"]},"flat":{"type":"boolean"},"value":{"type":["string","boolean","object","array"]},
-            "intent":{"type":"object"},"uri":{"type":"string"},"projection":{"type":"array","items":{"type":"string"}},
+            "intent":{"type":"object"},"savedState":{"type":"string","description":"launch / startActivity: base64 instance state from the savedState command; a new instance is created from it."},"uri":{"type":"string"},"projection":{"type":"array","items":{"type":"string"}},
             "selection":{"type":"string"},"args":{"type":"array","items":{"type":"string"}},"sort":{"type":"string"},"limit":{"type":"integer"},
             "policy":{"type":"string","enum":["grant","deny","accept","reject","ask"],"description":"permissions: grant|deny|ask; wifi/bluetooth request and companion: accept|reject|ask"},"grant":{"type":"array","items":{"type":"string"}},"deny":{"type":"array","items":{"type":"string"}},"reset":{"type":"boolean"},
             "command":{"type":"string","description":"shell: an adb shell command line"},

@@ -76,6 +76,7 @@ class SimulatorMcp(
       logsTool,
       restartTool,
       updateTool,
+      reloadTool,
       stopTool,
     )
 
@@ -87,6 +88,7 @@ class SimulatorMcp(
       LOGS -> withContext(Dispatchers.IO) { logs(args) }
       RESTART -> withContext(Dispatchers.IO) { replace(RESTART, "restart", args) }
       UPDATE -> withContext(Dispatchers.IO) { replace(UPDATE, "update", args) }
+      RELOAD -> withContext(Dispatchers.IO) { replace(RELOAD, "reload", args) }
       STOP -> withContext(Dispatchers.IO) { stop(args) }
       else -> null
     }
@@ -104,18 +106,32 @@ class SimulatorMcp(
    * registered only once launched, after the last point the call can be cancelled.
    */
   private suspend fun launch(args: JsonObject): CallToolResult {
-    val apk = args.string("apk") ?: return error("simulator_launch: `apk` (a path) is required.")
-    val file = File(apk).absoluteFile
-    if (!file.isFile) return error("simulator_launch: no such APK: $file")
+    val project = args.string("project")?.let { File(it).absoluteFile }
+    if (project != null && !project.isDirectory) {
+      return error("simulator_launch: no such project directory: $project")
+    }
+    val apk = args.string("apk")
+    if (apk == null && project == null) {
+      return error("simulator_launch: `apk` (a path) or `project` (a Gradle build) is required.")
+    }
+    val file = apk?.let { File(it).absoluteFile }
+    if (file != null && !file.isFile) return error("simulator_launch: no such APK: $file")
     val pair = args.string("pair")?.let { File(it).absoluteFile }
     if (pair != null && !pair.isFile) return error("simulator_launch: no such APK to pair: $pair")
     val cliArgs = buildList {
       add("launch")
-      add(file.path)
+      file?.let { add(it.path) }
+      project?.let { addAll(listOf("--project", it.path)) }
+      args.string("module")?.let { addAll(listOf("--module", it)) }
+      args.string("variant")?.let { addAll(listOf("--variant", it)) }
+      if (args.boolean("live") == true) add("--live")
       when (args.boolean("standby")) {
         true -> add("--standby")
         false -> add("--no-standby")
         null -> {}
+      }
+      (args["gradleArgs"] as? JsonArray)?.forEach { arg ->
+        (arg as? JsonPrimitive)?.contentOrNull?.let { addAll(listOf("--gradle-arg", it)) }
       }
       add("--control")
       add("stdio")
@@ -144,7 +160,7 @@ class SimulatorMcp(
     val simulator =
       Simulator(
         id,
-        file.name,
+        file?.name ?: project?.name ?: "app",
         process,
         devices = if (pair != null) PAIRED else emptySet(),
       )
@@ -239,6 +255,7 @@ class SimulatorMcp(
       put("cmd", cmd)
       args.string("apk")?.let { put("apk", File(it).absolutePath) }
       args.boolean("keepData")?.let { put("keepData", it) }
+      args.boolean("full")?.let { put("full", it) }
       args.string("device")?.let { put("device", it) }
     }
     return when (val reply = simulator.send(payload, readyTimeoutMs)) {
@@ -457,7 +474,9 @@ class SimulatorMcp(
           "launch of an APK converts its dex (tens of seconds; cached by content after that). " +
           "The person sees the app in a window, with each tap and swipe you send drawn over " +
           "it, unless `headless`. Drive it with simulator_command and simulator_screenshot; " +
-          "end it with simulator_stop. Needs Java 21+ and a local Android SDK. With " +
+          "end it with simulator_stop. Needs Java 21+ and a local Android SDK. With `project` " +
+          "(the app's Gradle build) the APK is optional, and simulator_reload delivers an " +
+          "edit in seconds by compiling only the classes. With " +
           "`dataLayer: agent` the app's Wearable Data Layer is simulated and you play its " +
           "peer devices (simulator_command dataLayer). With `pair` (a Wear OS APK) a phone " +
           "and its watch run paired over a simulated Data Layer under one simulator id: " +
@@ -466,9 +485,14 @@ class SimulatorMcp(
       inputSchema =
         schema(
           """
-          {"type":"object","required":["apk"],"properties":{
-            "apk":{"type":"string","description":"Absolute path to the APK (a debug build works best)."},
-            "standby":{"type":"boolean","description":"Keep a second simulator JVM prepared up to the app's own code, so simulator_restart takes seconds rather than a launch's time. Default off; it costs a second JVM's memory."},
+          {"type":"object","properties":{
+            "apk":{"type":"string","description":"Absolute path to the APK (a debug build works best). Optional with `project`: the CLI builds it."},
+            "project":{"type":"string","description":"The app's Gradle build (absolute path), for simulator_reload: edit, then reload without packaging an APK."},
+            "module":{"type":"string","description":"With project: the app module (default app)."},
+            "variant":{"type":"string","description":"With project: the variant (default debug)."},
+            "live":{"type":"boolean","description":"With project: reload by itself whenever a source file is saved; each reload is a `reload` event."},
+            "gradleArgs":{"type":"array","items":{"type":"string"},"description":"With project: extra Gradle arguments, e.g. --max-workers=2."},
+            "standby":{"type":"boolean","description":"Keep a second simulator JVM prepared up to the app's own code, so simulator_restart and simulator_reload take seconds. Default on with project, off otherwise; it costs a second JVM's memory."},
             "headless":{"type":"boolean","description":"No window. Default false: the person can watch."},
             "showAgent":{"type":"boolean","description":"Draw your taps, swipes and commands over the window. Default true."},
             "qualifiers":{"type":"string","description":"Display resource qualifiers, Robolectric syntax, e.g. w411dp-h891dp-xxhdpi-night. Default w360dp-h640dp-hdpi."},
@@ -689,6 +713,31 @@ class SimulatorMcp(
         ),
     )
 
+  private val reloadTool =
+    ToolDef(
+      name = RELOAD,
+      title = "Live reload the simulated app",
+      description =
+        "After editing the app's source: compile it (the module's Kotlin/Java compile, which " +
+          "also relinks resources; no dexing or APK packaging) and restart the app on the " +
+          "classes that changed, ahead of the converted APK. Needs a simulator_launch with " +
+          "`project`. Data is kept; UI state (back stack, scroll) is not. A resource change " +
+          "swaps in the relinked resources; an asset or native-library change, or `full`, " +
+          "rebuilds the APK instead. A compile error is returned with the compiler's messages " +
+          "and the app keeps running. Returns mode (classes|resources|apk|unchanged), build " +
+          "{ok, ms, tasks, errors}, classesChanged, the new info, and timings.",
+      inputSchema =
+        schema(
+          """
+          {"type":"object","properties":{
+            "simulator":{"type":"string","description":"Simulator id; optional when only one runs."},
+            "full":{"type":"boolean","description":"Rebuild and reinstall the APK instead of overlaying classes."},
+            "keepData":{"type":"boolean","description":"Keep the app's data (default true)."}
+          }}
+          """
+        ),
+    )
+
   private val stopTool =
     ToolDef(
       name = STOP,
@@ -710,7 +759,9 @@ class SimulatorMcp(
     const val LOGS = "simulator_logs"
     const val RESTART = "simulator_restart"
     const val UPDATE = "simulator_update"
-    val TOOL_NAMES: List<String> = listOf(LAUNCH, COMMAND, SCREENSHOT, LOGS, RESTART, UPDATE, STOP)
+    const val RELOAD = "simulator_reload"
+    val TOOL_NAMES: List<String> =
+      listOf(LAUNCH, COMMAND, SCREENSHOT, LOGS, RESTART, UPDATE, RELOAD, STOP)
 
     /** The devices of a paired launch, as the CLI's `device` names them. */
     private val PAIRED = setOf("phone", "watch")

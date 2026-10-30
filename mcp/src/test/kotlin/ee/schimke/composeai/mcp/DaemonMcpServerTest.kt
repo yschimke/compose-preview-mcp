@@ -216,6 +216,7 @@ class DaemonMcpServerTest {
         SimulatorMcp.LOGS,
         SimulatorMcp.RESTART,
         SimulatorMcp.UPDATE,
+        SimulatorMcp.RELOAD,
         SimulatorMcp.STOP,
         // Design guidelines over previews, on the `design-guidelines` engine.
         PreviewGuidelinesMcp.PROMPT_TOOL,

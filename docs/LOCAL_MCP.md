@@ -53,8 +53,9 @@ control protocol and the constraints). No emulator, device or `adb`.
 - **`simulator_command`** `{simulator?, cmd, …}` sends one control-channel command — `tap`,
   `longPress`, `swipe`, `key`, `back`, `text`, `hierarchy`, `find`, `launch`, `finish`,
   `activities`, `startActivity`, `startService`, `stopService`, `bindService`, `unbindService`,
-  `services`, `broadcast`, `notifications`, `query`, `components`, `qualifiers`, `wait`, `info` —
-  with its arguments beside `cmd`, and returns its result plus the `events` the app produced since
+  `services`, `broadcast`, `notifications`, `query`, `components`, `qualifiers`, `permissions`
+  (`policy: deny` or `deny: [names]` to refuse the app's runtime permission requests), `wait`,
+  `info` — with its arguments beside `cmd`, and returns its result plus the `events` the app produced since
   the last call (activities resumed or destroyed by its own navigation, services started, intents
   nothing handled).
 - **`simulator_screenshot`** returns the display as an image block (never the window's overlay).

@@ -369,7 +369,9 @@ class SimulatorMcp(
           "finish; activities; startActivity {intent}; startService/stopService/bindService/" +
           "unbindService {intent}; services; broadcast {intent}; notifications; query {uri, " +
           "projection?, selection?, args?, sort?, limit?}; components; qualifiers {value: " +
-          "+land|+night|…}; wait {ms}. A selector is text/desc (exact), textContains/" +
+          "+land|+night|…}; permissions {policy?: grant|deny, grant?, deny?} (how the app's " +
+          "runtime permission requests are answered, granted by default; grant/deny name " +
+          "permissions and apply now too); wait {ms}. A selector is text/desc (exact), textContains/" +
           "descContains, resourceId (a Compose testTag when exposed), cls, clickable. An intent " +
           "is {action, data, type, package, component ('.Cls' or 'pkg/cls'), categories, " +
           "flags ([\"CLEAR_TOP\"]…), extras}. UI-changing commands answer after settleMs " +
@@ -379,14 +381,15 @@ class SimulatorMcp(
           """
           {"type":"object","required":["cmd"],"properties":{
             "simulator":{"type":"string","description":"Simulator id from simulator_launch; optional when only one runs."},
-            "cmd":{"type":"string","enum":["info","hierarchy","find","tap","longPress","swipe","key","back","text","launch","finish","activities","startActivity","startService","stopService","bindService","unbindService","services","broadcast","notifications","query","components","qualifiers","wait","ping"]},
+            "cmd":{"type":"string","enum":["info","hierarchy","find","tap","longPress","swipe","key","back","text","launch","finish","activities","startActivity","startService","stopService","bindService","unbindService","services","broadcast","notifications","query","components","qualifiers","permissions","wait","ping"]},
             "text":{"type":"string"},"textContains":{"type":"string"},"desc":{"type":"string"},"descContains":{"type":"string"},
             "resourceId":{"type":"string"},"cls":{"type":"string"},"clickable":{"type":"boolean"},"index":{"type":"integer"},
             "x":{"type":"number"},"y":{"type":"number"},"x1":{"type":"number"},"y1":{"type":"number"},"x2":{"type":"number"},"y2":{"type":"number"},
             "durationMs":{"type":"integer"},"steps":{"type":"integer"},"ms":{"type":"integer"},"settleMs":{"type":"integer"},
             "key":{"type":["string","integer"]},"flat":{"type":"boolean"},"value":{"type":"string"},
             "intent":{"type":"object"},"uri":{"type":"string"},"projection":{"type":"array","items":{"type":"string"}},
-            "selection":{"type":"string"},"args":{"type":"array","items":{"type":"string"}},"sort":{"type":"string"},"limit":{"type":"integer"}
+            "selection":{"type":"string"},"args":{"type":"array","items":{"type":"string"}},"sort":{"type":"string"},"limit":{"type":"integer"},
+            "policy":{"type":"string","enum":["grant","deny"]},"grant":{"type":"array","items":{"type":"string"}},"deny":{"type":"array","items":{"type":"string"}}
           }}
           """
         ),

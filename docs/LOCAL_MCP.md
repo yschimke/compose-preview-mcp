@@ -55,7 +55,9 @@ control protocol and the constraints). No emulator, device or `adb`.
   `activities`, `startActivity`, `startService`, `stopService`, `bindService`, `unbindService`,
   `services`, `broadcast`, `notifications`, `query`, `components`, `qualifiers`, `permissions`
   (`policy: deny` or `deny: [names]` to refuse the app's runtime permission requests), `wait`,
-  `info` — with its arguments beside `cmd`, and returns its result plus the `events` the app produced since
+  `info`, and the screen's power: `screen` (`state: on | ambient | off`, `timeoutMs`, `alwaysOn`,
+  `burnIn`, `lowBit`), `ambient`, `tilt` / `wake` and `palm` / `sleep`, which drive a Wear app's
+  ambient callbacks — with its arguments beside `cmd`, and returns its result plus the `events` the app produced since
   the last call (activities resumed or destroyed by its own navigation, services started, intents
   nothing handled).
 - **`simulator_screenshot`** returns the display as an image block (never the window's overlay).

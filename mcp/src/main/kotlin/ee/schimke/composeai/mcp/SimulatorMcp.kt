@@ -414,7 +414,12 @@ class SimulatorMcp(
           "What the app sends is a " +
           "datalayer event {kind: send, type: hello|message|response|data|capabilities|activity|" +
           "oauth, to, path, requestId, data, text, dataMap, assets (key: base64, as put takes " +
-          "them)}. A selector is text/desc (exact), " +
+          "them)}. Screen power (Wear ambient): screen {state?: on|ambient|off, timeoutMs?, " +
+          "alwaysOn?, burnIn?, lowBit?} (isInteractive, Display.getState, SCREEN_ON/OFF; an " +
+          "ambient-aware app gets onEnterAmbient/onUpdateAmbient/onExitAmbient, any other app " +
+          "is stopped until wake); ambient {value?, op?: update}; tilt / wake (wrist-tilt " +
+          "gesture); palm / sleep; key POWER|SLEEP|WAKEUP. A touch on a sleeping screen only " +
+          "wakes it. A selector is text/desc (exact), " +
           "textContains/" +
           "descContains, resourceId (a Compose testTag when exposed), cls, clickable. An intent " +
           "is {action, data, type, package, component ('.Cls' or 'pkg/cls'), categories, " +
@@ -425,12 +430,12 @@ class SimulatorMcp(
           """
           {"type":"object","required":["cmd"],"properties":{
             "simulator":{"type":"string","description":"Simulator id from simulator_launch; optional when only one runs."},
-            "cmd":{"type":"string","enum":["info","hierarchy","find","tap","longPress","swipe","key","back","text","launch","finish","activities","startActivity","startService","stopService","bindService","unbindService","services","broadcast","notifications","query","components","qualifiers","permissions","wait","ping","dataLayer","shell","settings","logcat","files","content","network","wifi","bluetooth","display","forceStop","clearData","getprop","package","packages"]},
+            "cmd":{"type":"string","enum":["info","hierarchy","find","tap","longPress","swipe","key","back","text","launch","finish","activities","startActivity","startService","stopService","bindService","unbindService","services","broadcast","notifications","query","components","qualifiers","permissions","wait","ping","dataLayer","shell","settings","logcat","files","content","network","wifi","bluetooth","display","forceStop","clearData","getprop","package","packages","screen","ambient","tilt","wake","palm","sleep"]},
             "text":{"type":"string"},"textContains":{"type":"string"},"desc":{"type":"string"},"descContains":{"type":"string"},
             "resourceId":{"type":"string"},"cls":{"type":"string"},"clickable":{"type":"boolean"},"index":{"type":"integer"},
             "x":{"type":"number"},"y":{"type":"number"},"x1":{"type":"number"},"y1":{"type":"number"},"x2":{"type":"number"},"y2":{"type":"number"},
             "durationMs":{"type":"integer"},"steps":{"type":"integer"},"ms":{"type":"integer"},"settleMs":{"type":"integer"},
-            "key":{"type":["string","integer","array"]},"flat":{"type":"boolean"},"value":{"type":["string","object","array"]},
+            "key":{"type":["string","integer","array"]},"flat":{"type":"boolean"},"value":{"type":["string","boolean","object","array"]},
             "intent":{"type":"object"},"uri":{"type":"string"},"projection":{"type":"array","items":{"type":"string"}},
             "selection":{"type":"string"},"args":{"type":"array","items":{"type":"string"}},"sort":{"type":"string"},"limit":{"type":"integer"},
             "policy":{"type":"string","enum":["grant","deny","accept","reject","ask"],"description":"permissions: grant|deny; wifi/bluetooth request: accept|reject|ask"},"grant":{"type":"array","items":{"type":"string"}},"deny":{"type":"array","items":{"type":"string"}},"reset":{"type":"boolean"},
@@ -452,7 +457,8 @@ class SimulatorMcp(
             "node":{"type":"string","description":"dataLayer: the peer node id (connect names a new one)"},"nearby":{"type":"boolean"},"capabilities":{"type":"array","items":{"type":"string"}},
             "dataMap":{"type":"object","description":"dataLayer: payload as a DataMap"},"assets":{"type":"object"},
             "error":{"type":"string"},"result":{"type":"integer"},"responseUrl":{"type":"string"},"requestTimeoutMs":{"type":"integer"},
-            "addCapability":{"type":"string"},"removeCapability":{"type":"string"}
+            "addCapability":{"type":"string"},"removeCapability":{"type":"string"},
+            "state":{"type":"string","enum":["on","ambient","off"]},"timeoutMs":{"type":"integer"},"alwaysOn":{"type":"boolean"},"burnIn":{"type":"boolean"},"lowBit":{"type":"boolean"}
           }}
           """
         ),

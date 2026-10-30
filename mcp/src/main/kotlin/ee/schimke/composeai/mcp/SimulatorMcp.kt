@@ -403,7 +403,7 @@ class SimulatorMcp(
           "bluetoothRequest event); display {size?: WxH|reset, density?: N|reset}; forceStop; " +
           "clearData; getprop {name?}; package; packages. Wearable Data Layer (launched with " +
           "dataLayer: agent): dataLayer (state: node, peers, capabilities, data items); " +
-          "dataLayer {action: connect {id?, name?, package?, capabilities?, nearby?} | " +
+          "dataLayer {action: connect {node?, name?, package?, capabilities?, nearby?} | " +
           "disconnect {node?} | capabilities {node?, capabilities} | put {node?, path, text|data|" +
           "dataMap, assets?} | delete {node?, path} | message {node?, path, text|data|dataMap} | " +
           "request {…} (the app's answer is a send event of type response) | reply {requestId, " +

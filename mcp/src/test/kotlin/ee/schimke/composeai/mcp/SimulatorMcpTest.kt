@@ -122,6 +122,27 @@ class SimulatorMcpTest {
   }
 
   @Test
+  fun `an agent data layer and a fingerprint pass through to the launch`() {
+    val apk = apk()
+    call(
+      SimulatorMcp.LAUNCH,
+      buildJsonObject {
+        put("apk", apk.path)
+        put("dataLayer", "agent")
+        put("fingerprint", "google/sim/sim:16/X/1:user/release-keys")
+      },
+    )
+    assertThat(started.single())
+      .containsAtLeast(
+        "--data-layer",
+        "agent",
+        "--fingerprint",
+        "google/sim/sim:16/X/1:user/release-keys",
+      )
+      .inOrder()
+  }
+
+  @Test
   fun `commands return results and the events the app produced`() {
     call(SimulatorMcp.LAUNCH, buildJsonObject { put("apk", apk().path) })
 

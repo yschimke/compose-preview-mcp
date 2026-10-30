@@ -97,6 +97,8 @@ class SimulatorMcp(
       args.int("sdk")?.let { addAll(listOf("--sdk", it.toString())) }
       args.string("network")?.let { addAll(listOf("--network", it)) }
       args.string("java")?.let { addAll(listOf("--java", it)) }
+      args.string("dataLayer")?.let { addAll(listOf("--data-layer", it)) }
+      args.string("fingerprint")?.let { addAll(listOf("--fingerprint", it)) }
     }
     val process =
       try {
@@ -339,7 +341,9 @@ class SimulatorMcp(
           "launch of an APK converts its dex (tens of seconds; cached by content after that). " +
           "The person sees the app in a window, with each tap and swipe you send drawn over " +
           "it, unless `headless`. Drive it with simulator_command and simulator_screenshot; " +
-          "end it with simulator_stop. Needs Java 21+ and a local Android SDK.",
+          "end it with simulator_stop. Needs Java 21+ and a local Android SDK. With " +
+          "`dataLayer: agent` the app's Wearable Data Layer is simulated and you play its " +
+          "peer devices (simulator_command dataLayer).",
       inputSchema =
         schema(
           """
@@ -351,7 +355,9 @@ class SimulatorMcp(
             "fontScale":{"type":"string","description":"Font scale, e.g. 1.3."},
             "sdk":{"type":"integer","description":"Android API level to simulate (default 35)."},
             "network":{"type":"string","description":"Start on wifi (default), cellular, ethernet, vpn, captive (no internet) or offline; append ,airplane (or just airplane) for airplane mode."},
-            "java":{"type":"string","description":"JDK 21+ home or java binary, when the default JDK is older."}
+                        "java":{"type":"string","description":"JDK 21+ home or java binary, when the default JDK is older."},
+            "dataLayer":{"type":"string","enum":["agent"],"description":"Simulate the Wearable Data Layer with you as the peer: what the app sends arrives as datalayer events of kind send; simulator_command dataLayer {action} connects a peer, puts data items, sends messages and replies."},
+            "fingerprint":{"type":"string","description":"Build.FINGERPRINT in place of Robolectric's 'robolectric', which some apps check to skip real work under tests."}
           }}
           """
         ),
@@ -395,7 +401,18 @@ class SimulatorMcp(
           "value? (hex or {text}), answer?, policy?} (BLE peripherals for the app's scans, a GATT " +
           "server whose writes arrive as gatt events; ACTION_REQUEST_ENABLE is a " +
           "bluetoothRequest event); display {size?: WxH|reset, density?: N|reset}; forceStop; " +
-          "clearData; getprop {name?}; package; packages. A selector is text/desc (exact), " +
+          "clearData; getprop {name?}; package; packages. Wearable Data Layer (launched with " +
+          "dataLayer: agent): dataLayer (state: node, peers, capabilities, data items); " +
+          "dataLayer {action: connect {id?, name?, package?, capabilities?, nearby?} | " +
+          "disconnect {node?} | capabilities {node?, capabilities} | put {node?, path, text|data|" +
+          "dataMap, assets?} | delete {node?, path} | message {node?, path, text|data|dataMap} | " +
+          "request {…} (the app's answer is a send event of type response) | reply {requestId, " +
+          "text|data|dataMap|error; result for a remote activity; responseUrl for OAuth} | config " +
+          "{requestTimeoutMs}}; addCapability/removeCapability {name} on the app's own node. data " +
+          "is base64; dataMap is JSON (string, boolean and int values bare, others " +
+          "{type: long|float|double|bytes|string[]|…, value}). What the app sends is a " +
+          "datalayer event {kind: send, type: hello|message|response|data|capabilities|activity|" +
+          "oauth, to, path, requestId, data, text, dataMap}. A selector is text/desc (exact), " +
           "textContains/" +
           "descContains, resourceId (a Compose testTag when exposed), cls, clickable. An intent " +
           "is {action, data, type, package, component ('.Cls' or 'pkg/cls'), categories, " +
@@ -406,7 +423,7 @@ class SimulatorMcp(
           """
           {"type":"object","required":["cmd"],"properties":{
             "simulator":{"type":"string","description":"Simulator id from simulator_launch; optional when only one runs."},
-            "cmd":{"type":"string","enum":["info","hierarchy","find","tap","longPress","swipe","key","back","text","launch","finish","activities","startActivity","startService","stopService","bindService","unbindService","services","broadcast","notifications","query","components","qualifiers","permissions","wait","ping","shell","settings","logcat","files","content","network","wifi","bluetooth","display","forceStop","clearData","getprop","package","packages"]},
+            "cmd":{"type":"string","enum":["info","hierarchy","find","tap","longPress","swipe","key","back","text","launch","finish","activities","startActivity","startService","stopService","bindService","unbindService","services","broadcast","notifications","query","components","qualifiers","permissions","wait","ping","dataLayer","shell","settings","logcat","files","content","network","wifi","bluetooth","display","forceStop","clearData","getprop","package","packages"]},
             "text":{"type":"string"},"textContains":{"type":"string"},"desc":{"type":"string"},"descContains":{"type":"string"},
             "resourceId":{"type":"string"},"cls":{"type":"string"},"clickable":{"type":"boolean"},"index":{"type":"integer"},
             "x":{"type":"number"},"y":{"type":"number"},"x1":{"type":"number"},"y1":{"type":"number"},"x2":{"type":"number"},"y2":{"type":"number"},
@@ -419,16 +436,21 @@ class SimulatorMcp(
             "op":{"type":"string"},"namespace":{"type":"string","enum":["system","secure","global"]},
             "path":{"type":"string"},"to":{"type":"string"},"from":{"type":"string"},"recursive":{"type":"boolean"},
             "values":{"type":"object"},"filters":{"type":"object"},"default":{"type":"string"},"regex":{"type":"string"},"tail":{"type":"integer"},
-            "wifi":{"type":"boolean"},"airplane":{"type":"boolean"},"data":{"type":"boolean"},
+            "wifi":{"type":"boolean"},"airplane":{"type":"boolean"},"data":{"type":["boolean","string"],"description":"network: mobile data on/off; dataLayer: payload bytes, base64"},
             "mode":{"type":"string","enum":["wifi","cellular","ethernet","vpn","captive","offline"]},"metered":{"type":["boolean","null"]},
             "cellular":{"type":"string","enum":["5g","lte","3g","2g"]},"downKbps":{"type":"integer"},"upKbps":{"type":"integer"},
             "latencyMs":{"type":"integer"},"kbps":{"type":"integer"},"block":{"type":"array","items":{"type":"string"}},"dataSaver":{"type":"boolean"},
             "networks":{"type":"array","items":{"type":"object"}},"ssid":{"type":"string"},"bssid":{"type":"string"},"rssi":{"type":"integer"},
-            "answer":{"type":"string","enum":["accept","reject"]},"requestId":{"type":"integer","description":"wifi/bluetooth request: which waiting request to answer (default the oldest)"},
+            "answer":{"type":"string","enum":["accept","reject"]},"requestId":{"type":"integer","description":"wifi/bluetooth request: which waiting request to answer (default the oldest); dataLayer reply: the app request it answers"},
             "address":{"type":"string","description":"bluetooth: a device address, AA:BB:CC:DD:EE:FF"},
             "serviceUuids":{"type":"array","items":{"type":"string"}},"serviceData":{"type":"object"},"manufacturerData":{"type":"object"},
             "txPower":{"type":"integer"},"connectable":{"type":"boolean"},"gatt":{"type":"object"},"characteristic":{"type":"string"},"size":{"type":"string"},"density":{"type":["string","integer"]},
-            "name":{"type":"string"},"package":{"type":"string"},"holdMs":{"type":"integer"},"longPress":{"type":"boolean"}
+            "name":{"type":"string"},"package":{"type":"string"},"holdMs":{"type":"integer"},"longPress":{"type":"boolean"},
+            "action":{"type":"string","enum":["connect","disconnect","capabilities","put","delete","message","request","reply","config"],"description":"dataLayer: what the peer you play does"},
+            "node":{"type":"string","description":"dataLayer: the peer node id (connect names a new one)"},"nearby":{"type":"boolean"},"capabilities":{"type":"array","items":{"type":"string"}},
+            "dataMap":{"type":"object","description":"dataLayer: payload as a DataMap"},"assets":{"type":"object"},
+            "error":{"type":"string"},"result":{"type":"integer"},"responseUrl":{"type":"string"},"requestTimeoutMs":{"type":"integer"},
+            "addCapability":{"type":"string"},"removeCapability":{"type":"string"}
           }}
           """
         ),

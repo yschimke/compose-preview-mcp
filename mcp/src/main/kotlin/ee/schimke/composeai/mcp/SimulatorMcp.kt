@@ -44,6 +44,10 @@ import kotlinx.serialization.json.put
  *   app produced since the last call (activities resumed, services started, unhandled intents).
  * - `simulator_screenshot` returns the display as an image.
  * - `simulator_logs` returns the tail of the simulator's log (the app's logcat, Robolectric).
+ * - `simulator_restart` starts the app again in a fresh simulator JVM, keeping its data unless
+ *   asked not to; `simulator_update` does the same with another APK (a rebuild), as `adb install
+ *   -r` would. Both are the CLI's own `restart` / `update` commands, so the session, its id and the
+ *   window's place survive, and both report where the time went.
  * - `simulator_stop` ends a simulator; all of them end with the server.
  *
  * With `pair`, one simulator id is a phone and its paired watch (`launch --pair`): `device` picks
@@ -65,7 +69,15 @@ class SimulatorMcp(
   private val nextId = AtomicLong(1)
 
   fun toolDefs(): List<ToolDef> =
-    listOf(launchTool, commandTool, screenshotTool, logsTool, stopTool)
+    listOf(
+      launchTool,
+      commandTool,
+      screenshotTool,
+      logsTool,
+      restartTool,
+      updateTool,
+      stopTool,
+    )
 
   suspend fun handle(name: String, args: JsonObject): CallToolResult? =
     when (name) {
@@ -73,6 +85,8 @@ class SimulatorMcp(
       COMMAND -> withContext(Dispatchers.IO) { command(args) }
       SCREENSHOT -> withContext(Dispatchers.IO) { screenshot(args) }
       LOGS -> withContext(Dispatchers.IO) { logs(args) }
+      RESTART -> withContext(Dispatchers.IO) { replace(RESTART, "restart", args) }
+      UPDATE -> withContext(Dispatchers.IO) { replace(UPDATE, "update", args) }
       STOP -> withContext(Dispatchers.IO) { stop(args) }
       else -> null
     }
@@ -98,6 +112,11 @@ class SimulatorMcp(
     val cliArgs = buildList {
       add("launch")
       add(file.path)
+      when (args.boolean("standby")) {
+        true -> add("--standby")
+        false -> add("--no-standby")
+        null -> {}
+      }
       add("--control")
       add("stdio")
       if (args.boolean("headless") == true) add("--headless")
@@ -123,7 +142,12 @@ class SimulatorMcp(
       }
     val id = "sim-${nextId.getAndIncrement()}"
     val simulator =
-      Simulator(id, file.name, process, devices = if (pair != null) PAIRED else emptySet())
+      Simulator(
+        id,
+        file.name,
+        process,
+        devices = if (pair != null) PAIRED else emptySet(),
+      )
     val ready =
       try {
         withTimeout(readyTimeoutMs) { simulator.ready.await() }
@@ -138,10 +162,16 @@ class SimulatorMcp(
         return notStarted(simulator, "$e")
       }
     simulators[id] = simulator
+    val events = simulator.drainEvents()
     val result = buildJsonObject {
       put("simulator", id)
       put("info", ready)
-      put("events", simulator.drainEvents())
+      // The CLI's `conversion` event: whether the APK's classes came from its cache, and the cost.
+      val conversions = events.filter { (it as? JsonObject)?.string("event") == "conversion" }
+      if (conversions.isNotEmpty()) {
+        put("conversion", if (pair == null) conversions.first() else JsonArray(conversions))
+      }
+      put("events", events)
     }
     return ok(result)
   }
@@ -192,6 +222,34 @@ class SimulatorMcp(
           structuredContent = summary,
         )
       }
+    }
+  }
+
+  /**
+   * `restart` / `update`: the CLI replaces the simulator JVM and answers once the new one is ready,
+   * so this waits as long as a launch may (an updated APK may convert first).
+   */
+  private fun replace(tool: String, cmd: String, args: JsonObject): CallToolResult {
+    val simulator = simulator(args) ?: return noSimulator()
+    if (cmd == "update") {
+      val apk = args.string("apk") ?: return error("$tool: `apk` (a path) is required.")
+      if (!File(apk).absoluteFile.isFile) return error("$tool: no such APK: $apk")
+    }
+    val payload = buildJsonObject {
+      put("cmd", cmd)
+      args.string("apk")?.let { put("apk", File(it).absolutePath) }
+      args.boolean("keepData")?.let { put("keepData", it) }
+      args.string("device")?.let { put("device", it) }
+    }
+    return when (val reply = simulator.send(payload, readyTimeoutMs)) {
+      is Reply.Ok ->
+        ok(
+          buildJsonObject {
+            for ((key, value) in reply.result) put(key, value)
+            put("events", simulator.drainEvents())
+          }
+        )
+      is Reply.Failed -> error("$tool: ${reply.message}", simulator.drainEvents())
     }
   }
 
@@ -410,6 +468,7 @@ class SimulatorMcp(
           """
           {"type":"object","required":["apk"],"properties":{
             "apk":{"type":"string","description":"Absolute path to the APK (a debug build works best)."},
+            "standby":{"type":"boolean","description":"Keep a second simulator JVM prepared up to the app's own code, so simulator_restart takes seconds rather than a launch's time. Default off; it costs a second JVM's memory."},
             "headless":{"type":"boolean","description":"No window. Default false: the person can watch."},
             "showAgent":{"type":"boolean","description":"Draw your taps, swipes and commands over the window. Default true."},
             "qualifiers":{"type":"string","description":"Display resource qualifiers, Robolectric syntax, e.g. w411dp-h891dp-xxhdpi-night. Default w360dp-h640dp-hdpi."},
@@ -584,6 +643,52 @@ class SimulatorMcp(
       readOnlyHint = true,
     )
 
+  private val restartTool =
+    ToolDef(
+      name = RESTART,
+      title = "Restart the simulated app",
+      description =
+        "Start the app again in a fresh simulator JVM (a new process: statics, singletons and " +
+          "in-memory state reset), without ending the simulator session. Its data (files, " +
+          "databases, preferences, external storage) is kept unless keepData is false. Faster " +
+          "than simulator_stop + simulator_launch: the converted classes are reused. Returns " +
+          "the new `info` and timings: snapshotMs, stopMs, startMs, totalMs and startup " +
+          "{jvmMs, sandboxMs, applicationMs, firstActivityMs}.",
+      inputSchema =
+        schema(
+          """
+          {"type":"object","properties":{
+            "simulator":{"type":"string","description":"Simulator id; optional when only one runs."},
+            "device":{"type":"string","enum":["phone","watch"],"description":"With a paired launch: which device restarts (default phone)."},
+            "keepData":{"type":"boolean","description":"Keep the app's data (default true); false starts from a clean install."}
+          }}
+          """
+        ),
+    )
+
+  private val updateTool =
+    ToolDef(
+      name = UPDATE,
+      title = "Update the simulated app to a rebuilt APK",
+      description =
+        "Replace the running app with another APK, usually a rebuild of it, as `adb install " +
+          "-r` would: its data is kept (keepData false drops it) and the session continues. " +
+          "The APK's classes come from the CLI's conversion cache when this exact APK was seen " +
+          "before; otherwise it converts first (the result's `conversion` says which, and how " +
+          "long). Returns the new `info` and the same timings as simulator_restart.",
+      inputSchema =
+        schema(
+          """
+          {"type":"object","required":["apk"],"properties":{
+            "simulator":{"type":"string","description":"Simulator id; optional when only one runs."},
+            "apk":{"type":"string","description":"Absolute path to the new APK. Keeping data needs the same package."},
+            "device":{"type":"string","enum":["phone","watch"],"description":"With a paired launch: which device updates (default phone)."},
+            "keepData":{"type":"boolean","description":"Keep the app's data (default true)."}
+          }}
+          """
+        ),
+    )
+
   private val stopTool =
     ToolDef(
       name = STOP,
@@ -603,7 +708,9 @@ class SimulatorMcp(
     const val SCREENSHOT = "simulator_screenshot"
     const val STOP = "simulator_stop"
     const val LOGS = "simulator_logs"
-    val TOOL_NAMES: List<String> = listOf(LAUNCH, COMMAND, SCREENSHOT, LOGS, STOP)
+    const val RESTART = "simulator_restart"
+    const val UPDATE = "simulator_update"
+    val TOOL_NAMES: List<String> = listOf(LAUNCH, COMMAND, SCREENSHOT, LOGS, RESTART, UPDATE, STOP)
 
     /** The devices of a paired launch, as the CLI's `device` names them. */
     private val PAIRED = setOf("phone", "watch")

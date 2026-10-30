@@ -40,11 +40,11 @@ module's `build/compose-previews/` copy unless `guidelines` names a file or URL)
 
 ## Apps in Robolectric's simulator: `simulator_*`
 
-Five tools run an Android APK in Robolectric's simulator and let the agent drive it, over
+Seven tools run an Android APK in Robolectric's simulator and let the agent drive it, over
 compose-ai-tools' `compose-preview launch <apk> --control stdio` (its `docs/SIMULATOR.md` has the
 control protocol and the constraints). No emulator, device or `adb`.
 
-- **`simulator_launch`** `{apk, headless?, showAgent?, qualifiers?, fontScale?, sdk?, java?, pair?}` starts
+- **`simulator_launch`** `{apk, headless?, showAgent?, qualifiers?, fontScale?, sdk?, java?, pair?, standby?}` starts
   one and waits for its `ready` event: a simulator id, the package, display size and first
   activity. The first launch of an APK converts its dex (tens of seconds); later ones come from the
   CLI's cache. **The window stays up unless `headless`**, so the person watches the agent work: the
@@ -65,6 +65,17 @@ control protocol and the constraints). No emulator, device or `adb`.
 - **`simulator_logs`** `{simulator?, device?, contains?, lines?}` returns the latest lines the
   simulator logged (the app's logcat, Robolectric, stack traces), plus the events since the last
   call.
+- **`simulator_restart`** `{simulator?, device?, keepData?}` starts the app again in a fresh
+  simulator JVM: a new process, so statics, singletons and in-memory state reset, while its data
+  (files, databases, preferences, external storage) is kept unless `keepData: false`. The session
+  and its id survive. **`simulator_update`** `{apk, keepData?}` does the same with another APK, a
+  rebuild, as `adb install -r` does; its classes come from the CLI's conversion cache when that
+  exact APK was converted before. Both answer with the new `info` and where the time went
+  (`standby`, `snapshotMs`, `stopMs`, `startMs`, `totalMs`, and `startup`: `jvmMs`, `sandboxMs`,
+  `applicationMs`, `firstActivityMs`); `simulator_update` adds `conversion` (`cached`, `ms`).
+  `standby: true` on the launch keeps a second simulator JVM prepared up to the app's own code,
+  which a restart takes over: the JVM, Robolectric's sandbox and the framework's setup are already
+  paid.
 - **`simulator_stop`** closes one. `simulator` is optional while only one runs; every simulator
   ends with the server.
 

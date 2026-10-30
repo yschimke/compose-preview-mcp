@@ -441,9 +441,13 @@ class SimulatorMcp(
           "finish; activities; startActivity {intent}; startService/stopService/bindService/" +
           "unbindService {intent}; services; broadcast {intent}; notifications; query {uri, " +
           "projection?, selection?, args?, sort?, limit?}; components; qualifiers {value: " +
-          "+land|+night|…}; permissions {policy?: grant|deny, grant?, deny?} (how the app's " +
-          "runtime permission requests are answered, granted by default; grant/deny name " +
-          "permissions and apply now too; reset), wait {ms}. adb equivalents: shell {command: " +
+          "+land|+night|…}; permissions {policy?: grant|deny|ask, grant?, deny?, answer?, " +
+          "requestId?} (how the app's runtime permission requests are answered, granted by " +
+          "default, as a device's permission controller does: already granted, not in the " +
+          "manifest and denied twice are not asked; grant/deny name permissions and apply now " +
+          "too; under ask a request waits as a permissions event {state: waiting, requestId, " +
+          "ask} until answer: grant|deny|dismiss|approximate|selected or {permission: " +
+          "grant|deny|dismiss}; reset), wait {ms}. adb equivalents: shell {command: " +
           "'am start -a VIEW -d <uri>' | 'pm grant <pkg> <perm>' | 'input tap x y' | " +
           "'settings put global airplane_mode_on 1' | 'content query --uri …' | 'logcat -d -s Tag' " +
           "| 'dumpsys activity' | 'wm size' | 'cmd uimode night yes' | 'run-as <pkg> ls' …} (or " +
@@ -503,7 +507,7 @@ class SimulatorMcp(
             "key":{"type":["string","integer","array"]},"flat":{"type":"boolean"},"value":{"type":["string","boolean","object","array"]},
             "intent":{"type":"object"},"uri":{"type":"string"},"projection":{"type":"array","items":{"type":"string"}},
             "selection":{"type":"string"},"args":{"type":"array","items":{"type":"string"}},"sort":{"type":"string"},"limit":{"type":"integer"},
-            "policy":{"type":"string","enum":["grant","deny","accept","reject","ask"],"description":"permissions: grant|deny; wifi/bluetooth request: accept|reject|ask"},"grant":{"type":"array","items":{"type":"string"}},"deny":{"type":"array","items":{"type":"string"}},"reset":{"type":"boolean"},
+            "policy":{"type":"string","enum":["grant","deny","accept","reject","ask"],"description":"permissions: grant|deny|ask; wifi/bluetooth request: accept|reject|ask"},"grant":{"type":"array","items":{"type":"string"}},"deny":{"type":"array","items":{"type":"string"}},"reset":{"type":"boolean"},
             "command":{"type":"string","description":"shell: an adb shell command line"},
             "op":{"type":"string"},"namespace":{"type":"string","enum":["system","secure","global"]},
             "path":{"type":"string"},"to":{"type":"string"},"from":{"type":"string"},"recursive":{"type":"boolean"},
@@ -513,7 +517,7 @@ class SimulatorMcp(
             "cellular":{"type":"string","enum":["5g","lte","3g","2g"]},"downKbps":{"type":"integer"},"upKbps":{"type":"integer"},
             "latencyMs":{"type":"integer"},"kbps":{"type":"integer"},"block":{"type":"array","items":{"type":"string"}},"dataSaver":{"type":"boolean"},
             "networks":{"type":"array","items":{"type":"object"}},"ssid":{"type":"string"},"bssid":{"type":"string"},"rssi":{"type":"integer"},
-            "answer":{"type":"string","enum":["accept","reject"]},"requestId":{"type":"integer","description":"wifi/bluetooth request: which waiting request to answer (default the oldest); dataLayer reply: the app request it answers"},
+            "answer":{"anyOf":[{"type":"string","enum":["accept","reject","grant","deny","dismiss","approximate","selected"]},{"type":"object","additionalProperties":{"type":"string","enum":["grant","deny","dismiss"]}}],"description":"wifi/bluetooth request: accept|reject; permissions: grant|deny|dismiss|approximate|selected, or {permission: grant|deny|dismiss}"},"requestId":{"type":"integer","description":"wifi/bluetooth/permissions request: which waiting request to answer (default the oldest); dataLayer reply: the app request it answers"},
             "address":{"type":"string","description":"bluetooth: a device address, AA:BB:CC:DD:EE:FF"},
             "serviceUuids":{"type":"array","items":{"type":"string"}},"serviceData":{"type":"object"},"manufacturerData":{"type":"object"},
             "txPower":{"type":"integer"},"connectable":{"type":"boolean"},"gatt":{"type":"object"},"characteristic":{"type":"string"},"size":{"type":"string"},"density":{"type":["string","integer"]},

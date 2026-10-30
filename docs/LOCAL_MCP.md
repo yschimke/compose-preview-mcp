@@ -40,11 +40,11 @@ module's `build/compose-previews/` copy unless `guidelines` names a file or URL)
 
 ## Apps in Robolectric's simulator: `simulator_*`
 
-Five tools run an Android APK in Robolectric's simulator and let the agent drive it, over
+Eight tools run an Android APK in Robolectric's simulator and let the agent drive it, over
 compose-ai-tools' `compose-preview launch <apk> --control stdio` (its `docs/SIMULATOR.md` has the
 control protocol and the constraints). No emulator, device or `adb`.
 
-- **`simulator_launch`** `{apk, headless?, showAgent?, qualifiers?, fontScale?, sdk?, java?, pair?}` starts
+- **`simulator_launch`** `{apk, headless?, showAgent?, qualifiers?, fontScale?, sdk?, java?, pair?, project?, module?, variant?, live?}` starts
   one and waits for its `ready` event: a simulator id, the package, display size and first
   activity. The first launch of an APK converts its dex (tens of seconds); later ones come from the
   CLI's cache. **The window stays up unless `headless`**, so the person watches the agent work: the
@@ -64,6 +64,23 @@ control protocol and the constraints). No emulator, device or `adb`.
 - **`simulator_logs`** `{simulator?, device?, contains?, lines?}` returns the latest lines the
   simulator logged (the app's logcat, Robolectric, stack traces), plus the events since the last
   call.
+- **`simulator_restart`** `{simulator?, device?, keepData?}` starts the app again in a fresh
+  simulator JVM: a new process, so statics, singletons and in-memory state reset, while its data
+  (files, databases, preferences, external storage) is kept unless `keepData: false`. The session
+  and its id survive. **`simulator_update`** `{apk, keepData?}` does the same with another APK, a
+  rebuild, as `adb install -r` does; its classes come from the CLI's conversion cache when that
+  exact APK was converted before. Both answer with the new `info` and where the time went
+  (`snapshotMs`, `stopMs`, `startMs`, `totalMs`, and `startup`: `jvmMs`, `sandboxMs`,
+  `applicationMs`, `firstActivityMs`); `simulator_update` adds `conversion` (`cached`, `ms`).
+- **`simulator_reload`** `{full?, keepData?}`, for a simulator launched with `project` (the app's
+  Gradle build; `apk` is then optional, and the CLI builds it): compiles the module (its Kotlin and
+  Java compile tasks, which relink resources too, and no dexing or packaging) and restarts the app
+  with the classes that changed since the launch ahead of the converted APK. It answers with
+  `mode` (`classes`, `resources`, `apk` when only a rebuilt APK delivers the change, or
+  `unchanged`), the `build` (`ok`, `ms`, `tasks`, `errors`), `classesChanged`, and the restart's
+  timings. A compile error comes back as an error with the compiler's messages, and the app keeps
+  running. `live: true` on the launch reloads after every saved edit by itself, as `reload`
+  events.
 - **`simulator_stop`** closes one. `simulator` is optional while only one runs; every simulator
   ends with the server.
 

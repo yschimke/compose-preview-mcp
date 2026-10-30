@@ -247,4 +247,70 @@ class SimulatorMcpTest {
     assertThat(result.isError).isTrue()
     assertThat(started).isEmpty()
   }
+
+  @Test
+  fun `a paired launch waits for both devices and keeps their log lines apart`() {
+    val pairedFake =
+      """
+      echo '[phone] I/App: phone up' >&2
+      echo '{"device":"phone","event":"ready","package":"com.example"}'
+      echo '[watch] I/App: watch up' >&2
+      echo '{"device":"watch","event":"ready","package":"com.example.wear"}'
+      while IFS= read -r line; do
+        id=$(printf '%s' "${'$'}line" | sed -n 's/.*"id":\([0-9]*\).*/\1/p')
+        echo "{\"device\":\"watch\",\"event\":\"activity\",\"state\":\"resumed\"}"
+        echo "{\"device\":\"watch\",\"id\":${'$'}id,\"ok\":true,\"result\":{}}"
+      done
+      """
+        .trimIndent()
+    val args = mutableListOf<String>()
+    val paired =
+      SimulatorMcp(
+        start = {
+          args += it
+          ProcessBuilder("bash", "-c", pairedFake).start()
+        },
+        readyTimeoutMs = 10_000,
+        commandTimeoutMs = 10_000,
+      )
+    try {
+      val watch = tmp.newFile("wear.apk")
+      val launch = runBlocking {
+        paired.handle(
+          SimulatorMcp.LAUNCH,
+          buildJsonObject {
+            put("apk", apk().path)
+            put("pair", watch.path)
+          },
+        )!!
+      }
+      assertThat(launch.isError).isNull()
+      assertThat(args).containsAtLeast("--pair", watch.absolutePath).inOrder()
+      val info = launch.structuredContent!!["info"]!!.jsonObject
+      assertThat(info["watch"]!!.jsonObject["package"]!!.jsonPrimitive.content)
+        .isEqualTo("com.example.wear")
+      assertThat(info["phone"]!!.jsonObject["package"]!!.jsonPrimitive.content)
+        .isEqualTo("com.example")
+
+      val command = runBlocking {
+        paired.handle(
+          SimulatorMcp.COMMAND,
+          buildJsonObject {
+            put("cmd", "info")
+            put("device", "watch")
+          },
+        )!!
+      }
+      val event = command.structuredContent!!["events"]!!.jsonArray.single().jsonObject
+      assertThat(event["device"]!!.jsonPrimitive.content).isEqualTo("watch")
+
+      val logs = runBlocking {
+        paired.handle(SimulatorMcp.LOGS, buildJsonObject { put("device", "watch") })!!
+      }
+      assertThat(logs.structuredContent!!["lines"]!!.jsonArray.map { it.jsonPrimitive.content })
+        .containsExactly("[watch] I/App: watch up")
+    } finally {
+      paired.shutdown()
+    }
+  }
 }

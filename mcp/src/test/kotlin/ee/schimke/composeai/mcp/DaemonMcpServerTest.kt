@@ -213,6 +213,7 @@ class DaemonMcpServerTest {
         SimulatorMcp.LAUNCH,
         SimulatorMcp.COMMAND,
         SimulatorMcp.SCREENSHOT,
+        SimulatorMcp.LOGS,
         SimulatorMcp.STOP,
         // Design guidelines over previews, on the `design-guidelines` engine.
         PreviewGuidelinesMcp.PROMPT_TOOL,

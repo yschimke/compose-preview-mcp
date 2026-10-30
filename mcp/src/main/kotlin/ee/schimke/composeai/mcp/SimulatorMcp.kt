@@ -410,9 +410,11 @@ class SimulatorMcp(
           "text|data|dataMap|error; result for a remote activity; responseUrl for OAuth} | config " +
           "{requestTimeoutMs}}; addCapability/removeCapability {name} on the app's own node. data " +
           "is base64; dataMap is JSON (string, boolean and int values bare, others " +
-          "{type: long|float|double|bytes|string[]|…, value}). What the app sends is a " +
+          "{type: long|float|double|bytes|string[]|stringList|intList|dataMapList|list, value}). " +
+          "What the app sends is a " +
           "datalayer event {kind: send, type: hello|message|response|data|capabilities|activity|" +
-          "oauth, to, path, requestId, data, text, dataMap}. A selector is text/desc (exact), " +
+          "oauth, to, path, requestId, data, text, dataMap, assets (key: base64, as put takes " +
+          "them)}. A selector is text/desc (exact), " +
           "textContains/" +
           "descContains, resourceId (a Compose testTag when exposed), cls, clickable. An intent " +
           "is {action, data, type, package, component ('.Cls' or 'pkg/cls'), categories, " +

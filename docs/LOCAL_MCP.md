@@ -91,7 +91,7 @@ control protocol and the constraints). No emulator, device or `adb`.
   (`emulator-5554` and up). `install` / `uninstall` (each boots a simulator on the new package;
   the app is installed, not started), `shell` (`am start`, `pm`, `input`, `getprop`, and Android
   Studio's Wear `DEBUG_SURFACE` broadcasts that add a tile or widget), `push` / `pull` under
-  `/data/local/tmp` and `/sdcard`, and `exec-out screencap -p` with `output` (stdout written there
+  `/data/local/tmp` and `/sdcard` (a pull names its local path, as adb's does), and `exec-out screencap -p` with `output` (stdout written there
   as bytes). It returns `exitCode`, `stdout` (or `output` and `bytes`), `stderr` and the
   simulator's events; options that point adb at another device or server (`-s`, `connect`,
   `kill-server`, …) are refused. `simulator_launch` with `adb` needs no `apk` (the device boots to

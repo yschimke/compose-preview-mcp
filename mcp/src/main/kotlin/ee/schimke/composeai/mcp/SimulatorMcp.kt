@@ -895,7 +895,7 @@ class SimulatorMcp(
             "simulator":{"type":"string","description":"Simulator id; optional when only one runs."},
             "args":{"type":"array","items":{"type":"string"},"description":"adb's arguments, without -s (the tool adds the simulator's serial)."},
             "command":{"type":"string","description":"Instead of args: one command line, split as a shell would, e.g. \"shell getprop ro.build.version.sdk\"."},
-            "output":{"type":"string","description":"Absolute path to write stdout to, as bytes (exec-out screencap -p, pull to stdout)."},
+            "output":{"type":"string","description":"Absolute path to write stdout to, as bytes, for a command whose output is data (exec-out screencap -p, exec-out run-as … cat). A pull writes to its own local path: [\"pull\", \"/sdcard/f\", \"/abs/f\"]."},
             "timeoutMs":{"type":"integer","description":"How long the command may take (default 600000: a first install converts the APK)."}
           }}
           """

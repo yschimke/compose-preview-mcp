@@ -1,5 +1,47 @@
 # Changelog
 
+## [4.13.0](https://github.com/yschimke/compose-preview-mcp/compare/v4.12.0...v4.13.0) (2026-10-30)
+
+
+### Features
+
+* **mcp:** `permissions` in simulator_command, to deny runtime permissions ([#118](https://github.com/yschimke/compose-preview-mcp/issues/118)) ([960c82a](https://github.com/yschimke/compose-preview-mcp/commit/960c82ac27bdeb8f9749e67e91425e0f0f491b1b))
+* **mcp:** adb equivalents in simulator_command (`shell` and its structured commands) ([#119](https://github.com/yschimke/compose-preview-mcp/issues/119)) ([37e0795](https://github.com/yschimke/compose-preview-mcp/commit/37e079597fd27472cccbf151e376c1659964b135))
+* **mcp:** ChannelClient channels and the companion command in simulator_command ([#127](https://github.com/yschimke/compose-preview-mcp/issues/127)) ([68c01bb](https://github.com/yschimke/compose-preview-mcp/commit/68c01bb1dedcd5860b65397e2a6ecf545000aa90))
+* **mcp:** network, Wi-Fi and Bluetooth in simulator_command ([#121](https://github.com/yschimke/compose-preview-mcp/issues/121)) ([e7fdb66](https://github.com/yschimke/compose-preview-mcp/commit/e7fdb66826cf2d07931bf502abdc9227d4f688aa))
+* **mcp:** play the Wearable Data Layer peer from simulator_command (`dataLayer`) ([#122](https://github.com/yschimke/compose-preview-mcp/issues/122)) ([e349c03](https://github.com/yschimke/compose-preview-mcp/commit/e349c036f3a32223e186af58de46b829c62d091e))
+* **mcp:** simulator_* tools to drive an APK in Robolectric's simulator ([#111](https://github.com/yschimke/compose-preview-mcp/issues/111)) ([7a09d66](https://github.com/yschimke/compose-preview-mcp/commit/7a09d66ed60bfe8552574ac4c3ccc70fab24ee59))
+* paired phone and watch simulators, and simulator_logs ([#125](https://github.com/yschimke/compose-preview-mcp/issues/125)) ([4162e3a](https://github.com/yschimke/compose-preview-mcp/commit/4162e3a77d3b87731cdb7e6e23cfcd33e1b80855))
+* Play services state in the simulator tools ([#126](https://github.com/yschimke/compose-preview-mcp/issues/126)) ([a76299e](https://github.com/yschimke/compose-preview-mcp/commit/a76299e936ed8372c87b4e7fdb2295ff63e38c8a))
+* screen power and Wear ambient commands in simulator_command ([#124](https://github.com/yschimke/compose-preview-mcp/issues/124)) ([364c978](https://github.com/yschimke/compose-preview-mcp/commit/364c978943426245d0d788ad69f5cd0a732ddeef))
+* simulator home screen, widget and Wear system UI commands ([#131](https://github.com/yschimke/compose-preview-mcp/issues/131)) ([a9a1dbf](https://github.com/yschimke/compose-preview-mcp/commit/a9a1dbfd1c05d3b3dd469229cfe04095268bb81f))
+* simulator_adb, and simulator_launch adb devices ([#132](https://github.com/yschimke/compose-preview-mcp/issues/132)) ([48ab14f](https://github.com/yschimke/compose-preview-mcp/commit/48ab14f4f8ff765cf6038519a9850df41c2f4207))
+* simulator_reload, and launching from the app's Gradle project ([#130](https://github.com/yschimke/compose-preview-mcp/issues/130)) ([054e676](https://github.com/yschimke/compose-preview-mcp/commit/054e676b9fb2fc4fb00f22a3f12a65e349b060d5))
+* simulator_restart and simulator_update, with a standby JVM option ([#129](https://github.com/yschimke/compose-preview-mcp/issues/129)) ([df1e776](https://github.com/yschimke/compose-preview-mcp/commit/df1e7762ba6e48d99639cbfdbc2decfa09addc1f))
+* **simulator:** expose kill, recreate and savedState on the simulator tool ([#133](https://github.com/yschimke/compose-preview-mcp/issues/133)) ([29976d1](https://github.com/yschimke/compose-preview-mcp/commit/29976d1ebe7a9ca500d9b1f1b457bf62b04fdd69))
+* **simulator:** expose zoom on the simulator tool ([#134](https://github.com/yschimke/compose-preview-mcp/issues/134)) ([5681dd1](https://github.com/yschimke/compose-preview-mcp/commit/5681dd1950bb076b3c40d3eb706d10318813522b))
+* the simulator's ask policy and per-permission answers in simulator_command ([#128](https://github.com/yschimke/compose-preview-mcp/issues/128)) ([93f2dfa](https://github.com/yschimke/compose-preview-mcp/commit/93f2dfa85e8bcfec80c6308da438764ee98228c6))
+
+
+### Bug Fixes
+
+* **deps:** update daemon to 3.27.0 and ui-builder to 3.124.0 ([#116](https://github.com/yschimke/compose-preview-mcp/issues/116)) ([299d899](https://github.com/yschimke/compose-preview-mcp/commit/299d89949f82d950d46438f31bf5c5c688da546f))
+* **deps:** update dependency ee.schimke.composeai:compose-ai-tools-bom to v2.74.1 ([#104](https://github.com/yschimke/compose-preview-mcp/issues/104)) ([e7ffb5b](https://github.com/yschimke/compose-preview-mcp/commit/e7ffb5b85326bcc1379ad3c618acb6625ed45eba))
+* **deps:** update dependency ee.schimke.composeai:compose-ai-tools-bom to v2.75.0 ([#120](https://github.com/yschimke/compose-preview-mcp/issues/120)) ([ddc0ab8](https://github.com/yschimke/compose-preview-mcp/commit/ddc0ab899ac9711d05aa7e072502883847396639))
+* **deps:** update dependency ee.schimke.composeai:compose-preview-daemon-bom to v3.27.0 ([#117](https://github.com/yschimke/compose-preview-mcp/issues/117)) ([ba957c4](https://github.com/yschimke/compose-preview-mcp/commit/ba957c4c4b90f55edbe90b909bce03c4b8e95cb9))
+* **deps:** update dependency ee.schimke.composeai:remote-compose-player-js-dist to v2.20.1 ([#105](https://github.com/yschimke/compose-preview-mcp/issues/105)) ([a2f5d35](https://github.com/yschimke/compose-preview-mcp/commit/a2f5d359273cb7b9d0a194f7f1339c6c3bf56ae2))
+* **deps:** update dependency ee.schimke.composeai:remote-compose-player-js-dist to v2.21.0 ([#108](https://github.com/yschimke/compose-preview-mcp/issues/108)) ([5b81284](https://github.com/yschimke/compose-preview-mcp/commit/5b81284ae7577afcb4623ecb1e58480198bc6f8a))
+* **deps:** update dependency io.modelcontextprotocol:kotlin-sdk-server to v0.16.0 ([#106](https://github.com/yschimke/compose-preview-mcp/issues/106)) ([7e44f3c](https://github.com/yschimke/compose-preview-mcp/commit/7e44f3ceaca43006c46e4c3ee5fc8b20e8a4153b))
+* **deps:** update ktor to v3.6.1 ([#112](https://github.com/yschimke/compose-preview-mcp/issues/112)) ([4e92a7b](https://github.com/yschimke/compose-preview-mcp/commit/4e92a7bdc7b8b45878112d7fb57db1a67a8d37e0))
+* fail a hung render in the daemon before the server stops waiting for it ([#115](https://github.com/yschimke/compose-preview-mcp/issues/115)) ([3366eff](https://github.com/yschimke/compose-preview-mcp/commit/3366effe8b0f7cb7cd40612c03e4984034780402))
+* **mcp-app:** take the viewer and preview library from compose-preview-server v3.152.0 ([#25](https://github.com/yschimke/compose-preview-mcp/issues/25)) ([9cdc3b2](https://github.com/yschimke/compose-preview-mcp/commit/9cdc3b2b2b98bc5b0c71c3d2503cd2c2e5bd3a2c))
+* respawn a module daemon that died on its own instead of leaving it unspawned ([#113](https://github.com/yschimke/compose-preview-mcp/issues/113)) ([2118afc](https://github.com/yschimke/compose-preview-mcp/commit/2118afc11bc1202516fabaa06f7c67f083311cc1))
+
+
+### Performance Improvements
+
+* **mcp:** stop @PreviewParameter row fetches stalling listings ([#102](https://github.com/yschimke/compose-preview-mcp/issues/102)) ([01fb134](https://github.com/yschimke/compose-preview-mcp/commit/01fb134433571d290d10f5d1c55ca774584feee9))
+
 ## [4.12.0](https://github.com/yschimke/compose-preview-mcp/compare/v4.11.0...v4.12.0) (2026-10-26)
 
 

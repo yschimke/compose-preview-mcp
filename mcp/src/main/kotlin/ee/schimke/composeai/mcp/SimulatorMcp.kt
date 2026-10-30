@@ -408,13 +408,21 @@ class SimulatorMcp(
           "dataMap, assets?} | delete {node?, path} | message {node?, path, text|data|dataMap} | " +
           "request {…} (the app's answer is a send event of type response) | reply {requestId, " +
           "text|data|dataMap|error; result for a remote activity; responseUrl for OAuth} | config " +
-          "{requestTimeoutMs}}; addCapability/removeCapability {name} on the app's own node. data " +
+          "{requestTimeoutMs} | channelOpen {node?, path, channel?} (a ChannelClient channel " +
+          "to the app; answers its channel token) | channelWrite {channel, text|data|dataMap} | " +
+          "channelEof {channel} (ends the app's input) | channelClose {channel, errorCode?}}; " +
+          "addCapability/removeCapability {name} on the app's own node. data " +
           "is base64; dataMap is JSON (string, boolean and int values bare, others " +
           "{type: long|float|double|bytes|string[]|stringList|intList|dataMapList|list, value}). " +
           "What the app sends is a " +
           "datalayer event {kind: send, type: hello|message|response|data|capabilities|activity|" +
-          "oauth, to, path, requestId, data, text, dataMap, assets (key: base64, as put takes " +
-          "them)}. Screen power (Wear ambient): screen {state?: on|ambient|off, timeoutMs?, " +
+          "oauth|channelOpen|channelData|channelEof|channelClose, to, path, requestId, token, " +
+          "data, text, dataMap, assets (key: base64, as put takes them)}; channels are also " +
+          "datalayer events {kind: channel, state: opened|data|inputClosed|outputClosed|closed, " +
+          "channel, path}. companion {policy?: accept|reject|ask, answer?: accept|reject, " +
+          "requestId?, address?, disassociate? (id)}: CompanionDeviceManager's associations (each " +
+          "data-layer peer is one) and how associate() is answered; with ask, a companion event " +
+          "{state: chooser, request {requestId, candidates}} waits for the answer. Screen power (Wear ambient): screen {state?: on|ambient|off, timeoutMs?, " +
           "alwaysOn?, burnIn?, lowBit?} (isInteractive, Display.getState, SCREEN_ON/OFF; an " +
           "ambient-aware app gets onEnterAmbient/onUpdateAmbient/onExitAmbient, any other app " +
           "is stopped until wake); ambient {value?, op?: update}; tilt / wake (wrist-tilt " +
@@ -430,7 +438,7 @@ class SimulatorMcp(
           """
           {"type":"object","required":["cmd"],"properties":{
             "simulator":{"type":"string","description":"Simulator id from simulator_launch; optional when only one runs."},
-            "cmd":{"type":"string","enum":["info","hierarchy","find","tap","longPress","swipe","key","back","text","launch","finish","activities","startActivity","startService","stopService","bindService","unbindService","services","broadcast","notifications","query","components","qualifiers","permissions","wait","ping","dataLayer","shell","settings","logcat","files","content","network","wifi","bluetooth","display","forceStop","clearData","getprop","package","packages","screen","ambient","tilt","wake","palm","sleep"]},
+            "cmd":{"type":"string","enum":["info","hierarchy","find","tap","longPress","swipe","key","back","text","launch","finish","activities","startActivity","startService","stopService","bindService","unbindService","services","broadcast","notifications","query","components","qualifiers","permissions","wait","ping","dataLayer","companion","shell","settings","logcat","files","content","network","wifi","bluetooth","display","forceStop","clearData","getprop","package","packages","screen","ambient","tilt","wake","palm","sleep"]},
             "text":{"type":"string"},"textContains":{"type":"string"},"desc":{"type":"string"},"descContains":{"type":"string"},
             "resourceId":{"type":"string"},"cls":{"type":"string"},"clickable":{"type":"boolean"},"index":{"type":"integer"},
             "x":{"type":"number"},"y":{"type":"number"},"x1":{"type":"number"},"y1":{"type":"number"},"x2":{"type":"number"},"y2":{"type":"number"},
@@ -438,7 +446,7 @@ class SimulatorMcp(
             "key":{"type":["string","integer","array"]},"flat":{"type":"boolean"},"value":{"type":["string","boolean","object","array"]},
             "intent":{"type":"object"},"uri":{"type":"string"},"projection":{"type":"array","items":{"type":"string"}},
             "selection":{"type":"string"},"args":{"type":"array","items":{"type":"string"}},"sort":{"type":"string"},"limit":{"type":"integer"},
-            "policy":{"type":"string","enum":["grant","deny","accept","reject","ask"],"description":"permissions: grant|deny; wifi/bluetooth request: accept|reject|ask"},"grant":{"type":"array","items":{"type":"string"}},"deny":{"type":"array","items":{"type":"string"}},"reset":{"type":"boolean"},
+            "policy":{"type":"string","enum":["grant","deny","accept","reject","ask"],"description":"permissions: grant|deny; wifi/bluetooth request and companion: accept|reject|ask"},"grant":{"type":"array","items":{"type":"string"}},"deny":{"type":"array","items":{"type":"string"}},"reset":{"type":"boolean"},
             "command":{"type":"string","description":"shell: an adb shell command line"},
             "op":{"type":"string"},"namespace":{"type":"string","enum":["system","secure","global"]},
             "path":{"type":"string"},"to":{"type":"string"},"from":{"type":"string"},"recursive":{"type":"boolean"},
@@ -448,14 +456,15 @@ class SimulatorMcp(
             "cellular":{"type":"string","enum":["5g","lte","3g","2g"]},"downKbps":{"type":"integer"},"upKbps":{"type":"integer"},
             "latencyMs":{"type":"integer"},"kbps":{"type":"integer"},"block":{"type":"array","items":{"type":"string"}},"dataSaver":{"type":"boolean"},
             "networks":{"type":"array","items":{"type":"object"}},"ssid":{"type":"string"},"bssid":{"type":"string"},"rssi":{"type":"integer"},
-            "answer":{"type":"string","enum":["accept","reject"]},"requestId":{"type":"integer","description":"wifi/bluetooth request: which waiting request to answer (default the oldest); dataLayer reply: the app request it answers"},
+            "answer":{"type":"string","enum":["accept","reject"]},"requestId":{"type":"integer","description":"wifi/bluetooth/companion request: which waiting request to answer (default the oldest); dataLayer reply: the app request it answers"},
             "address":{"type":"string","description":"bluetooth: a device address, AA:BB:CC:DD:EE:FF"},
             "serviceUuids":{"type":"array","items":{"type":"string"}},"serviceData":{"type":"object"},"manufacturerData":{"type":"object"},
             "txPower":{"type":"integer"},"connectable":{"type":"boolean"},"gatt":{"type":"object"},"characteristic":{"type":"string"},"size":{"type":"string"},"density":{"type":["string","integer"]},
             "name":{"type":"string"},"package":{"type":"string"},"holdMs":{"type":"integer"},"longPress":{"type":"boolean"},
-            "action":{"type":"string","enum":["connect","disconnect","capabilities","put","delete","message","request","reply","config"],"description":"dataLayer: what the peer you play does"},
+            "action":{"type":"string","enum":["connect","disconnect","capabilities","put","delete","message","request","reply","config","channelOpen","channelWrite","channelEof","channelClose"],"description":"dataLayer: what the peer you play does"},
             "node":{"type":"string","description":"dataLayer: the peer node id (connect names a new one)"},"nearby":{"type":"boolean"},"capabilities":{"type":"array","items":{"type":"string"}},
             "dataMap":{"type":"object","description":"dataLayer: payload as a DataMap"},"assets":{"type":"object"},
+            "channel":{"type":"string","description":"dataLayer channel*: the channel token"},"errorCode":{"type":"integer"},"disassociate":{"type":"integer","description":"companion: an association id to remove"},
             "error":{"type":"string"},"result":{"type":"integer"},"responseUrl":{"type":"string"},"requestTimeoutMs":{"type":"integer"},
             "addCapability":{"type":"string"},"removeCapability":{"type":"string"},
             "state":{"type":"string","enum":["on","ambient","off"]},"timeoutMs":{"type":"integer"},"alwaysOn":{"type":"boolean"},"burnIn":{"type":"boolean"},"lowBit":{"type":"boolean"}

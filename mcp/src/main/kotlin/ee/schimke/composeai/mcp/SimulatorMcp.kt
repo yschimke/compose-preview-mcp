@@ -341,8 +341,9 @@ class SimulatorMcp(
       ?.let {
         return error("$ADB: `$it` reaches past this device; this tool runs against $serial only.")
       }
+    // Its own limit, not the launch's: a first install converts the APK and can take longer.
     val timeout =
-      (args.int("timeoutMs")?.toLong() ?: ADB_TIMEOUT_MS).coerceIn(1_000, readyTimeoutMs)
+      (args.int("timeoutMs")?.toLong() ?: ADB_TIMEOUT_MS).coerceIn(1_000, MAX_ADB_TIMEOUT_MS)
     val wait =
       try {
         adb(listOf("-s", serial, "wait-for-device"), ADB_WAIT_MS)
@@ -896,7 +897,7 @@ class SimulatorMcp(
             "args":{"type":"array","items":{"type":"string"},"description":"adb's arguments, without -s (the tool adds the simulator's serial)."},
             "command":{"type":"string","description":"Instead of args: one command line, split as a shell would, e.g. \"shell getprop ro.build.version.sdk\"."},
             "output":{"type":"string","description":"Absolute path to write stdout to, as bytes, for a command whose output is data (exec-out screencap -p, exec-out run-as … cat). A pull writes to its own local path: [\"pull\", \"/sdcard/f\", \"/abs/f\"]."},
-            "timeoutMs":{"type":"integer","description":"How long the command may take (default 600000: a first install converts the APK)."}
+            "timeoutMs":{"type":"integer","description":"How long the command may take, at most 1800000 (default 600000: a first install converts the APK)."}
           }}
           """
         ),
@@ -946,6 +947,7 @@ class SimulatorMcp(
       setOf("connect", "disconnect", "kill-server", "start-server", "pair", "devices", "mdns")
 
     private const val ADB_TIMEOUT_MS = 600_000L
+    private const val MAX_ADB_TIMEOUT_MS = 1_800_000L
     private const val ADB_WAIT_MS = 30_000L
     private const val DEVICE_EVENT_MS = 5_000L
     private const val MAX_ADB_OUTPUT = 64 * 1024

@@ -631,6 +631,40 @@ class SimulatorMcpTest {
   }
 
   @Test
+  fun `simulator_adb gives a command its own timeout, not the launch's`() {
+    val timeouts = mutableListOf<Long>()
+    val device =
+      SimulatorMcp(
+        start = { ProcessBuilder("bash", "-c", adbFake).start() },
+        readyTimeoutMs = 10_000,
+        commandTimeoutMs = 10_000,
+        adb = { _, timeout ->
+          timeouts += timeout
+          SimulatorMcp.AdbRun(0, ByteArray(0), "")
+        },
+      )
+    try {
+      runBlocking { device.handle(SimulatorMcp.LAUNCH, buildJsonObject { put("adb", true) })!! }
+      runBlocking {
+        device.handle(SimulatorMcp.ADB, buildJsonObject { put("command", "install a.apk") })!!
+      }
+      runBlocking {
+        device.handle(
+          SimulatorMcp.ADB,
+          buildJsonObject {
+            put("command", "install a.apk")
+            put("timeoutMs", 900_000)
+          },
+        )!!
+      }
+      // After each wait-for-device: the default, then the asked-for limit, neither cut to 10s.
+      assertThat(timeouts.filterIndexed { i, _ -> i % 2 == 1 }).containsExactly(600_000L, 900_000L)
+    } finally {
+      device.shutdown()
+    }
+  }
+
+  @Test
   fun `commands split as a shell splits words`() {
     assertThat(SimulatorMcp.splitCommand("""shell am start -n "com.x/.A b" 'it''s' a\ b"""))
       .containsExactly("shell", "am", "start", "-n", "com.x/.A b", "its", "a b")

@@ -371,7 +371,19 @@ class SimulatorMcp(
           "projection?, selection?, args?, sort?, limit?}; components; qualifiers {value: " +
           "+land|+night|…}; permissions {policy?: grant|deny, grant?, deny?} (how the app's " +
           "runtime permission requests are answered, granted by default; grant/deny name " +
-          "permissions and apply now too); wait {ms}. A selector is text/desc (exact), textContains/" +
+          "permissions and apply now too; reset), wait {ms}. adb equivalents: shell {command: " +
+          "'am start -a VIEW -d <uri>' | 'pm grant <pkg> <perm>' | 'input tap x y' | " +
+          "'settings put global airplane_mode_on 1' | 'content query --uri …' | 'logcat -d -s Tag' " +
+          "| 'dumpsys activity' | 'wm size' | 'cmd uimode night yes' | 'run-as <pkg> ls' …} (or " +
+          "args: argv) runs the matching command and returns {command, result}; structured forms: " +
+          "settings {op: get|put|delete, namespace: system|secure|global, key, value?}; logcat " +
+          "{op: dump|clear|follow|stop, filters? {tag: V…S}, default?, regex?, tail?} (follow " +
+          "streams log events); files {op: list|read|write|mkdir|delete|pull|push, path (relative " +
+          "to the data dir, /data/data/<pkg>/…, /sdcard/…), to?, from?, text?, recursive?}; " +
+          "content {op: query|insert|update|delete, uri, values?, selection?, args?}; network " +
+          "{wifi?, airplane?}; display {size?: WxH|reset, density?: N|reset}; forceStop; " +
+          "clearData; getprop {name?}; package; packages. A selector is text/desc (exact), " +
+          "textContains/" +
           "descContains, resourceId (a Compose testTag when exposed), cls, clickable. An intent " +
           "is {action, data, type, package, component ('.Cls' or 'pkg/cls'), categories, " +
           "flags ([\"CLEAR_TOP\"]…), extras}. UI-changing commands answer after settleMs " +
@@ -381,15 +393,21 @@ class SimulatorMcp(
           """
           {"type":"object","required":["cmd"],"properties":{
             "simulator":{"type":"string","description":"Simulator id from simulator_launch; optional when only one runs."},
-            "cmd":{"type":"string","enum":["info","hierarchy","find","tap","longPress","swipe","key","back","text","launch","finish","activities","startActivity","startService","stopService","bindService","unbindService","services","broadcast","notifications","query","components","qualifiers","permissions","wait","ping"]},
+            "cmd":{"type":"string","enum":["info","hierarchy","find","tap","longPress","swipe","key","back","text","launch","finish","activities","startActivity","startService","stopService","bindService","unbindService","services","broadcast","notifications","query","components","qualifiers","permissions","wait","ping","shell","settings","logcat","files","content","network","display","forceStop","clearData","getprop","package","packages"]},
             "text":{"type":"string"},"textContains":{"type":"string"},"desc":{"type":"string"},"descContains":{"type":"string"},
             "resourceId":{"type":"string"},"cls":{"type":"string"},"clickable":{"type":"boolean"},"index":{"type":"integer"},
             "x":{"type":"number"},"y":{"type":"number"},"x1":{"type":"number"},"y1":{"type":"number"},"x2":{"type":"number"},"y2":{"type":"number"},
             "durationMs":{"type":"integer"},"steps":{"type":"integer"},"ms":{"type":"integer"},"settleMs":{"type":"integer"},
-            "key":{"type":["string","integer"]},"flat":{"type":"boolean"},"value":{"type":"string"},
+            "key":{"type":["string","integer","array"]},"flat":{"type":"boolean"},"value":{"type":"string"},
             "intent":{"type":"object"},"uri":{"type":"string"},"projection":{"type":"array","items":{"type":"string"}},
             "selection":{"type":"string"},"args":{"type":"array","items":{"type":"string"}},"sort":{"type":"string"},"limit":{"type":"integer"},
-            "policy":{"type":"string","enum":["grant","deny"]},"grant":{"type":"array","items":{"type":"string"}},"deny":{"type":"array","items":{"type":"string"}}
+            "policy":{"type":"string","enum":["grant","deny"]},"grant":{"type":"array","items":{"type":"string"}},"deny":{"type":"array","items":{"type":"string"}},"reset":{"type":"boolean"},
+            "command":{"type":"string","description":"shell: an adb shell command line"},
+            "op":{"type":"string"},"namespace":{"type":"string","enum":["system","secure","global"]},
+            "path":{"type":"string"},"to":{"type":"string"},"from":{"type":"string"},"recursive":{"type":"boolean"},
+            "values":{"type":"object"},"filters":{"type":"object"},"default":{"type":"string"},"regex":{"type":"string"},"tail":{"type":"integer"},
+            "wifi":{"type":"boolean"},"airplane":{"type":"boolean"},"size":{"type":"string"},"density":{"type":["string","integer"]},
+            "name":{"type":"string"},"package":{"type":"string"},"holdMs":{"type":"integer"},"longPress":{"type":"boolean"}
           }}
           """
         ),

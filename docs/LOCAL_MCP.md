@@ -70,8 +70,11 @@ control protocol and the constraints). No emulator, device or `adb`.
   and its id survive. **`simulator_update`** `{apk, keepData?}` does the same with another APK, a
   rebuild, as `adb install -r` does; its classes come from the CLI's conversion cache when that
   exact APK was converted before. Both answer with the new `info` and where the time went
-  (`snapshotMs`, `stopMs`, `startMs`, `totalMs`, and `startup`: `jvmMs`, `sandboxMs`,
+  (`standby`, `snapshotMs`, `stopMs`, `startMs`, `totalMs`, and `startup`: `jvmMs`, `sandboxMs`,
   `applicationMs`, `firstActivityMs`); `simulator_update` adds `conversion` (`cached`, `ms`).
+  `standby: true` on the launch (the default with `project`) keeps a second simulator JVM
+  prepared up to the app's own code, which a restart or a class reload takes over: the JVM,
+  Robolectric's sandbox and the framework's setup are already paid.
 - **`simulator_reload`** `{full?, keepData?}`, for a simulator launched with `project` (the app's
   Gradle build; `apk` is then optional, and the CLI builds it): compiles the module (its Kotlin and
   Java compile tasks, which relink resources too, and no dexing or packaging) and restarts the app

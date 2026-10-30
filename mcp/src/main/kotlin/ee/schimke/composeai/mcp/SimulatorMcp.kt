@@ -125,6 +125,11 @@ class SimulatorMcp(
       args.string("module")?.let { addAll(listOf("--module", it)) }
       args.string("variant")?.let { addAll(listOf("--variant", it)) }
       if (args.boolean("live") == true) add("--live")
+      when (args.boolean("standby")) {
+        true -> add("--standby")
+        false -> add("--no-standby")
+        null -> {}
+      }
       (args["gradleArgs"] as? JsonArray)?.forEach { arg ->
         (arg as? JsonPrimitive)?.contentOrNull?.let { addAll(listOf("--gradle-arg", it)) }
       }
@@ -486,6 +491,7 @@ class SimulatorMcp(
             "variant":{"type":"string","description":"With project: the variant (default debug)."},
             "live":{"type":"boolean","description":"With project: reload by itself whenever a source file is saved; each reload is a `reload` event."},
             "gradleArgs":{"type":"array","items":{"type":"string"},"description":"With project: extra Gradle arguments, e.g. --max-workers=2."},
+            "standby":{"type":"boolean","description":"Keep a second simulator JVM prepared up to the app's own code, so simulator_restart and simulator_reload take seconds. Default on with project, off otherwise; it costs a second JVM's memory."},
             "headless":{"type":"boolean","description":"No window. Default false: the person can watch."},
             "showAgent":{"type":"boolean","description":"Draw your taps, swipes and commands over the window. Default true."},
             "qualifiers":{"type":"string","description":"Display resource qualifiers, Robolectric syntax, e.g. w411dp-h891dp-xxhdpi-night. Default w360dp-h640dp-hdpi."},

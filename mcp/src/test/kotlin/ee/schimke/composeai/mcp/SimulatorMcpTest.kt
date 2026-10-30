@@ -12,6 +12,8 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.add
+import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
@@ -157,6 +159,81 @@ class SimulatorMcpTest {
       },
     )
     assertThat(started.single()).containsAtLeast("--play-services", "none").inOrder()
+  }
+
+  @Test
+  fun `a home screen and its widgets pass through to the launch`() {
+    call(
+      SimulatorMcp.LAUNCH,
+      buildJsonObject {
+        put("apk", apk().path)
+        put("launcher", true)
+        put(
+          "widgets",
+          buildJsonArray {
+            add("WeatherAppWidgetReceiver")
+            add("TaskListWidgetReceiver")
+          },
+        )
+      },
+    )
+    assertThat(started.single())
+      .containsAtLeast(
+        "--launcher",
+        "--widget",
+        "WeatherAppWidgetReceiver",
+        "--widget",
+        "TaskListWidgetReceiver",
+      )
+      .inOrder()
+  }
+
+  @Test
+  fun `Wear tiles pass through to the launch`() {
+    call(
+      SimulatorMcp.LAUNCH,
+      buildJsonObject {
+        put("apk", apk().path)
+        put("tiles", buildJsonArray { add("GoalsTileService") })
+      },
+    )
+    assertThat(started.single()).containsAtLeast("--tile", "GoalsTileService").inOrder()
+  }
+
+  @Test
+  fun `the command schema has the Wear system UI's commands and arguments`() {
+    val command = mcp.toolDefs().single { it.name == SimulatorMcp.COMMAND }
+    val properties = command.inputSchema.jsonObject["properties"]!!.jsonObject
+    val cmds = properties["cmd"]!!.jsonObject["enum"]!!.jsonArray.map { it.jsonPrimitive.content }
+    assertThat(cmds)
+      .containsAtLeast(
+        "launcher",
+        "notifications",
+        "notification",
+        "ongoing",
+        "tiles",
+        "health",
+        "quickSettings",
+        "rotary",
+      )
+    assertThat(properties.keys)
+      .containsAtLeast("component", "label", "heartRate", "heartRateAccuracy", "delta", "count")
+  }
+
+  @Test
+  fun `the command schema has the home screen's commands and widget actions`() {
+    val command = mcp.toolDefs().single { it.name == SimulatorMcp.COMMAND }
+    val properties = command.inputSchema.jsonObject["properties"]!!.jsonObject
+    val cmds = properties["cmd"]!!.jsonObject["enum"]!!.jsonArray.map { it.jsonPrimitive.content }
+    assertThat(cmds)
+      .containsAtLeast("home", "drawer", "shortcuts", "shortcut", "widgets", "widget", "picker")
+    val actions =
+      properties["action"]!!.jsonObject["enum"]!!.jsonArray.map { it.jsonPrimitive.content }
+    assertThat(actions)
+      .containsAtLeast("add", "remove", "resize", "update", "reconfigure", "pin", "open", "close")
+    assertThat(actions).containsAtLeast("connect", "reply")
+    assertThat(properties.keys)
+      .containsAtLeast("provider", "widgetId", "spanX", "spanY", "shortcutId")
   }
 
   @Test

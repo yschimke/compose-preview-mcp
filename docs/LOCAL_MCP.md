@@ -40,11 +40,11 @@ module's `build/compose-previews/` copy unless `guidelines` names a file or URL)
 
 ## Apps in Robolectric's simulator: `simulator_*`
 
-Four tools run an Android APK in Robolectric's simulator and let the agent drive it, over
+Five tools run an Android APK in Robolectric's simulator and let the agent drive it, over
 compose-ai-tools' `compose-preview launch <apk> --control stdio` (its `docs/SIMULATOR.md` has the
 control protocol and the constraints). No emulator, device or `adb`.
 
-- **`simulator_launch`** `{apk, headless?, showAgent?, qualifiers?, fontScale?, sdk?, java?}` starts
+- **`simulator_launch`** `{apk, headless?, showAgent?, qualifiers?, fontScale?, sdk?, java?, pair?}` starts
   one and waits for its `ready` event: a simulator id, the package, display size and first
   activity. The first launch of an APK converts its dex (tens of seconds); later ones come from the
   CLI's cache. **The window stays up unless `headless`**, so the person watches the agent work: the
@@ -62,11 +62,21 @@ control protocol and the constraints). No emulator, device or `adb`.
   the last call (activities resumed or destroyed by its own navigation, services started, intents
   nothing handled).
 - **`simulator_screenshot`** returns the display as an image block (never the window's overlay).
+- **`simulator_logs`** `{simulator?, device?, contains?, lines?}` returns the latest lines the
+  simulator logged (the app's logcat, Robolectric, stack traces), plus the events since the last
+  call.
 - **`simulator_stop`** closes one. `simulator` is optional while only one runs; every simulator
   ends with the server.
 
+**A phone and its watch.** `pair` (a Wear OS APK) runs `launch --pair`: the phone app and the watch
+app in two simulators joined by a simulated Wearable Data Layer, under one simulator id.
+`simulator_launch` waits for both and returns `info` as `{phone: …, watch: …}`; `device: "watch"`
+on `simulator_command`, `simulator_screenshot` or `simulator_logs` addresses the watch (the phone is
+the default); every event carries its `device`, and every log line starts `[phone]` or `[watch]`.
+
 Each simulator is a `compose-preview` child process speaking JSON lines; its stderr (the app's
-logs) is kept as a bounded tail and returned when it fails to start or exits. The CLI is found the
+logs) is kept as a bounded tail, read with `simulator_logs` and returned when it fails to start or
+exits. The CLI is found the
 way `init-script` finds it: `COMPOSE_PREVIEW_CLI`, then `PATH`, then `~/.local/bin`.
 
 **Developing against an unreleased CLI.** Point the server at a local compose-ai-tools build

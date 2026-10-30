@@ -43,10 +43,16 @@ import kotlinx.serialization.json.put
  *   startActivity, startService, broadcast, query, …) and returns its result, plus the events the
  *   app produced since the last call (activities resumed, services started, unhandled intents).
  * - `simulator_screenshot` returns the display as an image.
+ * - `simulator_logs` returns the tail of the simulator's log (the app's logcat, Robolectric).
  * - `simulator_stop` ends a simulator; all of them end with the server.
  *
+ * With `pair`, one simulator id is a phone and its paired watch (`launch --pair`): `device` picks
+ * which one a command, screenshot or log read is for, every event carries its `device`, and every
+ * log line starts with `[phone]` or `[watch]`.
+ *
  * Each simulator is one CLI child process speaking JSON lines; stderr (the app's logs) is kept as a
- * bounded tail for error reports. Opens no socket, so it adds nothing to the layer rule.
+ * bounded tail for error reports and `simulator_logs`. Opens no socket, so it adds nothing to the
+ * layer rule.
  */
 class SimulatorMcp(
   /** Starts `compose-preview <args>`; a seam so tests need neither the CLI nor a JVM. */
@@ -58,13 +64,15 @@ class SimulatorMcp(
   private val simulators = ConcurrentHashMap<String, Simulator>()
   private val nextId = AtomicLong(1)
 
-  fun toolDefs(): List<ToolDef> = listOf(launchTool, commandTool, screenshotTool, stopTool)
+  fun toolDefs(): List<ToolDef> =
+    listOf(launchTool, commandTool, screenshotTool, logsTool, stopTool)
 
   suspend fun handle(name: String, args: JsonObject): CallToolResult? =
     when (name) {
       LAUNCH -> launch(args)
       COMMAND -> withContext(Dispatchers.IO) { command(args) }
       SCREENSHOT -> withContext(Dispatchers.IO) { screenshot(args) }
+      LOGS -> withContext(Dispatchers.IO) { logs(args) }
       STOP -> withContext(Dispatchers.IO) { stop(args) }
       else -> null
     }
@@ -85,6 +93,8 @@ class SimulatorMcp(
     val apk = args.string("apk") ?: return error("simulator_launch: `apk` (a path) is required.")
     val file = File(apk).absoluteFile
     if (!file.isFile) return error("simulator_launch: no such APK: $file")
+    val pair = args.string("pair")?.let { File(it).absoluteFile }
+    if (pair != null && !pair.isFile) return error("simulator_launch: no such APK to pair: $pair")
     val cliArgs = buildList {
       add("launch")
       add(file.path)
@@ -99,6 +109,9 @@ class SimulatorMcp(
       args.string("java")?.let { addAll(listOf("--java", it)) }
       args.string("dataLayer")?.let { addAll(listOf("--data-layer", it)) }
       args.string("fingerprint")?.let { addAll(listOf("--fingerprint", it)) }
+      pair?.let { addAll(listOf("--pair", it.path)) }
+      args.string("pairQualifiers")?.let { addAll(listOf("--pair-qualifiers", it)) }
+      args.string("playServices")?.let { addAll(listOf("--play-services", it)) }
     }
     val process =
       try {
@@ -109,7 +122,8 @@ class SimulatorMcp(
         return error("simulator_launch: could not start compose-preview: ${e.message}")
       }
     val id = "sim-${nextId.getAndIncrement()}"
-    val simulator = Simulator(id, file.name, process)
+    val simulator =
+      Simulator(id, file.name, process, devices = if (pair != null) PAIRED else emptySet())
     val ready =
       try {
         withTimeout(readyTimeoutMs) { simulator.ready.await() }
@@ -159,6 +173,7 @@ class SimulatorMcp(
     val payload = buildJsonObject {
       put("cmd", "screenshot")
       args.string("path")?.let { put("path", it) }
+      args.string("device")?.let { put("device", it) }
     }
     return when (val reply = simulator.send(payload, commandTimeoutMs)) {
       is Reply.Failed -> error("screenshot: ${reply.message}", simulator.drainEvents())
@@ -178,6 +193,26 @@ class SimulatorMcp(
         )
       }
     }
+  }
+
+  private fun logs(args: JsonObject): CallToolResult {
+    val simulator = simulator(args) ?: return noSimulator()
+    val device = args.string("device")
+    val filter = args.string("contains")
+    val lines =
+      simulator
+        .stderrLines()
+        .filter { device == null || it.startsWith("[$device] ") }
+        .filter { filter == null || it.contains(filter) }
+        .takeLast((args.int("lines") ?: DEFAULT_LOG_LINES).coerceIn(1, STDERR_LINES))
+    return CallToolResult(
+      content = listOf(ContentBlock.Text(lines.joinToString("\n"))),
+      structuredContent =
+        buildJsonObject {
+          put("lines", JsonArray(lines.map(::JsonPrimitive)))
+          put("events", simulator.drainEvents())
+        },
+    )
   }
 
   private fun stop(args: JsonObject): CallToolResult {
@@ -207,9 +242,18 @@ class SimulatorMcp(
     data class Failed(val message: String) : Reply
   }
 
-  /** One `compose-preview launch --control stdio` child. */
-  private class Simulator(val id: String, val apk: String, private val process: Process) {
+  /**
+   * One `compose-preview launch --control stdio` child. With [devices] (a `--pair` launch) it is
+   * ready once each device has sent its `ready`, and [ready] holds each one's info by device.
+   */
+  private class Simulator(
+    val id: String,
+    val apk: String,
+    private val process: Process,
+    private val devices: Set<String> = emptySet(),
+  ) {
     val ready = CompletableFuture<JsonObject>()
+    private val readies = ConcurrentHashMap<String, JsonObject>()
     private val pending = ConcurrentHashMap<Long, CompletableFuture<Reply>>()
     private val events = ConcurrentLinkedQueue<JsonElement>()
     private val stderr = ArrayDeque<String>()
@@ -250,12 +294,24 @@ class SimulatorMcp(
             }
           pending.remove(id)?.complete(reply)
         }
-        message.string("event") == "ready" ->
-          ready.complete(JsonObject(message.filterKeys { it != "event" }))
+        message.string("event") == "ready" -> onReady(message)
         message.containsKey("event") -> {
           events.add(message)
           while (events.size > MAX_EVENTS) events.poll()
         }
+      }
+    }
+
+    private fun onReady(message: JsonObject) {
+      val info = JsonObject(message.filterKeys { it != "event" })
+      if (devices.isEmpty()) {
+        ready.complete(info)
+        return
+      }
+      val device = message.string("device") ?: return
+      readies[device] = JsonObject(info.filterKeys { it != "device" })
+      if (readies.keys.containsAll(devices)) {
+        ready.complete(JsonObject(devices.associateWith { readies.getValue(it) }))
       }
     }
 
@@ -286,6 +342,8 @@ class SimulatorMcp(
       while (true) drained += events.poll() ?: break
       return JsonArray(drained)
     }
+
+    fun stderrLines(): List<String> = synchronized(stderr) { stderr.toList() }
 
     /** The last lines of stderr; once the process has exited, all of them. */
     fun stderrTail(): String {
@@ -343,7 +401,10 @@ class SimulatorMcp(
           "it, unless `headless`. Drive it with simulator_command and simulator_screenshot; " +
           "end it with simulator_stop. Needs Java 21+ and a local Android SDK. With " +
           "`dataLayer: agent` the app's Wearable Data Layer is simulated and you play its " +
-          "peer devices (simulator_command dataLayer).",
+          "peer devices (simulator_command dataLayer). With `pair` (a Wear OS APK) a phone " +
+          "and its watch run paired over a simulated Data Layer under one simulator id: " +
+          "`info` then holds each device's, `device: watch` sends a command or screenshot to " +
+          "the watch, every event carries its `device`, and log lines start [phone] or [watch].",
       inputSchema =
         schema(
           """
@@ -357,7 +418,10 @@ class SimulatorMcp(
             "network":{"type":"string","description":"Start on wifi (default), cellular, ethernet, vpn, captive (no internet) or offline; append ,airplane (or just airplane) for airplane mode."},
                         "java":{"type":"string","description":"JDK 21+ home or java binary, when the default JDK is older."},
             "dataLayer":{"type":"string","enum":["agent"],"description":"Simulate the Wearable Data Layer with you as the peer: what the app sends arrives as datalayer events of kind send; simulator_command dataLayer {action} connects a peer, puts data items, sends messages and replies."},
-            "fingerprint":{"type":"string","description":"Build.FINGERPRINT in place of Robolectric's 'robolectric', which some apps check to skip real work under tests."}
+            "fingerprint":{"type":"string","description":"Build.FINGERPRINT in place of Robolectric's 'robolectric', which some apps check to skip real work under tests."},
+            "pair":{"type":"string","description":"Absolute path to a Wear OS APK to run as this phone app's paired watch."},
+            "pairQualifiers":{"type":"string","description":"The paired watch's display qualifiers (default a large round watch)."},
+            "playServices":{"type":"string","enum":["installed","none","outdated","disabled","invalid"],"description":"Google Play services as the app's availability checks see it: installed (default, SUCCESS), or none / outdated / disabled / invalid to test the app's error paths. simulator_command playServices {state} changes it while the app runs."}
           }}
           """
         ),
@@ -377,9 +441,13 @@ class SimulatorMcp(
           "finish; activities; startActivity {intent}; startService/stopService/bindService/" +
           "unbindService {intent}; services; broadcast {intent}; notifications; query {uri, " +
           "projection?, selection?, args?, sort?, limit?}; components; qualifiers {value: " +
-          "+land|+night|…}; permissions {policy?: grant|deny, grant?, deny?} (how the app's " +
-          "runtime permission requests are answered, granted by default; grant/deny name " +
-          "permissions and apply now too; reset), wait {ms}. adb equivalents: shell {command: " +
+          "+land|+night|…}; permissions {policy?: grant|deny|ask, grant?, deny?, answer?, " +
+          "requestId?} (how the app's runtime permission requests are answered, granted by " +
+          "default, as a device's permission controller does: already granted, not in the " +
+          "manifest and denied twice are not asked; grant/deny name permissions and apply now " +
+          "too; under ask a request waits as a permissions event {state: waiting, requestId, " +
+          "ask} until answer: grant|deny|dismiss|approximate|selected or {permission: " +
+          "grant|deny|dismiss}; reset), wait {ms}. adb equivalents: shell {command: " +
           "'am start -a VIEW -d <uri>' | 'pm grant <pkg> <perm>' | 'input tap x y' | " +
           "'settings put global airplane_mode_on 1' | 'content query --uri …' | 'logcat -d -s Tag' " +
           "| 'dumpsys activity' | 'wm size' | 'cmd uimode night yes' | 'run-as <pkg> ls' …} (or " +
@@ -438,7 +506,8 @@ class SimulatorMcp(
           """
           {"type":"object","required":["cmd"],"properties":{
             "simulator":{"type":"string","description":"Simulator id from simulator_launch; optional when only one runs."},
-            "cmd":{"type":"string","enum":["info","hierarchy","find","tap","longPress","swipe","key","back","text","launch","finish","activities","startActivity","startService","stopService","bindService","unbindService","services","broadcast","notifications","query","components","qualifiers","permissions","wait","ping","dataLayer","companion","shell","settings","logcat","files","content","network","wifi","bluetooth","display","forceStop","clearData","getprop","package","packages","screen","ambient","tilt","wake","palm","sleep"]},
+            "device":{"type":"string","enum":["phone","watch"],"description":"With a paired launch: which device runs the command (default phone)."},
+            "cmd":{"type":"string","enum":["info","hierarchy","find","tap","longPress","swipe","key","back","text","launch","finish","activities","startActivity","startService","stopService","bindService","unbindService","services","broadcast","notifications","query","components","qualifiers","permissions","wait","ping","dataLayer","companion","shell","settings","logcat","files","content","network","wifi","bluetooth","display","forceStop","clearData","getprop","package","packages","screen","ambient","tilt","wake","palm","sleep","playServices"]},
             "text":{"type":"string"},"textContains":{"type":"string"},"desc":{"type":"string"},"descContains":{"type":"string"},
             "resourceId":{"type":"string"},"cls":{"type":"string"},"clickable":{"type":"boolean"},"index":{"type":"integer"},
             "x":{"type":"number"},"y":{"type":"number"},"x1":{"type":"number"},"y1":{"type":"number"},"x2":{"type":"number"},"y2":{"type":"number"},
@@ -446,7 +515,7 @@ class SimulatorMcp(
             "key":{"type":["string","integer","array"]},"flat":{"type":"boolean"},"value":{"type":["string","boolean","object","array"]},
             "intent":{"type":"object"},"uri":{"type":"string"},"projection":{"type":"array","items":{"type":"string"}},
             "selection":{"type":"string"},"args":{"type":"array","items":{"type":"string"}},"sort":{"type":"string"},"limit":{"type":"integer"},
-            "policy":{"type":"string","enum":["grant","deny","accept","reject","ask"],"description":"permissions: grant|deny; wifi/bluetooth request and companion: accept|reject|ask"},"grant":{"type":"array","items":{"type":"string"}},"deny":{"type":"array","items":{"type":"string"}},"reset":{"type":"boolean"},
+            "policy":{"type":"string","enum":["grant","deny","accept","reject","ask"],"description":"permissions: grant|deny|ask; wifi/bluetooth request and companion: accept|reject|ask"},"grant":{"type":"array","items":{"type":"string"}},"deny":{"type":"array","items":{"type":"string"}},"reset":{"type":"boolean"},
             "command":{"type":"string","description":"shell: an adb shell command line"},
             "op":{"type":"string"},"namespace":{"type":"string","enum":["system","secure","global"]},
             "path":{"type":"string"},"to":{"type":"string"},"from":{"type":"string"},"recursive":{"type":"boolean"},
@@ -456,7 +525,7 @@ class SimulatorMcp(
             "cellular":{"type":"string","enum":["5g","lte","3g","2g"]},"downKbps":{"type":"integer"},"upKbps":{"type":"integer"},
             "latencyMs":{"type":"integer"},"kbps":{"type":"integer"},"block":{"type":"array","items":{"type":"string"}},"dataSaver":{"type":"boolean"},
             "networks":{"type":"array","items":{"type":"object"}},"ssid":{"type":"string"},"bssid":{"type":"string"},"rssi":{"type":"integer"},
-            "answer":{"type":"string","enum":["accept","reject"]},"requestId":{"type":"integer","description":"wifi/bluetooth/companion request: which waiting request to answer (default the oldest); dataLayer reply: the app request it answers"},
+            "answer":{"anyOf":[{"type":"string","enum":["accept","reject","grant","deny","dismiss","approximate","selected"]},{"type":"object","additionalProperties":{"type":"string","enum":["grant","deny","dismiss"]}}],"description":"wifi/bluetooth/companion request: accept|reject; permissions: grant|deny|dismiss|approximate|selected, or {permission: grant|deny|dismiss}"},"requestId":{"type":"integer","description":"wifi/bluetooth/permissions/companion request: which waiting request to answer (default the oldest); dataLayer reply: the app request it answers"},
             "address":{"type":"string","description":"bluetooth: a device address, AA:BB:CC:DD:EE:FF"},
             "serviceUuids":{"type":"array","items":{"type":"string"}},"serviceData":{"type":"object"},"manufacturerData":{"type":"object"},
             "txPower":{"type":"integer"},"connectable":{"type":"boolean"},"gatt":{"type":"object"},"characteristic":{"type":"string"},"size":{"type":"string"},"density":{"type":["string","integer"]},
@@ -467,7 +536,7 @@ class SimulatorMcp(
             "channel":{"type":"string","description":"dataLayer channel*: the channel token"},"errorCode":{"type":"integer"},"disassociate":{"type":"integer","description":"companion: an association id to remove"},
             "error":{"type":"string"},"result":{"type":"integer"},"responseUrl":{"type":"string"},"requestTimeoutMs":{"type":"integer"},
             "addCapability":{"type":"string"},"removeCapability":{"type":"string"},
-            "state":{"type":"string","enum":["on","ambient","off"]},"timeoutMs":{"type":"integer"},"alwaysOn":{"type":"boolean"},"burnIn":{"type":"boolean"},"lowBit":{"type":"boolean"}
+            "state":{"type":"string","enum":["on","ambient","off","installed","none","outdated","disabled","invalid"],"description":"screen: on / ambient / off. playServices: installed / none / outdated / disabled / invalid."},"timeoutMs":{"type":"integer"},"alwaysOn":{"type":"boolean"},"burnIn":{"type":"boolean"},"lowBit":{"type":"boolean"}
           }}
           """
         ),
@@ -485,7 +554,30 @@ class SimulatorMcp(
           """
           {"type":"object","properties":{
             "simulator":{"type":"string","description":"Simulator id; optional when only one runs."},
-            "path":{"type":"string","description":"Also write the PNG here; the image is then not inlined."}
+            "path":{"type":"string","description":"Also write the PNG here; the image is then not inlined."},
+            "device":{"type":"string","enum":["phone","watch"],"description":"With a paired launch: which device's display (default phone)."}
+          }}
+          """
+        ),
+      readOnlyHint = true,
+    )
+
+  private val logsTool =
+    ToolDef(
+      name = LOGS,
+      title = "Simulator log",
+      description =
+        "The latest lines the simulator logged: the app's logcat, Robolectric and stack traces. " +
+          "In a paired launch each line starts [phone] or [watch]; `device` keeps one device's. " +
+          "Also returns the events since the last call.",
+      inputSchema =
+        schema(
+          """
+          {"type":"object","properties":{
+            "simulator":{"type":"string","description":"Simulator id; optional when only one runs."},
+            "device":{"type":"string","enum":["phone","watch"],"description":"Only this device's lines, in a paired launch."},
+            "contains":{"type":"string","description":"Only lines containing this text."},
+            "lines":{"type":"integer","description":"How many of the latest lines (default 100)."}
           }}
           """
         ),
@@ -510,9 +602,14 @@ class SimulatorMcp(
     const val COMMAND = "simulator_command"
     const val SCREENSHOT = "simulator_screenshot"
     const val STOP = "simulator_stop"
-    val TOOL_NAMES: List<String> = listOf(LAUNCH, COMMAND, SCREENSHOT, STOP)
+    const val LOGS = "simulator_logs"
+    val TOOL_NAMES: List<String> = listOf(LAUNCH, COMMAND, SCREENSHOT, LOGS, STOP)
 
-    private const val STDERR_LINES = 400
+    /** The devices of a paired launch, as the CLI's `device` names them. */
+    private val PAIRED = setOf("phone", "watch")
+
+    private const val STDERR_LINES = 2000
+    private const val DEFAULT_LOG_LINES = 100
     private const val STDERR_REPORTED = 40
     private const val MAX_EVENTS = 200
 

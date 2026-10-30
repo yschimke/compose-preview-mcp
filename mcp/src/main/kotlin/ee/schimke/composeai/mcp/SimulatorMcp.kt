@@ -523,7 +523,7 @@ class SimulatorMcp(
             "dataMap":{"type":"object","description":"dataLayer: payload as a DataMap"},"assets":{"type":"object"},
             "error":{"type":"string"},"result":{"type":"integer"},"responseUrl":{"type":"string"},"requestTimeoutMs":{"type":"integer"},
             "addCapability":{"type":"string"},"removeCapability":{"type":"string"},
-            "state":{"type":"string","enum":["on","ambient","off"]},"timeoutMs":{"type":"integer"},"alwaysOn":{"type":"boolean"},"burnIn":{"type":"boolean"},"lowBit":{"type":"boolean"}
+            "state":{"type":"string","enum":["on","ambient","off","installed","none","outdated","disabled","invalid"],"description":"screen: on / ambient / off. playServices: installed / none / outdated / disabled / invalid."},"timeoutMs":{"type":"integer"},"alwaysOn":{"type":"boolean"},"burnIn":{"type":"boolean"},"lowBit":{"type":"boolean"}
           }}
           """
         ),

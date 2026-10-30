@@ -704,7 +704,10 @@ class SimulatorMcp(
           "clearData; kill (the app killed in the background, its state saved through a Parcel; the " +
           "next launch or startActivity re-creates the task from it); recreate (the top activity, as " +
           "Activity.recreate()); savedState (the top activity's state: bundle JSON and base64 " +
-          "savedState, which launch / startActivity {savedState} take back); getprop {name?}; package; packages. Wearable Data Layer (launched with " +
+          "savedState, which launch / startActivity {savedState} take back); zoom {value?: in|out|" +
+          "actual|fit|'75%'|0.75} (the simulator window's zoom, not the display: screenshots and " +
+          "coordinates stay in device pixels; reports scale, sizes and screenX/screenY; errors " +
+          "headless); getprop {name?}; package; packages. Wearable Data Layer (launched with " +
           "dataLayer: agent): dataLayer (state: node, peers, capabilities, data items); " +
           "dataLayer {action: connect {node?, name?, package?, capabilities?, nearby?} | " +
           "disconnect {node?} | capabilities {node?, capabilities} | put {node?, path, text|data|" +
@@ -771,12 +774,12 @@ class SimulatorMcp(
           {"type":"object","required":["cmd"],"properties":{
             "simulator":{"type":"string","description":"Simulator id from simulator_launch; optional when only one runs."},
             "device":{"type":"string","enum":["phone","watch"],"description":"With a paired launch: which device runs the command (default phone)."},
-            "cmd":{"type":"string","enum":["info","hierarchy","find","tap","longPress","swipe","key","back","text","launch","finish","activities","startActivity","startService","stopService","bindService","unbindService","services","broadcast","notifications","query","components","qualifiers","permissions","wait","ping","dataLayer","companion","shell","settings","logcat","files","content","network","wifi","bluetooth","display","forceStop","clearData","kill","recreate","savedState","getprop","package","packages","screen","ambient","tilt","wake","palm","sleep","playServices","home","drawer","shortcuts","shortcut","widgets","widget","picker","launcher","notification","ongoing","tiles","health","quickSettings","rotary"]},
+            "cmd":{"type":"string","enum":["info","hierarchy","find","tap","longPress","swipe","key","back","text","launch","finish","activities","startActivity","startService","stopService","bindService","unbindService","services","broadcast","notifications","query","components","qualifiers","permissions","wait","ping","dataLayer","companion","shell","settings","logcat","files","content","network","wifi","bluetooth","display","forceStop","clearData","kill","recreate","savedState","getprop","package","packages","screen","ambient","tilt","wake","palm","sleep","playServices","home","drawer","shortcuts","shortcut","widgets","widget","picker","launcher","notification","ongoing","tiles","health","quickSettings","rotary","zoom"]},
             "text":{"type":"string"},"textContains":{"type":"string"},"desc":{"type":"string"},"descContains":{"type":"string"},
             "resourceId":{"type":"string"},"cls":{"type":"string"},"clickable":{"type":"boolean"},"index":{"type":"integer"},
             "x":{"type":"number"},"y":{"type":"number"},"x1":{"type":"number"},"y1":{"type":"number"},"x2":{"type":"number"},"y2":{"type":"number"},
             "durationMs":{"type":"integer"},"steps":{"type":"integer","description":"swipe: its touch steps; health: steps today"},"ms":{"type":"integer"},"settleMs":{"type":"integer"},
-            "key":{"type":["string","integer","array"]},"flat":{"type":"boolean"},"value":{"type":["string","boolean","object","array"]},
+            "key":{"type":["string","integer","array"]},"flat":{"type":"boolean"},"value":{"type":["string","number","boolean","object","array"]},
             "intent":{"type":"object"},"savedState":{"type":"string","description":"launch / startActivity: base64 instance state from the savedState command; a new instance is created from it."},"uri":{"type":"string"},"projection":{"type":"array","items":{"type":"string"}},
             "selection":{"type":"string"},"args":{"type":"array","items":{"type":"string"}},"sort":{"type":"string"},"limit":{"type":"integer"},
             "policy":{"type":"string","enum":["grant","deny","accept","reject","ask"],"description":"permissions: grant|deny|ask; wifi/bluetooth request and companion: accept|reject|ask"},"grant":{"type":"array","items":{"type":"string"}},"deny":{"type":"array","items":{"type":"string"}},"reset":{"type":"boolean"},

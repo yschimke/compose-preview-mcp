@@ -63,6 +63,8 @@ class SimulatorMcp(
   private val start: (List<String>) -> Process = defaultStarter(),
   private val readyTimeoutMs: Long = TimeUnit.MINUTES.toMillis(5),
   private val commandTimeoutMs: Long = TimeUnit.MINUTES.toMillis(1),
+  /** Runs `adb <args>`; a seam so tests need no SDK. */
+  private val adb: (List<String>, Long) -> AdbRun = defaultAdb(),
 ) {
 
   private val simulators = ConcurrentHashMap<String, Simulator>()
@@ -77,6 +79,7 @@ class SimulatorMcp(
       restartTool,
       updateTool,
       reloadTool,
+      adbTool,
       stopTool,
     )
 
@@ -89,6 +92,7 @@ class SimulatorMcp(
       RESTART -> withContext(Dispatchers.IO) { replace(RESTART, "restart", args) }
       UPDATE -> withContext(Dispatchers.IO) { replace(UPDATE, "update", args) }
       RELOAD -> withContext(Dispatchers.IO) { replace(RELOAD, "reload", args) }
+      ADB -> withContext(Dispatchers.IO) { adb(args) }
       STOP -> withContext(Dispatchers.IO) { stop(args) }
       else -> null
     }
@@ -111,8 +115,15 @@ class SimulatorMcp(
       return error("simulator_launch: no such project directory: $project")
     }
     val apk = args.string("apk")
-    if (apk == null && project == null) {
-      return error("simulator_launch: `apk` (a path) or `project` (a Gradle build) is required.")
+    val adbDevice = args.boolean("adb") == true
+    if (apk == null && project == null && !adbDevice) {
+      return error(
+        "simulator_launch: `apk` (a path) or `project` (a Gradle build) is required, unless " +
+          "`adb` starts a device with nothing installed."
+      )
+    }
+    if (adbDevice && project != null) {
+      return error("simulator_launch: `adb` runs its own device; drop `project` (or `adb`).")
     }
     val file = apk?.let { File(it).absoluteFile }
     if (file != null && !file.isFile) return error("simulator_launch: no such APK: $file")
@@ -133,6 +144,8 @@ class SimulatorMcp(
       (args["gradleArgs"] as? JsonArray)?.forEach { arg ->
         (arg as? JsonPrimitive)?.contentOrNull?.let { addAll(listOf("--gradle-arg", it)) }
       }
+      if (adbDevice) add("--adb")
+      args.string("formFactor")?.let { addAll(listOf("--form-factor", it)) }
       add("--control")
       add("stdio")
       if (args.boolean("headless") == true) add("--headless")
@@ -167,7 +180,7 @@ class SimulatorMcp(
     val simulator =
       Simulator(
         id,
-        file?.name ?: project?.name ?: "app",
+        file?.name ?: project?.name ?: if (adbDevice) "device" else "app",
         process,
         devices = if (pair != null) PAIRED else emptySet(),
       )
@@ -184,11 +197,41 @@ class SimulatorMcp(
         withContext(Dispatchers.IO) { simulator.close() }
         return notStarted(simulator, "$e")
       }
+    // With adb and an APK the device boots first and installs it after, as `adb install` would:
+    // the launch answers once it is installed (or failed to be).
+    val installed =
+      if (adbDevice && file != null) {
+        try {
+          withTimeout(readyTimeoutMs) { simulator.install.await() }
+        } catch (e: TimeoutCancellationException) {
+          withContext(Dispatchers.IO) { simulator.close() }
+          return notStarted(
+            simulator,
+            "${file.name} not installed within ${readyTimeoutMs / 1000}s",
+          )
+        } catch (e: CancellationException) {
+          withContext(NonCancellable + Dispatchers.IO) { simulator.close() }
+          throw e
+        } catch (e: Exception) {
+          withContext(Dispatchers.IO) { simulator.close() }
+          return notStarted(simulator, "$e")
+        }
+      } else null
+    if (adbDevice) {
+      // Announced as the device comes up; an older CLI without the event just has no `device`.
+      runCatching { withTimeout(DEVICE_EVENT_MS) { simulator.deviceInfo.await() } }
+    }
+    if (installed?.string("event") == "installFailed") {
+      withContext(Dispatchers.IO) { simulator.close() }
+      return notStarted(simulator, "installing ${file?.name} failed: ${installed.string("error")}")
+    }
     simulators[id] = simulator
     val events = simulator.drainEvents()
     val result = buildJsonObject {
       put("simulator", id)
       put("info", ready)
+      simulator.device?.let { put("device", it) }
+      installed?.string("package")?.let { put("installed", it) }
       // The CLI's `conversion` event: whether the APK's classes came from its cache, and the cost.
       val conversions = events.filter { (it as? JsonObject)?.string("event") == "conversion" }
       if (conversions.isNotEmpty()) {
@@ -277,6 +320,77 @@ class SimulatorMcp(
     }
   }
 
+  /**
+   * `adb -s <serial> <args>` against a simulator launched with `adb`: the platform-tools `adb`
+   * talks to the device the CLI serves, as it would to an emulator. Waits for the device first, as
+   * an adb server started just now finds it by scanning the emulator ports.
+   */
+  private fun adb(args: JsonObject): CallToolResult {
+    val simulator = simulator(args) ?: return noSimulator()
+    val device =
+      simulator.device
+        ?: return error(
+          "$ADB: ${simulator.id} is not an adb device: launch it with simulator_launch `adb: true`."
+        )
+    val serial = device.string("serial") ?: return error("$ADB: the device has no serial.")
+    val argv =
+      (args["args"] as? JsonArray)?.mapNotNull { (it as? JsonPrimitive)?.contentOrNull }
+        ?: args.string("command")?.let(::splitCommand)
+        ?: return error(
+          "$ADB: `args` (adb's arguments, e.g. [\"install\", \"/path/app.apk\"]) is required."
+        )
+    val words = argv.dropWhile { it == "adb" }
+    if (words.isEmpty()) return error("$ADB: no adb command given.")
+    // The device is this simulator; options that pick another device or server are refused.
+    val subcommand = words.firstOrNull { !it.startsWith("-") }
+    (words.takeWhile { it.startsWith("-") }.firstOrNull { it in DEVICE_OPTIONS }
+        ?: subcommand?.takeIf { it in OTHER_DEVICES })
+      ?.let {
+        return error("$ADB: `$it` reaches past this device; this tool runs against $serial only.")
+      }
+    // Its own limit, not the launch's: a first install converts the APK and can take longer.
+    val timeout =
+      (args.int("timeoutMs")?.toLong() ?: ADB_TIMEOUT_MS).coerceIn(1_000, MAX_ADB_TIMEOUT_MS)
+    val wait =
+      try {
+        adb(listOf("-s", serial, "wait-for-device"), ADB_WAIT_MS)
+      } catch (e: IllegalStateException) {
+        return error("$ADB: ${e.message}")
+      }
+    if (wait.exitCode != 0) {
+      return error(
+        "$ADB: $serial did not come up in adb: ${wait.stderr.ifBlank { wait.stdoutText() }}"
+      )
+    }
+    val run = adb(listOf("-s", serial) + words, timeout)
+    val output = args.string("output")?.let { File(it).absoluteFile }
+    output?.let {
+      it.parentFile?.mkdirs()
+      it.writeBytes(run.stdout)
+    }
+    val result = buildJsonObject {
+      put("serial", serial)
+      put("command", JsonArray((listOf("adb", "-s", serial) + words).map(::JsonPrimitive)))
+      put("exitCode", run.exitCode)
+      if (run.timedOut) put("timedOut", true)
+      if (output != null) {
+        put("output", output.path)
+        put("bytes", run.stdout.size)
+      } else {
+        put("stdout", run.stdoutText().take(MAX_ADB_OUTPUT))
+      }
+      if (run.stderr.isNotBlank()) put("stderr", run.stderr.take(MAX_ADB_OUTPUT))
+      put("events", simulator.drainEvents())
+    }
+    return if (run.exitCode == 0 && !run.timedOut) ok(result)
+    else
+      CallToolResult(
+        content = listOf(ContentBlock.Text(result.toString())),
+        structuredContent = result,
+        isError = true,
+      )
+  }
+
   private fun logs(args: JsonObject): CallToolResult {
     val simulator = simulator(args) ?: return noSimulator()
     val device = args.string("device")
@@ -335,6 +449,15 @@ class SimulatorMcp(
     private val devices: Set<String> = emptySet(),
   ) {
     val ready = CompletableFuture<JsonObject>()
+
+    /** With `adb`: the CLI's `device` event (serial, ports). */
+    val deviceInfo = CompletableFuture<JsonObject>()
+
+    val device: JsonObject?
+      get() = deviceInfo.getNow(null)
+
+    /** With `adb` and an APK: its `installed` or `installFailed` event. */
+    val install = CompletableFuture<JsonObject>()
     private val readies = ConcurrentHashMap<String, JsonObject>()
     private val pending = ConcurrentHashMap<Long, CompletableFuture<Reply>>()
     private val events = ConcurrentLinkedQueue<JsonElement>()
@@ -348,6 +471,7 @@ class SimulatorMcp(
         process.inputStream.bufferedReader().useLines { lines -> lines.forEach(::onLine) }
         val exited = IllegalStateException("the simulator exited (${exitCode()})")
         ready.completeExceptionally(exited)
+        install.completeExceptionally(exited)
         pending.values.forEach { it.complete(Reply.Failed("${exited.message}\n${stderrTail()}")) }
       }
       daemon("simulator-$id-stderr") {
@@ -377,6 +501,12 @@ class SimulatorMcp(
           pending.remove(id)?.complete(reply)
         }
         message.string("event") == "ready" -> onReady(message)
+        message.string("event") == "device" ->
+          deviceInfo.complete(JsonObject(message.filterKeys { it != "event" }))
+        message.string("event") == "installed" || message.string("event") == "installFailed" -> {
+          install.complete(message)
+          events.add(message)
+        }
         message.containsKey("event") -> {
           events.add(message)
           while (events.size > MAX_EVENTS) events.poll()
@@ -493,7 +623,9 @@ class SimulatorMcp(
           "app's own widgets (simulator_command home, widget, …); `widgets` starts with some " +
           "placed. On a Wear app `launcher` is the watch's system UI instead: watch face, " +
           "launcher, notification stream, tiles and widgets carousel, quick settings; `tiles` " +
-          "starts with tiles or Wear Widgets in the carousel.",
+          "starts with tiles or Wear Widgets in the carousel. " +
+          "With `adb` the simulator is a device adb and Android Studio see (emulator-5554 and " +
+          "up), with or without an APK: drive it with simulator_adb as well.",
       inputSchema =
         schema(
           """
@@ -516,6 +648,8 @@ class SimulatorMcp(
             "fingerprint":{"type":"string","description":"Build.FINGERPRINT in place of Robolectric's 'robolectric', which some apps check to skip real work under tests."},
             "pair":{"type":"string","description":"Absolute path to a Wear OS APK to run as this phone app's paired watch."},
             "pairQualifiers":{"type":"string","description":"The paired watch's display qualifiers (default a large round watch)."},
+            "adb":{"type":"boolean","description":"Serve the simulator to adb and Android Studio as an emulator (emulator-5554 and up): `apk` becomes optional (the device boots to its home screen or watch face), an `apk` given is installed rather than started, and simulator_adb runs adb commands against it. The result's `device` holds its serial and ports. Not with project or pair."},
+            "formFactor":{"type":"string","enum":["phone","wear","glimmer","xr"],"description":"The device's form factor; detected from the APK when there is one. With adb and no apk, wear boots a watch."},
             "playServices":{"type":"string","enum":["installed","none","outdated","disabled","invalid"],"description":"Google Play services as the app's availability checks see it: installed (default, SUCCESS), or none / outdated / disabled / invalid to test the app's error paths. simulator_command playServices {state} changes it while the app runs."},
             "launcher":{"type":"boolean","description":"A system UI under the app. On a phone, a home screen: HOME and Back from the app's root go there, its icons reopen the app, a long press shows the app's shortcuts, and the app's widgets are placed, sized, updated and tapped there (simulator_command home, drawer, shortcuts, shortcut, widgets, widget, picker). On a Wear app, the watch's: a watch face, launcher, notification stream, tiles and widgets carousel and quick settings (simulator_command home, launcher, notifications, notification, ongoing, tiles, health, quickSettings)."},
             "widgets":{"type":"array","items":{"type":"string"},"description":"Widget providers (a receiver class or its short name) to place on the home screen at launch: the app starts once, then the home screen shows with them. Implies launcher."},
@@ -567,7 +701,10 @@ class SimulatorMcp(
           "value? (hex or {text}), answer?, policy?} (BLE peripherals for the app's scans, a GATT " +
           "server whose writes arrive as gatt events; ACTION_REQUEST_ENABLE is a " +
           "bluetoothRequest event); display {size?: WxH|reset, density?: N|reset}; forceStop; " +
-          "clearData; getprop {name?}; package; packages. Wearable Data Layer (launched with " +
+          "clearData; kill (the app killed in the background, its state saved through a Parcel; the " +
+          "next launch or startActivity re-creates the task from it); recreate (the top activity, as " +
+          "Activity.recreate()); savedState (the top activity's state: bundle JSON and base64 " +
+          "savedState, which launch / startActivity {savedState} take back); getprop {name?}; package; packages. Wearable Data Layer (launched with " +
           "dataLayer: agent): dataLayer (state: node, peers, capabilities, data items); " +
           "dataLayer {action: connect {node?, name?, package?, capabilities?, nearby?} | " +
           "disconnect {node?} | capabilities {node?, capabilities} | put {node?, path, text|data|" +
@@ -634,13 +771,13 @@ class SimulatorMcp(
           {"type":"object","required":["cmd"],"properties":{
             "simulator":{"type":"string","description":"Simulator id from simulator_launch; optional when only one runs."},
             "device":{"type":"string","enum":["phone","watch"],"description":"With a paired launch: which device runs the command (default phone)."},
-            "cmd":{"type":"string","enum":["info","hierarchy","find","tap","longPress","swipe","key","back","text","launch","finish","activities","startActivity","startService","stopService","bindService","unbindService","services","broadcast","notifications","query","components","qualifiers","permissions","wait","ping","dataLayer","companion","shell","settings","logcat","files","content","network","wifi","bluetooth","display","forceStop","clearData","getprop","package","packages","screen","ambient","tilt","wake","palm","sleep","playServices","home","drawer","shortcuts","shortcut","widgets","widget","picker","launcher","notification","ongoing","tiles","health","quickSettings","rotary"]},
+            "cmd":{"type":"string","enum":["info","hierarchy","find","tap","longPress","swipe","key","back","text","launch","finish","activities","startActivity","startService","stopService","bindService","unbindService","services","broadcast","notifications","query","components","qualifiers","permissions","wait","ping","dataLayer","companion","shell","settings","logcat","files","content","network","wifi","bluetooth","display","forceStop","clearData","kill","recreate","savedState","getprop","package","packages","screen","ambient","tilt","wake","palm","sleep","playServices","home","drawer","shortcuts","shortcut","widgets","widget","picker","launcher","notification","ongoing","tiles","health","quickSettings","rotary"]},
             "text":{"type":"string"},"textContains":{"type":"string"},"desc":{"type":"string"},"descContains":{"type":"string"},
             "resourceId":{"type":"string"},"cls":{"type":"string"},"clickable":{"type":"boolean"},"index":{"type":"integer"},
             "x":{"type":"number"},"y":{"type":"number"},"x1":{"type":"number"},"y1":{"type":"number"},"x2":{"type":"number"},"y2":{"type":"number"},
             "durationMs":{"type":"integer"},"steps":{"type":"integer","description":"swipe: its touch steps; health: steps today"},"ms":{"type":"integer"},"settleMs":{"type":"integer"},
             "key":{"type":["string","integer","array"]},"flat":{"type":"boolean"},"value":{"type":["string","boolean","object","array"]},
-            "intent":{"type":"object"},"uri":{"type":"string"},"projection":{"type":"array","items":{"type":"string"}},
+            "intent":{"type":"object"},"savedState":{"type":"string","description":"launch / startActivity: base64 instance state from the savedState command; a new instance is created from it."},"uri":{"type":"string"},"projection":{"type":"array","items":{"type":"string"}},
             "selection":{"type":"string"},"args":{"type":"array","items":{"type":"string"}},"sort":{"type":"string"},"limit":{"type":"integer"},
             "policy":{"type":"string","enum":["grant","deny","accept","reject","ask"],"description":"permissions: grant|deny|ask; wifi/bluetooth request and companion: accept|reject|ask"},"grant":{"type":"array","items":{"type":"string"}},"deny":{"type":"array","items":{"type":"string"}},"reset":{"type":"boolean"},
             "command":{"type":"string","description":"shell: an adb shell command line"},
@@ -788,6 +925,37 @@ class SimulatorMcp(
         ),
     )
 
+  private val adbTool =
+    ToolDef(
+      name = ADB,
+      title = "Run adb against the simulator",
+      description =
+        "Run an adb command against a simulator launched with `adb: true`, which serves itself " +
+          "to adb as an emulator does (emulator-5554 and up): `args` is adb's arguments without " +
+          "`-s`, e.g. [\"install\", \"/abs/app.apk\"], [\"shell\", \"am\", \"start\", \"-n\", " +
+          "\"com.example/.Main\"], [\"shell\", \"pm list packages -3\"], [\"push\", \"/abs/f\", " +
+          "\"/sdcard/f\"], [\"exec-out\", \"screencap\", \"-p\"] with `output`. An install " +
+          "boots a simulator on the new APK (minutes the first time while its dex converts, " +
+          "seconds after); the app is installed, not started. Wear tiles go in with " +
+          "[\"shell\", \"am broadcast -a com.google.android.wearable.app.DEBUG_SURFACE --es " +
+          "operation add-tile --ecn component pkg/.TileService\"], as Android Studio sends " +
+          "them. Returns exitCode, stdout (or the bytes written to `output`), stderr and the " +
+          "simulator's events. Needs the SDK's platform-tools adb (ANDROID_HOME or PATH). " +
+          "simulator_command and simulator_screenshot keep working on the same device.",
+      inputSchema =
+        schema(
+          """
+          {"type":"object","properties":{
+            "simulator":{"type":"string","description":"Simulator id; optional when only one runs."},
+            "args":{"type":"array","items":{"type":"string"},"description":"adb's arguments, without -s (the tool adds the simulator's serial)."},
+            "command":{"type":"string","description":"Instead of args: one command line, split as a shell would, e.g. \"shell getprop ro.build.version.sdk\"."},
+            "output":{"type":"string","description":"Absolute path to write stdout to, as bytes, for a command whose output is data (exec-out screencap -p, exec-out run-as … cat). A pull writes to its own local path: [\"pull\", \"/sdcard/f\", \"/abs/f\"]."},
+            "timeoutMs":{"type":"integer","description":"How long the command may take, at most 1800000 (default 600000: a first install converts the APK)."}
+          }}
+          """
+        ),
+    )
+
   private val stopTool =
     ToolDef(
       name = STOP,
@@ -801,6 +969,16 @@ class SimulatorMcp(
         ),
     )
 
+  /** One adb run: its exit code, stdout as bytes, stderr as text. */
+  class AdbRun(
+    val exitCode: Int,
+    val stdout: ByteArray,
+    val stderr: String,
+    val timedOut: Boolean = false,
+  ) {
+    fun stdoutText(): String = String(stdout, Charsets.UTF_8)
+  }
+
   companion object {
     const val LAUNCH = "simulator_launch"
     const val COMMAND = "simulator_command"
@@ -810,8 +988,89 @@ class SimulatorMcp(
     const val RESTART = "simulator_restart"
     const val UPDATE = "simulator_update"
     const val RELOAD = "simulator_reload"
+    const val ADB = "simulator_adb"
     val TOOL_NAMES: List<String> =
-      listOf(LAUNCH, COMMAND, SCREENSHOT, LOGS, RESTART, UPDATE, RELOAD, STOP)
+      listOf(LAUNCH, COMMAND, SCREENSHOT, LOGS, RESTART, UPDATE, RELOAD, ADB, STOP)
+
+    /** adb options that would point a command at another device or server. */
+    private val DEVICE_OPTIONS = setOf("-s", "-t", "-d", "-e", "-H", "-P", "-L")
+
+    /** adb commands about other devices or the server, not this one. */
+    private val OTHER_DEVICES =
+      setOf("connect", "disconnect", "kill-server", "start-server", "pair", "devices", "mdns")
+
+    private const val ADB_TIMEOUT_MS = 600_000L
+    private const val MAX_ADB_TIMEOUT_MS = 1_800_000L
+    private const val ADB_WAIT_MS = 30_000L
+    private const val DEVICE_EVENT_MS = 5_000L
+    private const val MAX_ADB_OUTPUT = 64 * 1024
+
+    /**
+     * The SDK's `adb`: `ANDROID_HOME` / `ANDROID_SDK_ROOT` `platform-tools/adb`, else `adb` on
+     * `PATH`.
+     */
+    fun defaultAdb(
+      environment: Map<String, String> = System.getenv()
+    ): (List<String>, Long) -> AdbRun = { args, timeoutMs ->
+      val sdkAdb =
+        listOfNotNull(environment["ANDROID_HOME"], environment["ANDROID_SDK_ROOT"])
+          .map { File(it, "platform-tools/adb") }
+          .firstOrNull { it.canExecute() }
+      val process =
+        try {
+          ProcessBuilder(listOf(sdkAdb?.path ?: "adb") + args).start()
+        } catch (e: java.io.IOException) {
+          throw IllegalStateException("no adb: set ANDROID_HOME or put platform-tools on PATH", e)
+        }
+      process.outputStream.close()
+      val stdout = CompletableFuture.supplyAsync { process.inputStream.readBytes() }
+      val stderr = CompletableFuture.supplyAsync { process.errorStream.reader().readText() }
+      val finished = process.waitFor(timeoutMs, TimeUnit.MILLISECONDS)
+      if (!finished) process.destroyForcibly()
+      AdbRun(
+        exitCode = if (finished) process.exitValue() else -1,
+        stdout = stdout.get(5, TimeUnit.SECONDS),
+        stderr = stderr.get(5, TimeUnit.SECONDS),
+        timedOut = !finished,
+      )
+    }
+
+    /** A command line split as `sh` splits words: quotes and backslashes, nothing else. */
+    fun splitCommand(line: String): List<String> {
+      val words = mutableListOf<String>()
+      val word = StringBuilder()
+      var inWord = false
+      var quote: Char? = null
+      var i = 0
+      while (i < line.length) {
+        val c = line[i]
+        when {
+          quote != null && c == quote -> quote = null
+          quote == '"' && c == '\\' && i + 1 < line.length -> word.append(line[++i])
+          quote != null -> word.append(c)
+          c == '\'' || c == '"' -> {
+            quote = c
+            inWord = true
+          }
+          c == '\\' && i + 1 < line.length -> {
+            word.append(line[++i])
+            inWord = true
+          }
+          c.isWhitespace() -> {
+            if (inWord) words += word.toString()
+            word.clear()
+            inWord = false
+          }
+          else -> {
+            word.append(c)
+            inWord = true
+          }
+        }
+        i++
+      }
+      if (inWord) words += word.toString()
+      return words
+    }
 
     /** The devices of a paired launch, as the CLI's `device` names them. */
     private val PAIRED = setOf("phone", "watch")

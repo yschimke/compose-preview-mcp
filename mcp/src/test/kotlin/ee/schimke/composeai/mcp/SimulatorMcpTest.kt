@@ -9,7 +9,9 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
@@ -426,5 +428,246 @@ class SimulatorMcpTest {
     val result = call(SimulatorMcp.LAUNCH, JsonObject(emptyMap()))
     assertThat(result.isError).isTrue()
     assertThat(started).isEmpty()
+  }
+
+  /** `launch --adb`'s stand-in: the device event, a system boot, then the APK installed. */
+  private val adbFake =
+    """
+    echo '{"event":"device","serial":"emulator-5556","adbPort":5557,"consolePort":5556,"grpcPort":8556,"avd":"Compose_Preview_Phone","formFactor":"phone"}'
+    echo '{"event":"ready","package":"ee.schimke.composeai.simulator.system"}'
+    echo '{"event":"ready","package":"com.example"}'
+    echo '{"event":"installed","package":"com.example"}'
+    while IFS= read -r line; do :; done
+    """
+      .trimIndent()
+
+  private fun adbMcp(
+    script: String = adbFake,
+    started: MutableList<List<String>> = mutableListOf(),
+    adbCalls: MutableList<List<String>> = mutableListOf(),
+    answer: (List<String>) -> SimulatorMcp.AdbRun = {
+      SimulatorMcp.AdbRun(0, "ok\n".toByteArray(), "")
+    },
+  ) =
+    SimulatorMcp(
+      start = {
+        started += it
+        ProcessBuilder("bash", "-c", script).start()
+      },
+      readyTimeoutMs = 10_000,
+      commandTimeoutMs = 10_000,
+      adb = { args, _ ->
+        adbCalls += args
+        answer(args)
+      },
+    )
+
+  @Test
+  fun `an adb launch needs no apk and returns the device`() {
+    val started = mutableListOf<List<String>>()
+    val device = adbMcp(started = started)
+    try {
+      val result = runBlocking {
+        device.handle(
+          SimulatorMcp.LAUNCH,
+          buildJsonObject {
+            put("adb", true)
+            put("formFactor", "wear")
+          },
+        )!!
+      }
+      assertThat(result.isError).isNull()
+      assertThat(started.single())
+        .containsExactly("launch", "--adb", "--form-factor", "wear", "--control", "stdio")
+        .inOrder()
+      val serial = result.structuredContent!!["device"]!!.jsonObject["serial"]!!.jsonPrimitive
+      assertThat(serial.content).isEqualTo("emulator-5556")
+    } finally {
+      device.shutdown()
+    }
+  }
+
+  @Test
+  fun `an adb launch with an apk answers once it is installed`() {
+    val device = adbMcp()
+    try {
+      val result = runBlocking {
+        device.handle(
+          SimulatorMcp.LAUNCH,
+          buildJsonObject {
+            put("adb", true)
+            put("apk", apk().path)
+          },
+        )!!
+      }
+      assertThat(result.isError).isNull()
+      assertThat(result.structuredContent!!["installed"]!!.jsonPrimitive.content)
+        .isEqualTo("com.example")
+    } finally {
+      device.shutdown()
+    }
+  }
+
+  @Test
+  fun `an apk the device cannot install fails the launch`() {
+    val failing =
+      adbMcp(
+        script =
+          """
+          echo '{"event":"device","serial":"emulator-5554","adbPort":5555,"consolePort":5554}'
+          echo '{"event":"ready","package":"ee.schimke.composeai.simulator.system"}'
+          echo '{"event":"installFailed","apk":"x.apk","error":"invalid package name"}'
+          while IFS= read -r line; do :; done
+          """
+            .trimIndent()
+      )
+    try {
+      val result = runBlocking {
+        failing.handle(
+          SimulatorMcp.LAUNCH,
+          buildJsonObject {
+            put("adb", true)
+            put("apk", apk().path)
+          },
+        )!!
+      }
+      assertThat(result.isError).isTrue()
+      assertThat((result.content.first() as ContentBlock.Text).text)
+        .contains("invalid package name")
+    } finally {
+      failing.shutdown()
+    }
+  }
+
+  @Test
+  fun `simulator_adb runs adb against the device's serial`() {
+    val calls = mutableListOf<List<String>>()
+    val device = adbMcp(adbCalls = calls)
+    try {
+      runBlocking { device.handle(SimulatorMcp.LAUNCH, buildJsonObject { put("adb", true) })!! }
+      val result = runBlocking {
+        device.handle(
+          SimulatorMcp.ADB,
+          buildJsonObject { put("command", "shell 'pm list packages' -3") },
+        )!!
+      }
+      assertThat(result.isError).isNull()
+      assertThat(calls)
+        .containsExactly(
+          listOf("-s", "emulator-5556", "wait-for-device"),
+          listOf("-s", "emulator-5556", "shell", "pm list packages", "-3"),
+        )
+        .inOrder()
+      assertThat(result.structuredContent!!["stdout"]!!.jsonPrimitive.content).isEqualTo("ok\n")
+    } finally {
+      device.shutdown()
+    }
+  }
+
+  @Test
+  fun `simulator_adb writes stdout bytes to output and reports a failing exit`() {
+    val png = byteArrayOf(0x89.toByte(), 'P'.code.toByte(), 'N'.code.toByte(), 'G'.code.toByte())
+    val device =
+      adbMcp(
+        answer = { args ->
+          when {
+            "screencap" in args -> SimulatorMcp.AdbRun(0, png, "")
+            "false" in args -> SimulatorMcp.AdbRun(1, ByteArray(0), "boom")
+            else -> SimulatorMcp.AdbRun(0, ByteArray(0), "")
+          }
+        }
+      )
+    try {
+      runBlocking { device.handle(SimulatorMcp.LAUNCH, buildJsonObject { put("adb", true) })!! }
+      val out = File(tmp.root, "screen.png")
+      val shot = runBlocking {
+        device.handle(
+          SimulatorMcp.ADB,
+          buildJsonObject {
+            put("args", JsonArray(listOf("exec-out", "screencap", "-p").map(::JsonPrimitive)))
+            put("output", out.path)
+          },
+        )!!
+      }
+      assertThat(shot.isError).isNull()
+      assertThat(out.readBytes()).isEqualTo(png)
+      val failed = runBlocking {
+        device.handle(SimulatorMcp.ADB, buildJsonObject { put("command", "shell false") })!!
+      }
+      assertThat(failed.isError).isTrue()
+      assertThat(failed.structuredContent!!["exitCode"]!!.jsonPrimitive.content).isEqualTo("1")
+      assertThat(failed.structuredContent!!["stderr"]!!.jsonPrimitive.content).isEqualTo("boom")
+    } finally {
+      device.shutdown()
+    }
+  }
+
+  @Test
+  fun `simulator_adb refuses other devices and simulators without adb`() {
+    val calls = mutableListOf<List<String>>()
+    val device = adbMcp(adbCalls = calls)
+    try {
+      runBlocking { device.handle(SimulatorMcp.LAUNCH, buildJsonObject { put("adb", true) })!! }
+      for (line in listOf("-s other shell ls", "connect localhost:5555", "kill-server")) {
+        val refused = runBlocking {
+          device.handle(SimulatorMcp.ADB, buildJsonObject { put("command", line) })!!
+        }
+        assertThat(refused.isError).isTrue()
+      }
+      // An option of the device command itself is fine.
+      val ok = runBlocking {
+        device.handle(SimulatorMcp.ADB, buildJsonObject { put("command", "shell ls -d /sdcard") })!!
+      }
+      assertThat(ok.isError).isNull()
+      assertThat(calls.filter { "wait-for-device" !in it })
+        .containsExactly(listOf("-s", "emulator-5556", "shell", "ls", "-d", "/sdcard"))
+    } finally {
+      device.shutdown()
+    }
+    // A simulator launched without adb has no device.
+    call(SimulatorMcp.LAUNCH, buildJsonObject { put("apk", apk().path) })
+    val noDevice = call(SimulatorMcp.ADB, buildJsonObject { put("command", "devices") })
+    assertThat((noDevice.content.first() as ContentBlock.Text).text).contains("adb: true")
+  }
+
+  @Test
+  fun `simulator_adb gives a command its own timeout, not the launch's`() {
+    val timeouts = mutableListOf<Long>()
+    val device =
+      SimulatorMcp(
+        start = { ProcessBuilder("bash", "-c", adbFake).start() },
+        readyTimeoutMs = 10_000,
+        commandTimeoutMs = 10_000,
+        adb = { _, timeout ->
+          timeouts += timeout
+          SimulatorMcp.AdbRun(0, ByteArray(0), "")
+        },
+      )
+    try {
+      runBlocking { device.handle(SimulatorMcp.LAUNCH, buildJsonObject { put("adb", true) })!! }
+      runBlocking {
+        device.handle(SimulatorMcp.ADB, buildJsonObject { put("command", "install a.apk") })!!
+      }
+      runBlocking {
+        device.handle(
+          SimulatorMcp.ADB,
+          buildJsonObject {
+            put("command", "install a.apk")
+            put("timeoutMs", 900_000)
+          },
+        )!!
+      }
+      // After each wait-for-device: the default, then the asked-for limit, neither cut to 10s.
+      assertThat(timeouts.filterIndexed { i, _ -> i % 2 == 1 }).containsExactly(600_000L, 900_000L)
+    } finally {
+      device.shutdown()
+    }
+  }
+
+  @Test
+  fun `commands split as a shell splits words`() {
+    assertThat(SimulatorMcp.splitCommand("""shell am start -n "com.x/.A b" 'it''s' a\ b"""))
+      .containsExactly("shell", "am", "start", "-n", "com.x/.A b", "its", "a b")
+      .inOrder()
   }
 }

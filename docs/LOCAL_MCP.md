@@ -85,6 +85,19 @@ control protocol and the constraints). No emulator, device or `adb`.
   timings. A compile error comes back as an error with the compiler's messages, and the app keeps
   running. `live: true` on the launch reloads after every saved edit by itself, as `reload`
   events.
+- **`simulator_adb`** `{simulator?, args | command, output?, timeoutMs?}`, for a simulator launched
+  with `adb: true`: runs the SDK's `adb -s <serial>` with `args` (or one `command` line) against
+  the simulator, which `launch --adb` serves to adb and Android Studio as an emulator
+  (`emulator-5554` and up). `install` / `uninstall` (each boots a simulator on the new package;
+  the app is installed, not started), `shell` (`am start`, `pm`, `input`, `getprop`, and Android
+  Studio's Wear `DEBUG_SURFACE` broadcasts that add a tile or widget), `push` / `pull` under
+  `/data/local/tmp` and `/sdcard` (a pull names its local path, as adb's does), and `exec-out screencap -p` with `output` (stdout written there
+  as bytes). It returns `exitCode`, `stdout` (or `output` and `bytes`), `stderr` and the
+  simulator's events; options that point adb at another device or server (`-s`, `connect`,
+  `kill-server`, …) are refused. `simulator_launch` with `adb` needs no `apk` (the device boots to
+  its home screen, or with `formFactor: wear` its watch face); an `apk` given is installed before
+  the launch answers, and the result's `device` holds the `serial`, `adbPort`, `consolePort` and
+  `grpcPort`.
 - **`simulator_stop`** closes one. `simulator` is optional while only one runs; every simulator
   ends with the server.
 

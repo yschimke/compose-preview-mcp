@@ -187,6 +187,38 @@ class SimulatorMcpTest {
   }
 
   @Test
+  fun `Wear tiles pass through to the launch`() {
+    call(
+      SimulatorMcp.LAUNCH,
+      buildJsonObject {
+        put("apk", apk().path)
+        put("tiles", buildJsonArray { add("GoalsTileService") })
+      },
+    )
+    assertThat(started.single()).containsAtLeast("--tile", "GoalsTileService").inOrder()
+  }
+
+  @Test
+  fun `the command schema has the Wear system UI's commands and arguments`() {
+    val command = mcp.toolDefs().single { it.name == SimulatorMcp.COMMAND }
+    val properties = command.inputSchema.jsonObject["properties"]!!.jsonObject
+    val cmds = properties["cmd"]!!.jsonObject["enum"]!!.jsonArray.map { it.jsonPrimitive.content }
+    assertThat(cmds)
+      .containsAtLeast(
+        "launcher",
+        "notifications",
+        "notification",
+        "ongoing",
+        "tiles",
+        "health",
+        "quickSettings",
+        "rotary",
+      )
+    assertThat(properties.keys)
+      .containsAtLeast("component", "label", "heartRate", "heartRateAccuracy", "delta", "count")
+  }
+
+  @Test
   fun `the command schema has the home screen's commands and widget actions`() {
     val command = mcp.toolDefs().single { it.name == SimulatorMcp.COMMAND }
     val properties = command.inputSchema.jsonObject["properties"]!!.jsonObject

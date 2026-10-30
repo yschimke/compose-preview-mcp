@@ -44,7 +44,7 @@ Eight tools run an Android APK in Robolectric's simulator and let the agent driv
 compose-ai-tools' `compose-preview launch <apk> --control stdio` (its `docs/SIMULATOR.md` has the
 control protocol and the constraints). No emulator, device or `adb`.
 
-- **`simulator_launch`** `{apk, headless?, showAgent?, qualifiers?, fontScale?, sdk?, java?, pair?, project?, module?, variant?, live?, launcher?, widgets?}` starts
+- **`simulator_launch`** `{apk, headless?, showAgent?, qualifiers?, fontScale?, sdk?, java?, pair?, project?, module?, variant?, live?, launcher?, widgets?, tiles?}` starts
   one and waits for its `ready` event: a simulator id, the package, display size and first
   activity. The first launch of an APK converts its dex (tens of seconds); later ones come from the
   CLI's cache. **The window stays up unless `headless`**, so the person watches the agent work: the
@@ -61,7 +61,12 @@ control protocol and the constraints). No emulator, device or `adb`.
   `associate()` is answered: `policy: accept | reject | ask`, `answer`), and with `launcher` on the
   launch the home screen's `home`, `drawer`, `shortcuts`, `shortcut`, `widgets`, `widget`
   (`action: add | remove | resize | update | reconfigure | pin`, `provider`, `widgetId`,
-  `spanX`/`spanY`) and `picker` — with its arguments beside `cmd`, and returns its result plus the `events` the app produced since
+  `spanX`/`spanY`) and `picker`; on a Wear app the watch's system UI instead (`launcher` or
+  `tiles` on the launch): `home` (the watch face), `launcher`, `notifications` (`op: open |
+  close | clear`), `notification` (`key`, `op: tap | action | reply | dismiss | snooze`; any form
+  factor), `ongoing`, `tiles` (`op: list | add | remove | show | next | prev | refresh`,
+  `component`), `health` (`heartRate`, `steps`, … for tiles and widgets), `quickSettings`, and
+  `rotary` for the crown — with its arguments beside `cmd`, and returns its result plus the `events` the app produced since
   the last call (activities resumed or destroyed by its own navigation, services started, intents
   nothing handled).
 - **`simulator_screenshot`** returns the display as an image block (never the window's overlay).

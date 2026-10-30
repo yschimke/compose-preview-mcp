@@ -143,6 +143,39 @@ class SimulatorMcpTest {
   }
 
   @Test
+  fun `a Play services state passes through to the launch`() {
+    call(
+      SimulatorMcp.LAUNCH,
+      buildJsonObject {
+        put("apk", apk().path)
+        put("playServices", "none")
+      },
+    )
+    assertThat(started.single()).containsAtLeast("--play-services", "none").inOrder()
+  }
+
+  @Test
+  fun `the command schema accepts the screen and Play services states`() {
+    val command = mcp.toolDefs().single { it.name == SimulatorMcp.COMMAND }
+    val properties = command.inputSchema.jsonObject["properties"]!!.jsonObject
+    val cmds = properties["cmd"]!!.jsonObject["enum"]!!.jsonArray.map { it.jsonPrimitive.content }
+    assertThat(cmds).containsAtLeast("screen", "playServices")
+    val states =
+      properties["state"]!!.jsonObject["enum"]!!.jsonArray.map { it.jsonPrimitive.content }
+    assertThat(states)
+      .containsExactly(
+        "on",
+        "ambient",
+        "off",
+        "installed",
+        "none",
+        "outdated",
+        "disabled",
+        "invalid",
+      )
+  }
+
+  @Test
   fun `commands return results and the events the app produced`() {
     call(SimulatorMcp.LAUNCH, buildJsonObject { put("apk", apk().path) })
 

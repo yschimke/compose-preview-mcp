@@ -111,6 +111,7 @@ class SimulatorMcp(
       args.string("fingerprint")?.let { addAll(listOf("--fingerprint", it)) }
       pair?.let { addAll(listOf("--pair", it.path)) }
       args.string("pairQualifiers")?.let { addAll(listOf("--pair-qualifiers", it)) }
+      args.string("playServices")?.let { addAll(listOf("--play-services", it)) }
     }
     val process =
       try {
@@ -419,7 +420,8 @@ class SimulatorMcp(
             "dataLayer":{"type":"string","enum":["agent"],"description":"Simulate the Wearable Data Layer with you as the peer: what the app sends arrives as datalayer events of kind send; simulator_command dataLayer {action} connects a peer, puts data items, sends messages and replies."},
             "fingerprint":{"type":"string","description":"Build.FINGERPRINT in place of Robolectric's 'robolectric', which some apps check to skip real work under tests."},
             "pair":{"type":"string","description":"Absolute path to a Wear OS APK to run as this phone app's paired watch."},
-            "pairQualifiers":{"type":"string","description":"The paired watch's display qualifiers (default a large round watch)."}
+            "pairQualifiers":{"type":"string","description":"The paired watch's display qualifiers (default a large round watch)."},
+            "playServices":{"type":"string","enum":["installed","none","outdated","disabled","invalid"],"description":"Google Play services as the app's availability checks see it: installed (default, SUCCESS), or none / outdated / disabled / invalid to test the app's error paths. simulator_command playServices {state} changes it while the app runs."}
           }}
           """
         ),
@@ -493,7 +495,7 @@ class SimulatorMcp(
           {"type":"object","required":["cmd"],"properties":{
             "simulator":{"type":"string","description":"Simulator id from simulator_launch; optional when only one runs."},
             "device":{"type":"string","enum":["phone","watch"],"description":"With a paired launch: which device runs the command (default phone)."},
-            "cmd":{"type":"string","enum":["info","hierarchy","find","tap","longPress","swipe","key","back","text","launch","finish","activities","startActivity","startService","stopService","bindService","unbindService","services","broadcast","notifications","query","components","qualifiers","permissions","wait","ping","dataLayer","shell","settings","logcat","files","content","network","wifi","bluetooth","display","forceStop","clearData","getprop","package","packages","screen","ambient","tilt","wake","palm","sleep"]},
+            "cmd":{"type":"string","enum":["info","hierarchy","find","tap","longPress","swipe","key","back","text","launch","finish","activities","startActivity","startService","stopService","bindService","unbindService","services","broadcast","notifications","query","components","qualifiers","permissions","wait","ping","dataLayer","shell","settings","logcat","files","content","network","wifi","bluetooth","display","forceStop","clearData","getprop","package","packages","screen","ambient","tilt","wake","palm","sleep","playServices"]},
             "text":{"type":"string"},"textContains":{"type":"string"},"desc":{"type":"string"},"descContains":{"type":"string"},
             "resourceId":{"type":"string"},"cls":{"type":"string"},"clickable":{"type":"boolean"},"index":{"type":"integer"},
             "x":{"type":"number"},"y":{"type":"number"},"x1":{"type":"number"},"y1":{"type":"number"},"x2":{"type":"number"},"y2":{"type":"number"},
@@ -521,7 +523,7 @@ class SimulatorMcp(
             "dataMap":{"type":"object","description":"dataLayer: payload as a DataMap"},"assets":{"type":"object"},
             "error":{"type":"string"},"result":{"type":"integer"},"responseUrl":{"type":"string"},"requestTimeoutMs":{"type":"integer"},
             "addCapability":{"type":"string"},"removeCapability":{"type":"string"},
-            "state":{"type":"string","enum":["on","ambient","off"]},"timeoutMs":{"type":"integer"},"alwaysOn":{"type":"boolean"},"burnIn":{"type":"boolean"},"lowBit":{"type":"boolean"}
+            "state":{"type":"string","enum":["on","ambient","off","installed","none","outdated","disabled","invalid"],"description":"screen: on / ambient / off. playServices: installed / none / outdated / disabled / invalid."},"timeoutMs":{"type":"integer"},"alwaysOn":{"type":"boolean"},"burnIn":{"type":"boolean"},"lowBit":{"type":"boolean"}
           }}
           """
         ),

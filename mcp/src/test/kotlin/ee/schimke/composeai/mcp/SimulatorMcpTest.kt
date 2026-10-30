@@ -43,6 +43,9 @@ class SimulatorMcpTest {
           echo "{\"id\":${'$'}id,\"ok\":true,\"result\":{\"x\":1,\"y\":2}}" ;;
         screenshot)
           echo "{\"id\":${'$'}id,\"ok\":true,\"result\":{\"width\":540,\"height\":960,\"png\":\"iVBORw0KGgo=\"}}" ;;
+        restart|update)
+          echo '{"event":"restarted","reason":"restart"}'
+          echo "{\"id\":${'$'}id,\"ok\":true,\"result\":{\"totalMs\":5,\"sent\":${'$'}line}}" ;;
         explode)
           echo "app threw" >&2
           echo "{\"id\":${'$'}id,\"ok\":false,\"error\":\"java.lang.IllegalStateException: boom\"}" ;;
@@ -345,5 +348,35 @@ class SimulatorMcpTest {
     } finally {
       paired.shutdown()
     }
+  }
+
+  @Test
+  fun `restart and update are the cli's own commands, with their timings and events`() {
+    call(SimulatorMcp.LAUNCH, buildJsonObject { put("apk", apk().path) })
+
+    val restart = call(SimulatorMcp.RESTART, buildJsonObject { put("keepData", false) })
+    assertThat(restart.isError).isNull()
+    val restarted = restart.structuredContent!!
+    assertThat(restarted["totalMs"]!!.jsonPrimitive.content).isEqualTo("5")
+    val sent = restarted["sent"]!!.jsonObject
+    assertThat(sent["cmd"]!!.jsonPrimitive.content).isEqualTo("restart")
+    assertThat(sent["keepData"]!!.jsonPrimitive.content).isEqualTo("false")
+    assertThat(restarted["events"]!!.jsonArray.single().jsonObject["event"]!!.jsonPrimitive.content)
+      .isEqualTo("restarted")
+
+    val rebuilt = tmp.newFile("rebuilt.apk")
+    val update = call(SimulatorMcp.UPDATE, buildJsonObject { put("apk", rebuilt.path) })
+    assertThat(update.isError).isNull()
+    val updateSent = update.structuredContent!!["sent"]!!.jsonObject
+    assertThat(updateSent["cmd"]!!.jsonPrimitive.content).isEqualTo("update")
+    assertThat(updateSent["apk"]!!.jsonPrimitive.content).isEqualTo(rebuilt.absolutePath)
+  }
+
+  @Test
+  fun `update needs an apk that exists`() {
+    call(SimulatorMcp.LAUNCH, buildJsonObject { put("apk", apk().path) })
+    val missing = call(SimulatorMcp.UPDATE, buildJsonObject { put("apk", "/no/such.apk") })
+    assertThat(missing.isError).isTrue()
+    assertThat(call(SimulatorMcp.UPDATE, JsonObject(emptyMap())).isError).isTrue()
   }
 }

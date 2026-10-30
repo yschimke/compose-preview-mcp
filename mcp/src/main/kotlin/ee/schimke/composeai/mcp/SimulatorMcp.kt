@@ -95,6 +95,7 @@ class SimulatorMcp(
       args.string("qualifiers")?.let { addAll(listOf("--qualifiers", it)) }
       args.string("fontScale")?.let { addAll(listOf("--font-scale", it)) }
       args.int("sdk")?.let { addAll(listOf("--sdk", it.toString())) }
+      args.string("network")?.let { addAll(listOf("--network", it)) }
       args.string("java")?.let { addAll(listOf("--java", it)) }
     }
     val process =
@@ -349,6 +350,7 @@ class SimulatorMcp(
             "qualifiers":{"type":"string","description":"Display resource qualifiers, Robolectric syntax, e.g. w411dp-h891dp-xxhdpi-night. Default w360dp-h640dp-hdpi."},
             "fontScale":{"type":"string","description":"Font scale, e.g. 1.3."},
             "sdk":{"type":"integer","description":"Android API level to simulate (default 35)."},
+            "network":{"type":"string","description":"Start on wifi (default), cellular, ethernet, vpn, captive (no internet) or offline; append ,airplane (or just airplane) for airplane mode."},
             "java":{"type":"string","description":"JDK 21+ home or java binary, when the default JDK is older."}
           }}
           """
@@ -381,7 +383,18 @@ class SimulatorMcp(
           "streams log events); files {op: list|read|write|mkdir|delete|pull|push, path (relative " +
           "to the data dir, /data/data/<pkg>/…, /sdcard/…), to?, from?, text?, recursive?}; " +
           "content {op: query|insert|update|delete, uri, values?, selection?, args?}; network " +
-          "{wifi?, airplane?}; display {size?: WxH|reset, density?: N|reset}; forceStop; " +
+          "{mode?: wifi|cellular|ethernet|vpn|captive|offline, wifi?, data?, airplane?, " +
+          "metered?, cellular?: 5g|lte|3g|2g, latencyMs?, kbps?, block? [hosts], dataSaver?} " +
+          "(ConnectivityManager, its callbacks and the app's real traffic: offline, connections " +
+          "fail as on a device); wifi {op: status|scan|connect|disconnect|request, networks? " +
+          "[{ssid, rssi?, security?}], ssid?, answer?: accept|reject, policy?: accept|reject|ask} " +
+          "(a WifiNetworkSpecifier request is a wifiRequest event); bluetooth {op: status|enable|" +
+          "disable|request|advertise|found|remove|bond|unbond|notify|disconnect, address?, name?, " +
+          "rssi?, serviceUuids?, manufacturerData? {companyId: hex}, serviceData?, gatt? " +
+          "{services: [{uuid, characteristics: [{uuid, properties, value?}]}]}, characteristic?, " +
+          "value? (hex or {text}), answer?, policy?} (BLE peripherals for the app's scans, a GATT " +
+          "server whose writes arrive as gatt events; ACTION_REQUEST_ENABLE is a " +
+          "bluetoothRequest event); display {size?: WxH|reset, density?: N|reset}; forceStop; " +
           "clearData; getprop {name?}; package; packages. A selector is text/desc (exact), " +
           "textContains/" +
           "descContains, resourceId (a Compose testTag when exposed), cls, clickable. An intent " +
@@ -393,20 +406,28 @@ class SimulatorMcp(
           """
           {"type":"object","required":["cmd"],"properties":{
             "simulator":{"type":"string","description":"Simulator id from simulator_launch; optional when only one runs."},
-            "cmd":{"type":"string","enum":["info","hierarchy","find","tap","longPress","swipe","key","back","text","launch","finish","activities","startActivity","startService","stopService","bindService","unbindService","services","broadcast","notifications","query","components","qualifiers","permissions","wait","ping","shell","settings","logcat","files","content","network","display","forceStop","clearData","getprop","package","packages"]},
+            "cmd":{"type":"string","enum":["info","hierarchy","find","tap","longPress","swipe","key","back","text","launch","finish","activities","startActivity","startService","stopService","bindService","unbindService","services","broadcast","notifications","query","components","qualifiers","permissions","wait","ping","shell","settings","logcat","files","content","network","wifi","bluetooth","display","forceStop","clearData","getprop","package","packages"]},
             "text":{"type":"string"},"textContains":{"type":"string"},"desc":{"type":"string"},"descContains":{"type":"string"},
             "resourceId":{"type":"string"},"cls":{"type":"string"},"clickable":{"type":"boolean"},"index":{"type":"integer"},
             "x":{"type":"number"},"y":{"type":"number"},"x1":{"type":"number"},"y1":{"type":"number"},"x2":{"type":"number"},"y2":{"type":"number"},
             "durationMs":{"type":"integer"},"steps":{"type":"integer"},"ms":{"type":"integer"},"settleMs":{"type":"integer"},
-            "key":{"type":["string","integer","array"]},"flat":{"type":"boolean"},"value":{"type":"string"},
+            "key":{"type":["string","integer","array"]},"flat":{"type":"boolean"},"value":{"type":["string","object","array"]},
             "intent":{"type":"object"},"uri":{"type":"string"},"projection":{"type":"array","items":{"type":"string"}},
             "selection":{"type":"string"},"args":{"type":"array","items":{"type":"string"}},"sort":{"type":"string"},"limit":{"type":"integer"},
-            "policy":{"type":"string","enum":["grant","deny"]},"grant":{"type":"array","items":{"type":"string"}},"deny":{"type":"array","items":{"type":"string"}},"reset":{"type":"boolean"},
+            "policy":{"type":"string","enum":["grant","deny","accept","reject","ask"],"description":"permissions: grant|deny; wifi/bluetooth request: accept|reject|ask"},"grant":{"type":"array","items":{"type":"string"}},"deny":{"type":"array","items":{"type":"string"}},"reset":{"type":"boolean"},
             "command":{"type":"string","description":"shell: an adb shell command line"},
             "op":{"type":"string"},"namespace":{"type":"string","enum":["system","secure","global"]},
             "path":{"type":"string"},"to":{"type":"string"},"from":{"type":"string"},"recursive":{"type":"boolean"},
             "values":{"type":"object"},"filters":{"type":"object"},"default":{"type":"string"},"regex":{"type":"string"},"tail":{"type":"integer"},
-            "wifi":{"type":"boolean"},"airplane":{"type":"boolean"},"size":{"type":"string"},"density":{"type":["string","integer"]},
+            "wifi":{"type":"boolean"},"airplane":{"type":"boolean"},"data":{"type":"boolean"},
+            "mode":{"type":"string","enum":["wifi","cellular","ethernet","vpn","captive","offline"]},"metered":{"type":["boolean","null"]},
+            "cellular":{"type":"string","enum":["5g","lte","3g","2g"]},"downKbps":{"type":"integer"},"upKbps":{"type":"integer"},
+            "latencyMs":{"type":"integer"},"kbps":{"type":"integer"},"block":{"type":"array","items":{"type":"string"}},"dataSaver":{"type":"boolean"},
+            "networks":{"type":"array","items":{"type":"object"}},"ssid":{"type":"string"},"bssid":{"type":"string"},"rssi":{"type":"integer"},
+            "answer":{"type":"string","enum":["accept","reject"]},"requestId":{"type":"integer","description":"wifi/bluetooth request: which waiting request to answer (default the oldest)"},
+            "address":{"type":"string","description":"bluetooth: a device address, AA:BB:CC:DD:EE:FF"},
+            "serviceUuids":{"type":"array","items":{"type":"string"}},"serviceData":{"type":"object"},"manufacturerData":{"type":"object"},
+            "txPower":{"type":"integer"},"connectable":{"type":"boolean"},"gatt":{"type":"object"},"characteristic":{"type":"string"},"size":{"type":"string"},"density":{"type":["string","integer"]},
             "name":{"type":"string"},"package":{"type":"string"},"holdMs":{"type":"integer"},"longPress":{"type":"boolean"}
           }}
           """

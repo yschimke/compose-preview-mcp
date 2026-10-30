@@ -143,6 +143,18 @@ class SimulatorMcpTest {
   }
 
   @Test
+  fun `a Play services state passes through to the launch`() {
+    call(
+      SimulatorMcp.LAUNCH,
+      buildJsonObject {
+        put("apk", apk().path)
+        put("playServices", "none")
+      },
+    )
+    assertThat(started.single()).containsAtLeast("--play-services", "none").inOrder()
+  }
+
+  @Test
   fun `commands return results and the events the app produced`() {
     call(SimulatorMcp.LAUNCH, buildJsonObject { put("apk", apk().path) })
 

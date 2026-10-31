@@ -62,7 +62,7 @@ class SimulatorMcpTest {
 
   private val mcp =
     SimulatorMcp(
-      start = { args ->
+      start = { args, _ ->
         started += args
         ProcessBuilder("bash", "-c", fake).start()
       },
@@ -317,7 +317,9 @@ class SimulatorMcpTest {
   fun `a simulator that exits before ready reports its stderr`() {
     val failing =
       SimulatorMcp(
-        start = { ProcessBuilder("bash", "-c", "echo 'needs Java 21+' >&2; exit 1").start() },
+        start = { _, _ ->
+          ProcessBuilder("bash", "-c", "echo 'needs Java 21+' >&2; exit 1").start()
+        },
         readyTimeoutMs = 10_000,
       )
     val result = runBlocking {
@@ -328,6 +330,39 @@ class SimulatorMcpTest {
     }
     assertThat(result.isError).isTrue()
     assertThat((result.content.first() as ContentBlock.Text).text).contains("needs Java 21+")
+    // Its exit code, not "still running": stdout closes before the process is reaped.
+    assertThat((result.content.first() as ContentBlock.Text).text).contains("exit 1")
+    assertThat((result.content.first() as ContentBlock.Text).text).doesNotContain("still running")
+  }
+
+  @Test
+  fun `the CLI runs in the project, or the build holding the APK`() {
+    val project = tmp.newFolder("app")
+    File(project, "settings.gradle.kts").writeText("")
+    val apk = File(project, "app/build/outputs/apk/debug/app-debug.apk")
+    apk.parentFile.mkdirs()
+    apk.writeText("")
+    val directories = mutableListOf<File?>()
+    val recording =
+      SimulatorMcp(
+        start = { _, directory ->
+          directories += directory
+          ProcessBuilder("bash", "-c", fake).start()
+        },
+        readyTimeoutMs = 10_000,
+      )
+    runBlocking {
+      recording.handle(SimulatorMcp.LAUNCH, buildJsonObject { put("project", project.path) })
+      recording.handle(SimulatorMcp.LAUNCH, buildJsonObject { put("apk", apk.path) })
+      recording.handle(
+        SimulatorMcp.LAUNCH,
+        buildJsonObject { put("apk", tmp.newFile("loose.apk").path) },
+      )
+    }
+    recording.shutdown()
+    assertThat(directories.map { it?.canonicalFile })
+      .containsExactly(project.canonicalFile, project.canonicalFile, null)
+      .inOrder()
   }
 
   @Test
@@ -335,7 +370,7 @@ class SimulatorMcpTest {
     val child = AtomicReference<Process>()
     val slow =
       SimulatorMcp(
-        start = {
+        start = { _, _ ->
           ProcessBuilder("bash", "-c", "echo converting >&2; sleep 60").start().also(child::set)
         },
         readyTimeoutMs = 60_000,
@@ -381,7 +416,7 @@ class SimulatorMcpTest {
     val args = mutableListOf<String>()
     val paired =
       SimulatorMcp(
-        start = {
+        start = { it, _ ->
           args += it
           ProcessBuilder("bash", "-c", pairedFake).start()
         },
@@ -527,7 +562,7 @@ class SimulatorMcpTest {
     },
   ) =
     SimulatorMcp(
-      start = {
+      start = { it, _ ->
         started += it
         ProcessBuilder("bash", "-c", script).start()
       },
@@ -712,7 +747,7 @@ class SimulatorMcpTest {
     val timeouts = mutableListOf<Long>()
     val device =
       SimulatorMcp(
-        start = { ProcessBuilder("bash", "-c", adbFake).start() },
+        start = { _, _ -> ProcessBuilder("bash", "-c", adbFake).start() },
         readyTimeoutMs = 10_000,
         commandTimeoutMs = 10_000,
         adb = { _, timeout ->

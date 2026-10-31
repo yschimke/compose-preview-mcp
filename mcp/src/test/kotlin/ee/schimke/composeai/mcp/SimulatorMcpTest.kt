@@ -535,6 +535,118 @@ class SimulatorMcpTest {
     assertThat(sent["full"]!!.jsonPrimitive.content).isEqualTo("true")
   }
 
+  /**
+   * A simulator whose reload reports `mode`: `classes`, or `unchanged` for a `compile:false` reload
+   * when [fastFindsNothing] (the preview build compiled a module the app does not run).
+   */
+  private fun reloadingMcp(
+    precompile: (List<String>) -> Boolean,
+    fastFindsNothing: Boolean = false,
+  ) =
+    SimulatorMcp(
+      start = { _, _ ->
+        val fakeReload =
+          """
+          echo '{"event":"ready","package":"com.example","width":540,"height":960}'
+          while IFS= read -r line; do
+            id=${'$'}(printf '%s' "${'$'}line" | sed -n 's/.*"id":\([0-9]*\).*/\1/p')
+            mode=classes
+            case "${'$'}line" in *'"compile":false'*) [ "${'$'}FAST_UNCHANGED" = 1 ] && mode=unchanged ;; esac
+            echo "{\"id\":${'$'}id,\"ok\":true,\"result\":{\"mode\":\"${'$'}mode\",\"sent\":${'$'}line}}"
+          done
+          """
+            .trimIndent()
+        ProcessBuilder("bash", "-c", fakeReload)
+          .apply { environment()["FAST_UNCHANGED"] = if (fastFindsNothing) "1" else "0" }
+          .start()
+      },
+      readyTimeoutMs = 10_000,
+      commandTimeoutMs = 10_000,
+      precompile = precompile,
+    )
+
+  private fun reloadWithFiles(mcp: SimulatorMcp, files: List<String>): CallToolResult =
+    runBlocking {
+      val project = tmp.newFolder()
+      mcp.handle(SimulatorMcp.LAUNCH, buildJsonObject { put("project", project.path) })
+      mcp.handle(
+        SimulatorMcp.RELOAD,
+        buildJsonObject {
+          put("files", kotlinx.serialization.json.JsonArray(files.map { JsonPrimitive(it) }))
+        },
+      )!!
+    }
+
+  private fun CallToolResult.sentCompile(): String? =
+    structuredContent!!["sent"]!!.jsonObject["compile"]?.jsonPrimitive?.content
+
+  @Test
+  fun `a reload with files compiled by the preview build skips the cli's compile`() {
+    val asked = mutableListOf<List<String>>()
+    val mcp =
+      reloadingMcp(
+        precompile = {
+          asked += it
+          true
+        }
+      )
+    try {
+      val reload = reloadWithFiles(mcp, listOf("/p/app/src/main/kotlin/Main.kt"))
+      assertThat(reload.isError).isNull()
+      assertThat(asked).containsExactly(listOf("/p/app/src/main/kotlin/Main.kt"))
+      assertThat(reload.sentCompile()).isEqualTo("false")
+      assertThat(reload.structuredContent!!["precompiled"]!!.jsonPrimitive.content)
+        .isEqualTo("true")
+    } finally {
+      mcp.shutdown()
+    }
+  }
+
+  @Test
+  fun `a file the preview build could not compile reloads through gradle`() {
+    val mcp = reloadingMcp(precompile = { false })
+    try {
+      val reload = reloadWithFiles(mcp, listOf("/p/app/src/main/res/values/strings.xml"))
+      assertThat(reload.isError).isNull()
+      assertThat(reload.sentCompile()).isNull()
+      assertThat(reload.structuredContent!!["precompiled"]!!.jsonPrimitive.content)
+        .isEqualTo("false")
+    } finally {
+      mcp.shutdown()
+    }
+  }
+
+  @Test
+  fun `a fast reload that finds nothing changed is retried through gradle`() {
+    val mcp = reloadingMcp(precompile = { true }, fastFindsNothing = true)
+    try {
+      val reload = reloadWithFiles(mcp, listOf("/p/lib/src/main/kotlin/Shared.kt"))
+      assertThat(reload.isError).isNull()
+      assertThat(reload.sentCompile()).isNull()
+      assertThat(reload.structuredContent!!["mode"]!!.jsonPrimitive.content).isEqualTo("classes")
+      assertThat(reload.structuredContent!!["precompiled"]!!.jsonPrimitive.content)
+        .isEqualTo("false")
+    } finally {
+      mcp.shutdown()
+    }
+  }
+
+  @Test
+  fun `a reload without files never asks the preview build`() {
+    val mcp = reloadingMcp(precompile = { error("not asked") })
+    try {
+      val reload = runBlocking {
+        mcp.handle(SimulatorMcp.LAUNCH, buildJsonObject { put("project", tmp.newFolder().path) })
+        mcp.handle(SimulatorMcp.RELOAD, JsonObject(emptyMap()))!!
+      }
+      assertThat(reload.isError).isNull()
+      assertThat(reload.sentCompile()).isNull()
+      assertThat(reload.structuredContent!!["precompiled"]).isNull()
+    } finally {
+      mcp.shutdown()
+    }
+  }
+
   @Test
   fun `a launch needs an apk or a project`() {
     val result = call(SimulatorMcp.LAUNCH, JsonObject(emptyMap()))

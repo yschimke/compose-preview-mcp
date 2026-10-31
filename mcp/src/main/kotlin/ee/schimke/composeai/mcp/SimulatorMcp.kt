@@ -704,7 +704,8 @@ class SimulatorMcp(
           "app's own widgets (simulator_command home, widget, …); `widgets` starts with some " +
           "placed. On a Wear app `launcher` is the watch's system UI instead: watch face, " +
           "launcher, notification stream, tiles and widgets carousel, quick settings; `tiles` " +
-          "starts with tiles or Wear Widgets in the carousel. " +
+          "starts with tiles or Wear Widgets in the carousel, and simulator_command watchface " +
+          "hosts the app's androidx watch face and complication data sources. " +
           "With `adb` the simulator is a device adb and Android Studio see (emulator-5554 and " +
           "up), with or without an APK: drive it with simulator_adb as well.",
       inputSchema =
@@ -732,7 +733,7 @@ class SimulatorMcp(
             "adb":{"type":"boolean","description":"Serve the simulator to adb and Android Studio as an emulator (emulator-5554 and up): `apk` becomes optional (the device boots to its home screen or watch face), an `apk` given is installed rather than started, and simulator_adb runs adb commands against it. The result's `device` holds its serial and ports. Not with project or pair."},
             "formFactor":{"type":"string","enum":["phone","wear","glimmer","xr"],"description":"The device's form factor; detected from the APK when there is one. With adb and no apk, wear boots a watch."},
             "playServices":{"type":"string","enum":["installed","none","outdated","disabled","invalid"],"description":"Google Play services as the app's availability checks see it: installed (default, SUCCESS), or none / outdated / disabled / invalid to test the app's error paths. simulator_command playServices {state} changes it while the app runs."},
-            "launcher":{"type":"boolean","description":"A system UI under the app. On a phone, a home screen: HOME and Back from the app's root go there, its icons reopen the app, a long press shows the app's shortcuts, and the app's widgets are placed, sized, updated and tapped there (simulator_command home, drawer, shortcuts, shortcut, widgets, widget, picker). On a Wear app, the watch's: a watch face, launcher, notification stream, tiles and widgets carousel and quick settings (simulator_command home, launcher, notifications, notification, ongoing, tiles, health, quickSettings)."},
+            "launcher":{"type":"boolean","description":"A system UI under the app. On a phone, a home screen: HOME and Back from the app's root go there, its icons reopen the app, a long press shows the app's shortcuts, and the app's widgets are placed, sized, updated and tapped there (simulator_command home, drawer, shortcuts, shortcut, widgets, widget, picker). On a Wear app, the watch's: a watch face, launcher, notification stream, tiles and widgets carousel and quick settings (simulator_command home, launcher, notifications, notification, ongoing, tiles, watchface, health, quickSettings)."},
             "widgets":{"type":"array","items":{"type":"string"},"description":"Widget providers (a receiver class or its short name) to place on the home screen at launch: the app starts once, then the home screen shows with them. Implies launcher."},
             "tiles":{"type":"array","items":{"type":"string"},"description":"Wear: tile or Wear Widget services (a class or its short name) in the carousel at launch. Implies launcher."}
           }}
@@ -835,7 +836,13 @@ class SimulatorMcp(
           "reply|dismiss|snooze, index?, text?, ms?} (any form factor; reply fills the " +
           "action's RemoteInput with text); ongoing {op?: list|tap, index?}; tiles {op: list|" +
           "add|remove|show|next|prev|refresh, component?, index?} (the carousel; tiles are " +
-          "rendered by the protolayout renderer, widgets by the Remote Compose player); health " +
+          "rendered by the protolayout renderer, widgets by the Remote Compose player); " +
+          "watchface {op?: status|set|unset|complication|uncomplication, component?, " +
+          "watchface?, slot?, type?} (set hosts the app's androidx watch face `component`, " +
+          "redrawn each second and in ambient; complication binds data source `component` to " +
+          "`slot` of `watchface`, the app's face or else the demo face, `type` the wire " +
+          "ComplicationType: 3 short text, 4 long text, 5 ranged value; status lists the face's " +
+          "slots, the bound sources and their text; Watch Face Format faces are not hosted); health " +
           "{heartRate?, heartRateAccuracy?, steps?, distanceMeters?, calories?, floors?} (what " +
           "tiles and widgets read); quickSettings {airplane?, wifi?}; rotary {delta? (-1), " +
           "count? (1), intervalMs? (20)} turns the crown. System views carry sim:id/… ids " +
@@ -855,7 +862,7 @@ class SimulatorMcp(
           {"type":"object","required":["cmd"],"properties":{
             "simulator":{"type":"string","description":"Simulator id from simulator_launch; optional when only one runs."},
             "device":{"type":"string","enum":["phone","watch"],"description":"With a paired launch: which device runs the command (default phone)."},
-            "cmd":{"type":"string","enum":["info","hierarchy","find","tap","longPress","swipe","key","back","text","launch","finish","activities","startActivity","startService","stopService","bindService","unbindService","services","broadcast","notifications","query","components","qualifiers","permissions","wait","ping","dataLayer","companion","shell","settings","logcat","files","content","network","wifi","bluetooth","display","forceStop","clearData","kill","recreate","savedState","getprop","package","packages","screen","ambient","tilt","wake","palm","sleep","playServices","home","drawer","shortcuts","shortcut","widgets","widget","picker","launcher","notification","ongoing","tiles","health","quickSettings","rotary","zoom"]},
+            "cmd":{"type":"string","enum":["info","hierarchy","find","tap","longPress","swipe","key","back","text","launch","finish","activities","startActivity","startService","stopService","bindService","unbindService","services","broadcast","notifications","query","components","qualifiers","permissions","wait","ping","dataLayer","companion","shell","settings","logcat","files","content","network","wifi","bluetooth","display","forceStop","clearData","kill","recreate","savedState","getprop","package","packages","screen","ambient","tilt","wake","palm","sleep","playServices","home","drawer","shortcuts","shortcut","widgets","widget","picker","launcher","notification","ongoing","tiles","watchface","health","quickSettings","rotary","zoom"]},
             "text":{"type":"string"},"textContains":{"type":"string"},"desc":{"type":"string"},"descContains":{"type":"string"},
             "resourceId":{"type":"string"},"cls":{"type":"string"},"clickable":{"type":"boolean"},"index":{"type":"integer"},
             "x":{"type":"number"},"y":{"type":"number"},"x1":{"type":"number"},"y1":{"type":"number"},"x2":{"type":"number"},"y2":{"type":"number"},
@@ -882,7 +889,7 @@ class SimulatorMcp(
             "provider":{"type":"string","description":"widget add: the widget provider, a receiver class or its short name"},"widgetId":{"type":"integer","description":"widget: which placed widget (id is the command's own)"},
             "cellX":{"type":"integer"},"cellY":{"type":"integer"},"spanX":{"type":"integer"},"spanY":{"type":"integer"},"configure":{"type":"boolean","description":"widget add: run the configure activity even when the provider makes it optional"},
             "shortcutId":{"type":"string","description":"shortcut: which app shortcut to open"},
-            "component":{"type":"string","description":"tiles / launcher: a tile, widget or activity by class or short name"},"label":{"type":"string","description":"launcher: an app by its label"},
+            "component":{"type":"string","description":"tiles / launcher / watchface: a tile, widget, activity, watch face or complication data source by class or short name"},"watchface":{"type":"string","description":"watchface complication: the watch face whose slot it fills (pkg/class); the app's own face is set if needed, any other means the demo face"},"slot":{"type":"integer","description":"watchface complication: the watch face's complication slot id"},"type":{"type":"integer","description":"watchface complication: the wire ComplicationType (3 short text, 4 long text, 5 ranged value, 6 monochromatic image, 7 small image)"},"label":{"type":"string","description":"launcher: an app by its label"},
             "heartRate":{"type":"number"},"heartRateAccuracy":{"type":"string","enum":["unknown","no_contact","unreliable","low","medium","high"]},"distanceMeters":{"type":"number"},"calories":{"type":"number"},"floors":{"type":"number"},
             "delta":{"type":"number","description":"rotary: AXIS_SCROLL per event; negative scrolls down"},"count":{"type":"integer"},"intervalMs":{"type":"integer"},"activity":{"type":"string","description":"shortcuts: the launcher activity whose shortcuts to list or show"},
             "node":{"type":"string","description":"dataLayer: the peer node id (connect names a new one)"},"nearby":{"type":"boolean"},"capabilities":{"type":"array","items":{"type":"string"}},
@@ -1036,7 +1043,8 @@ class SimulatorMcp(
           "seconds after); the app is installed, not started. Wear tiles go in with " +
           "[\"shell\", \"am broadcast -a com.google.android.wearable.app.DEBUG_SURFACE --es " +
           "operation add-tile --ecn component pkg/.TileService\"], as Android Studio sends " +
-          "them. Returns exitCode, stdout (or the bytes written to `output`), stderr and the " +
+          "them; Studio's watch face and complication run configurations (set-watchface, " +
+          "set-complication, show-watchface) work the same way. Returns exitCode, stdout (or the bytes written to `output`), stderr and the " +
           "simulator's events. Needs the SDK's platform-tools adb (ANDROID_HOME or PATH). " +
           "simulator_command and simulator_screenshot keep working on the same device.",
       inputSchema =

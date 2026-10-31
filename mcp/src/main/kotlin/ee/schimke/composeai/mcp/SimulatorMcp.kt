@@ -68,6 +68,13 @@ class SimulatorMcp(
   private val commandTimeoutMs: Long = TimeUnit.MINUTES.toMillis(1),
   /** Runs `adb <args>`; a seam so tests need no SDK. */
   private val adb: (List<String>, Long) -> AdbRun = defaultAdb(),
+  /**
+   * Compiles a `simulator_reload`'s edited `files` through the preview build (the server's
+   * `notify_file_changed`), so the reload can take the classes it wrote instead of running Gradle.
+   * True only when every file was compiled, and each compile succeeded; null when the server has no
+   * preview build.
+   */
+  private val precompile: ((List<String>) -> Boolean)? = null,
 ) {
 
   private val simulators = ConcurrentHashMap<String, Simulator>()
@@ -94,7 +101,7 @@ class SimulatorMcp(
       LOGS -> withContext(Dispatchers.IO) { logs(args) }
       RESTART -> withContext(Dispatchers.IO) { replace(RESTART, "restart", args) }
       UPDATE -> withContext(Dispatchers.IO) { replace(UPDATE, "update", args) }
-      RELOAD -> withContext(Dispatchers.IO) { replace(RELOAD, "reload", args) }
+      RELOAD -> withContext(Dispatchers.IO) { reload(args) }
       ADB -> withContext(Dispatchers.IO) { adb(args) }
       STOP -> withContext(Dispatchers.IO) { stop(args) }
       else -> null
@@ -303,10 +310,54 @@ class SimulatorMcp(
   }
 
   /**
+   * `reload`, after the preview build compiled the edited `files`: the CLI takes the classes
+   * already on disk (`compile: false`) and skips its Gradle compile. Anything less certain reloads
+   * as before, with Gradle: no `files`, `full`, a file the preview build did not compile or failed
+   * to, and a fast reload that failed or found nothing changed (the app's module is not one the
+   * preview build compiles). Gradle's answer then carries the compile errors, if there are any.
+   */
+  private fun reload(args: JsonObject): CallToolResult {
+    val files =
+      (args["files"] as? JsonArray)?.mapNotNull { (it as? JsonPrimitive)?.contentOrNull }.orEmpty()
+    val compiler = precompile
+    if (files.isEmpty() || compiler == null || args.boolean("full") == true) {
+      return replace(RELOAD, "reload", args)
+    }
+    if (simulator(args) == null) return noSimulator()
+    val start = System.nanoTime()
+    val compiled = runCatching { compiler(files) }.getOrDefault(false)
+    val precompileMs = (System.nanoTime() - start) / 1_000_000
+    if (compiled) {
+      val fast = replace(RELOAD, "reload", args, compile = false)
+      val mode = fast.structuredContent?.get("mode")?.let { it as? JsonPrimitive }?.contentOrNull
+      if (fast.isError != true && mode != "unchanged") {
+        return fast.withPrecompile(precompiled = true, precompileMs)
+      }
+    }
+    return replace(RELOAD, "reload", args).withPrecompile(precompiled = false, precompileMs)
+  }
+
+  private fun CallToolResult.withPrecompile(precompiled: Boolean, ms: Long): CallToolResult {
+    val structured = structuredContent ?: return this
+    val merged = buildJsonObject {
+      for ((key, value) in structured) put(key, value)
+      put("precompiled", precompiled)
+      put("precompileMs", ms)
+    }
+    return if (isError == true) copy(structuredContent = merged)
+    else copy(content = listOf(ContentBlock.Text(merged.toString())), structuredContent = merged)
+  }
+
+  /**
    * `restart` / `update`: the CLI replaces the simulator JVM and answers once the new one is ready,
    * so this waits as long as a launch may (an updated APK may convert first).
    */
-  private fun replace(tool: String, cmd: String, args: JsonObject): CallToolResult {
+  private fun replace(
+    tool: String,
+    cmd: String,
+    args: JsonObject,
+    compile: Boolean? = null,
+  ): CallToolResult {
     val simulator = simulator(args) ?: return noSimulator()
     if (cmd == "update") {
       val apk = args.string("apk") ?: return error("$tool: `apk` (a path) is required.")
@@ -318,6 +369,7 @@ class SimulatorMcp(
       args.boolean("keepData")?.let { put("keepData", it) }
       args.boolean("full")?.let { put("full", it) }
       args.string("device")?.let { put("device", it) }
+      compile?.let { put("compile", it) }
     }
     return when (val reply = simulator.send(payload, readyTimeoutMs)) {
       is Reply.Ok ->
@@ -928,14 +980,19 @@ class SimulatorMcp(
           "`project`. Data is kept; UI state (back stack, scroll) is not. A resource change " +
           "swaps in the relinked resources; an asset or native-library change, or `full`, " +
           "rebuilds the APK instead. A compile error is returned with the compiler's messages " +
-          "and the app keeps running. Returns mode (classes|resources|apk|unchanged), build " +
-          "{ok, ms, tasks, errors}, classesChanged, the new info, and timings.",
+          "and the app keeps running. Pass the edited source paths as `files`: the preview " +
+          "build compiles them (as notify_file_changed does, refreshing their previews too) and " +
+          "the reload skips Gradle, about a second from edit to pixels; it falls back to the " +
+          "Gradle compile whenever that cannot be done. Returns mode " +
+          "(classes|resources|apk|unchanged), build {ok, ms, tasks, errors}, classesChanged, " +
+          "the new info, timings, and with `files` precompiled/precompileMs.",
       inputSchema =
         schema(
           """
           {"type":"object","properties":{
             "simulator":{"type":"string","description":"Simulator id; optional when only one runs."},
             "full":{"type":"boolean","description":"Rebuild and reinstall the APK instead of overlaying classes."},
+            "files":{"type":"array","items":{"type":"string"},"description":"The source files edited since the last reload (absolute paths). The preview build compiles them first, so the reload runs no Gradle."},
             "keepData":{"type":"boolean","description":"Keep the app's data (default true)."}
           }}
           """

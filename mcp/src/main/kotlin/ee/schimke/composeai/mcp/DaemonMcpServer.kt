@@ -286,7 +286,24 @@ class DaemonMcpServer(
     RcViewerMcp(subscribers = { uri -> subscriptions.sessionsSubscribedTo(uri) })
 
   /** APKs in Robolectric's simulator: the `simulator_*` tools over `compose-preview launch`. */
-  private val simulators = SimulatorMcp()
+  private val simulators = SimulatorMcp(precompile = ::precompileForReload)
+
+  /**
+   * `simulator_reload`'s `files`, compiled as `notify_file_changed` compiles them: true only when
+   * every file is Kotlin or Java and every module compiled for it succeeded, so the classes on disk
+   * are the edit's and the simulator can reload them without its own Gradle compile.
+   */
+  private fun precompileForReload(files: List<String>): Boolean =
+    sourceCompiler != null &&
+      files.all { path ->
+        if (File(path).extension !in COMPILED_SOURCE_EXTENSIONS) return@all false
+        val outcomes = mutableListOf<SourceCompileOutcome?>()
+        val result =
+          notifyFileChanged(buildJsonObject { put("path", path) }, onCompile = outcomes::add)
+        result.isError != true &&
+          outcomes.isNotEmpty() &&
+          outcomes.all { it is SourceCompileOutcome.Ok }
+      }
 
   /**
    * Counters surfaced via the `status` tool (probe outcomes, polling cycles, sampling determinism),
@@ -7865,7 +7882,13 @@ class DaemonMcpServer(
   private fun sameFile(a: String, b: String): Boolean =
     a == b || canonicalOf(File(a)) == canonicalOf(File(b))
 
-  private fun toolNotifyFileChanged(args: JsonObject): CallToolResult {
+  private fun toolNotifyFileChanged(args: JsonObject): CallToolResult = notifyFileChanged(args)
+
+  /** @param onCompile hears each module's recompile for this edit, as it finishes. */
+  private fun notifyFileChanged(
+    args: JsonObject,
+    onCompile: (SourceCompileOutcome?) -> Unit = {},
+  ): CallToolResult {
     val path =
       args["path"]?.jsonPrimitive?.contentOrNull
         ?: return errorCallToolResult("notify_file_changed: missing 'path'")
@@ -7953,6 +7976,7 @@ class DaemonMcpServer(
         detectSourceChanges(daemon)
         pendingTrigger[addr] = TRIGGER_NOTIFY
         val outcome = recompilePendingSources(daemon)
+        onCompile(outcome)
         outcome?.work?.let { compileWork[daemon.modulePath] = it.copy(trigger = TRIGGER_NOTIFY) }
         when (outcome) {
           is SourceCompileOutcome.Ok ->

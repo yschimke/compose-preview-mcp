@@ -1,5 +1,18 @@
 # Changelog
 
+## [4.14.0](https://github.com/yschimke/compose-preview-mcp/compare/v4.13.0...v4.14.0) (2026-10-31)
+
+
+### Features
+
+* **simulator:** simulator_reload compiles edited files through the preview build and skips Gradle ([#138](https://github.com/yschimke/compose-preview-mcp/issues/138)) ([27b4b58](https://github.com/yschimke/compose-preview-mcp/commit/27b4b58657aecec1f0f9b291b3020ae4533118e0))
+
+
+### Bug Fixes
+
+* **mcp-app:** take the viewer and preview library from compose-preview-server v3.153.0 ([#135](https://github.com/yschimke/compose-preview-mcp/issues/135)) ([8eedf29](https://github.com/yschimke/compose-preview-mcp/commit/8eedf29030b690c816ff3ca6322e42741b480dcb))
+* **simulator:** launch the CLI from the project, so it finds that build's Android SDK ([#136](https://github.com/yschimke/compose-preview-mcp/issues/136)) ([39c727a](https://github.com/yschimke/compose-preview-mcp/commit/39c727a851533cc7611593c72dbd819d2db4917f))
+
 ## [4.13.0](https://github.com/yschimke/compose-preview-mcp/compare/v4.12.0...v4.13.0) (2026-10-30)
 
 

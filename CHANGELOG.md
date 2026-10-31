@@ -1,5 +1,12 @@
 # Changelog
 
+## [4.16.0](https://github.com/yschimke/compose-preview-mcp/compare/v4.15.0...v4.16.0) (2026-10-31)
+
+
+### Bug Fixes
+
+* **simulator:** say why a reload ran Gradle, and rewrite a stale daemon descriptor before launch ([#141](https://github.com/yschimke/compose-preview-mcp/issues/141)) ([4be2c23](https://github.com/yschimke/compose-preview-mcp/commit/4be2c23e76108b5910a07e76187c2d25ec53b2be))
+
 ## [4.15.0](https://github.com/yschimke/compose-preview-mcp/compare/v4.14.0...v4.15.0) (2026-10-31)
 
 

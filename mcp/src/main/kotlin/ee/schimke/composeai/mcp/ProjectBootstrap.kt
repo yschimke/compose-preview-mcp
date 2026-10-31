@@ -110,6 +110,46 @@ class ProjectBootstrap(
   }
 
   /**
+   * Rewrites [modulePath]'s daemon launch descriptor (`./gradlew
+   * <module>:composePreviewDaemonStart`) when the one on disk names classpath entries that no
+   * longer exist: a cleaned Gradle transforms cache, a moved `~/.m2`. The daemon would otherwise
+   * start on it and die before `initialize` (`ClassNotFoundException: …DaemonMain`). Only a Gradle
+   * build is refreshed this way; a Bazel or bundle workspace returns null, as does a build without
+   * a wrapper.
+   */
+  fun refreshDescriptor(
+    projectRoot: File,
+    modulePath: String,
+    progress: (String) -> Unit = {},
+  ): GradleTaskRunner.Result? {
+    if (BundleProjects.isBundleWorkspace(projectRoot)) return null
+    if (ProjectDiscovery.isBazelWorkspace(projectRoot)) return null
+    val windows = System.getProperty("os.name").orEmpty().startsWith("Windows")
+    val wrapper = File(projectRoot, if (windows) "gradlew.bat" else "gradlew")
+    if (!wrapper.isFile) return null
+    synchronized(locks.computeIfAbsent(projectRoot.absolutePath) { Any() }) {
+      val initScript =
+        initScripts.forProject(projectRoot)?.takeIf {
+          !initScripts.projectAppliesPlugin(projectRoot)
+        }
+      val task = "${modulePath.trimEnd(':')}:${TASKS.last()}"
+      val arguments = buildList {
+        if (initScript != null) {
+          add("--init-script")
+          add(initScript.absolutePath)
+          addAll(ISOLATED_PROJECTS_OFF)
+        }
+        add("--console=plain")
+        add(task)
+      }
+      progress("refreshing the daemon launch descriptor: ./gradlew $task")
+      return runner.run(projectRoot, wrapper, arguments) { line ->
+        if (line.startsWith("> Task ")) progress(line)
+      }
+    }
+  }
+
+  /**
    * Reruns `composePreviewDiscover` in a build that is already prepared, so previews declared since
    * its daemons started reach `previews.json`. The daemon's own incremental discovery missed a
    * newly added file (yschimke/compose-ag-plugin#64), while this Gradle task, the one

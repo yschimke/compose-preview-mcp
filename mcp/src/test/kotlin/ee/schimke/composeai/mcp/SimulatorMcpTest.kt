@@ -540,7 +540,7 @@ class SimulatorMcpTest {
    * when [fastFindsNothing] (the preview build compiled a module the app does not run).
    */
   private fun reloadingMcp(
-    precompile: (List<String>) -> Boolean,
+    precompile: (List<String>) -> String?,
     fastFindsNothing: Boolean = false,
   ) =
     SimulatorMcp(
@@ -587,7 +587,7 @@ class SimulatorMcpTest {
       reloadingMcp(
         precompile = {
           asked += it
-          true
+          null
         }
       )
     try {
@@ -597,6 +597,7 @@ class SimulatorMcpTest {
       assertThat(reload.sentCompile()).isEqualTo("false")
       assertThat(reload.structuredContent!!["precompiled"]!!.jsonPrimitive.content)
         .isEqualTo("true")
+      assertThat(reload.structuredContent!!["precompileSkipped"]).isNull()
     } finally {
       mcp.shutdown()
     }
@@ -604,13 +605,15 @@ class SimulatorMcpTest {
 
   @Test
   fun `a file the preview build could not compile reloads through gradle`() {
-    val mcp = reloadingMcp(precompile = { false })
+    val mcp = reloadingMcp(precompile = { "strings.xml is not Kotlin or Java" })
     try {
       val reload = reloadWithFiles(mcp, listOf("/p/app/src/main/res/values/strings.xml"))
       assertThat(reload.isError).isNull()
       assertThat(reload.sentCompile()).isNull()
       assertThat(reload.structuredContent!!["precompiled"]!!.jsonPrimitive.content)
         .isEqualTo("false")
+      assertThat(reload.structuredContent!!["precompileSkipped"]!!.jsonPrimitive.content)
+        .isEqualTo("strings.xml is not Kotlin or Java")
     } finally {
       mcp.shutdown()
     }
@@ -618,13 +621,44 @@ class SimulatorMcpTest {
 
   @Test
   fun `a fast reload that finds nothing changed is retried through gradle`() {
-    val mcp = reloadingMcp(precompile = { true }, fastFindsNothing = true)
+    val mcp = reloadingMcp(precompile = { null }, fastFindsNothing = true)
     try {
       val reload = reloadWithFiles(mcp, listOf("/p/lib/src/main/kotlin/Shared.kt"))
       assertThat(reload.isError).isNull()
       assertThat(reload.sentCompile()).isNull()
       assertThat(reload.structuredContent!!["mode"]!!.jsonPrimitive.content).isEqualTo("classes")
       assertThat(reload.structuredContent!!["precompiled"]!!.jsonPrimitive.content)
+        .isEqualTo("false")
+      assertThat(reload.structuredContent!!["precompileSkipped"]!!.jsonPrimitive.content)
+        .contains("changed nothing the app runs")
+    } finally {
+      mcp.shutdown()
+    }
+  }
+
+  @Test
+  fun `a preview build that throws reloads through gradle and says why`() {
+    val mcp = reloadingMcp(precompile = { throw IllegalStateException("daemon gone") })
+    try {
+      val reload = reloadWithFiles(mcp, listOf("/p/app/src/main/kotlin/Main.kt"))
+      assertThat(reload.isError).isNull()
+      assertThat(reload.sentCompile()).isNull()
+      assertThat(reload.structuredContent!!["precompileSkipped"]!!.jsonPrimitive.content)
+        .contains("daemon gone")
+    } finally {
+      mcp.shutdown()
+    }
+  }
+
+  @Test
+  fun `hotswap false is passed to the cli`() {
+    val mcp = reloadingMcp(precompile = { null })
+    try {
+      val reload = runBlocking {
+        mcp.handle(SimulatorMcp.LAUNCH, buildJsonObject { put("project", tmp.newFolder().path) })
+        mcp.handle(SimulatorMcp.RELOAD, buildJsonObject { put("hotswap", false) })!!
+      }
+      assertThat(reload.structuredContent!!["sent"]!!.jsonObject["hotswap"]!!.jsonPrimitive.content)
         .isEqualTo("false")
     } finally {
       mcp.shutdown()

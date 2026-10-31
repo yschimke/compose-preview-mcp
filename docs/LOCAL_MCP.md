@@ -84,7 +84,7 @@ control protocol and the constraints). No emulator, device or `adb`.
   `standby: true` on the launch (the default with `project`) keeps a second simulator JVM
   prepared up to the app's own code, which a restart or a class reload takes over: the JVM,
   Robolectric's sandbox and the framework's setup are already paid.
-- **`simulator_reload`** `{files?, full?, keepData?}`, for a simulator launched with `project` (the app's
+- **`simulator_reload`** `{files?, hotswap?, full?, keepData?}`, for a simulator launched with `project` (the app's
   Gradle build; `apk` is then optional, and the CLI builds it): compiles the module (its Kotlin and
   Java compile tasks, which relink resources too, and no dexing or packaging) and restarts the app
   with the classes that changed since the launch ahead of the converted APK. It answers with
@@ -100,7 +100,10 @@ control protocol and the constraints). No emulator, device or `adb`.
   pixels, against 5–6.6 s through Gradle. Anything uncertain reloads through Gradle instead: a
   file that is not Kotlin or Java, a compile that failed or did not run, or a fast reload that
   found nothing changed (the app's module is not one the preview build compiles). The answer
-  carries `precompiled` and `precompileMs`.
+  carries `precompiled` and `precompileMs`, and `precompileSkipped` says why Gradle ran instead
+  (for example, no preview daemon is running for the file's module). A composable-only edit is
+  hot-swapped (`mode: hotswap`) and keeps the screen and its saved state; a restart says why in
+  `hotswapSkipped`, and `hotswap: false` always restarts.
 - **`simulator_adb`** `{simulator?, args | command, output?, timeoutMs?}`, for a simulator launched
   with `adb: true`: runs the SDK's `adb -s <serial>` with `args` (or one `command` line) against
   the simulator, which `launch --adb` serves to adb and Android Studio as an emulator

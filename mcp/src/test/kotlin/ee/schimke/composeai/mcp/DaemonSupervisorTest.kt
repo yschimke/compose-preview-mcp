@@ -54,6 +54,81 @@ class DaemonSupervisorTest {
   }
 
   @Test
+  fun `a descriptor naming jars that are gone is rewritten before a daemon starts on it`() {
+    // A cleaned Gradle transforms cache left 255 of 380 entries missing: the daemon died with
+    // ClassNotFoundException DaemonMain and the server waited out initialize's 2-minute timeout.
+    val root = createTempDirectory("cp-stale-descriptor").toFile()
+    val present = File(root, "present.jar").apply { writeText("") }
+    val provider = FakeDescriptorProvider()
+    provider.classpaths[":app"] = listOf(File(root, "gone.jar").path, present.path)
+    val factory = FakeDaemonClientFactory()
+    val refreshed = mutableListOf<String>()
+    val supervisor =
+      DaemonSupervisor(
+        descriptorProvider = provider,
+        clientFactory = factory,
+        refreshDescriptor = { _, module ->
+          refreshed += module
+          provider.classpaths[module] = listOf(present.path)
+        },
+      )
+    val project = supervisor.registerProject(root)
+
+    supervisor.daemonFor(project.workspaceId, ":app")
+
+    assertThat(refreshed).containsExactly(":app")
+    assertThat(factory.spawnHistory).hasSize(1)
+    supervisor.shutdown()
+  }
+
+  @Test
+  fun `a descriptor still naming missing jars fails at once, naming them, and starts nothing`() {
+    val root = createTempDirectory("cp-stale-descriptor-2").toFile()
+    val gone = File(root, "gone.jar").path
+    val provider = FakeDescriptorProvider()
+    provider.classpaths[":app"] = listOf(gone)
+    val factory = FakeDaemonClientFactory()
+    val supervisor =
+      DaemonSupervisor(
+        descriptorProvider = provider,
+        clientFactory = factory,
+        refreshDescriptor = { _, _ -> },
+      )
+    val project = supervisor.registerProject(root)
+
+    val failure = runCatching {
+      supervisor.daemonFor(project.workspaceId, ":app")
+    }
+      .exceptionOrNull()
+
+    assertThat(failure).isNotNull()
+    assertThat(failure!!.message).contains(gone)
+    assertThat(failure.message).contains(":app:composePreviewDaemonStart")
+    assertThat(factory.spawnHistory).isEmpty()
+    supervisor.shutdown()
+  }
+
+  @Test
+  fun `a class directory not built yet is not a stale descriptor`() {
+    val root = createTempDirectory("cp-unbuilt-classes").toFile()
+    val provider = FakeDescriptorProvider()
+    provider.classpaths[":app"] = listOf(File(root, "feature/build/classes").path)
+    val factory = FakeDaemonClientFactory()
+    val supervisor =
+      DaemonSupervisor(
+        descriptorProvider = provider,
+        clientFactory = factory,
+        refreshDescriptor = { _, _ -> error("must not refresh") },
+      )
+    val project = supervisor.registerProject(root)
+
+    supervisor.daemonFor(project.workspaceId, ":app")
+
+    assertThat(factory.spawnHistory).hasSize(1)
+    supervisor.shutdown()
+  }
+
+  @Test
   fun `a daemon that dies on its own is respawned by the next request`() {
     // compose-ai-tools#6239: killing a module's daemon left it `spawned: false` until the project
     // was re-registered, because the dead entry stayed in `daemons`.

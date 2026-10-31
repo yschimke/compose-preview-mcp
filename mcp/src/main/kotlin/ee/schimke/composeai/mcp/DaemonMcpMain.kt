@@ -48,6 +48,7 @@ object DaemonMcpMain {
     // remote adapter in that profile: an ambient UI-builder URL must not add tools or make a token
     // mandatory for a Storybook-only process.
     val uiBuilderMcp = if (storybookProfile) null else parseUiBuilderMcp(args)
+    val descriptorRefresher = ProjectBootstrap()
     val supervisor =
       DaemonSupervisor(
         descriptorProvider = DescriptorProvider.readingFromDisk(),
@@ -61,6 +62,9 @@ object DaemonMcpMain {
         maxActiveProjects =
           System.getProperty("composeai.mcp.maxActiveProjects")?.toIntOrNull()?.coerceAtLeast(0)
             ?: DaemonSupervisor.DEFAULT_MAX_ACTIVE_PROJECTS,
+        refreshDescriptor = { project, modulePath ->
+          descriptorRefresher.refreshDescriptor(project.path, modulePath) { System.err.println(it) }
+        },
       )
     val server =
       if (storybookProfile) {

@@ -289,21 +289,42 @@ class DaemonMcpServer(
   private val simulators = SimulatorMcp(precompile = ::precompileForReload)
 
   /**
-   * `simulator_reload`'s `files`, compiled as `notify_file_changed` compiles them: true only when
-   * every file is Kotlin or Java and every module compiled for it succeeded, so the classes on disk
-   * are the edit's and the simulator can reload them without its own Gradle compile.
+   * `simulator_reload`'s `files`, compiled as `notify_file_changed` compiles them. Null when every
+   * file is Kotlin or Java and every module compiled for it succeeded, so the classes on disk are
+   * the edit's and the simulator can reload them without its own Gradle compile; otherwise the
+   * first reason it cannot, for the reload's `precompileSkipped`.
    */
-  private fun precompileForReload(files: List<String>): Boolean =
-    sourceCompiler != null &&
-      files.all { path ->
-        if (File(path).extension !in COMPILED_SOURCE_EXTENSIONS) return@all false
-        val outcomes = mutableListOf<SourceCompileOutcome?>()
-        val result =
-          notifyFileChanged(buildJsonObject { put("path", path) }, onCompile = outcomes::add)
-        result.isError != true &&
-          outcomes.isNotEmpty() &&
-          outcomes.all { it is SourceCompileOutcome.Ok }
+  private fun precompileForReload(files: List<String>): String? {
+    if (sourceCompiler == null) return "this server has no preview build compiler"
+    for (path in files) {
+      val name = File(path).name
+      if (File(path).extension !in COMPILED_SOURCE_EXTENSIONS) {
+        return "$name is not Kotlin or Java; its change needs the Gradle compile"
       }
+      val outcomes = mutableListOf<SourceCompileOutcome?>()
+      val result =
+        notifyFileChanged(buildJsonObject { put("path", path) }, onCompile = outcomes::add)
+      if (result.isError == true) {
+        return (result.content.firstOrNull() as? ContentBlock.Text)?.text ?: "notify failed"
+      }
+      if (outcomes.isEmpty()) {
+        return "no preview daemon is running for $name's module, so nothing compiled it; " +
+          "render one of its previews to start it, or see `status`"
+      }
+      outcomes
+        .firstOrNull { it !is SourceCompileOutcome.Ok }
+        ?.let { outcome ->
+          return when (outcome) {
+            is SourceCompileOutcome.Failed ->
+              "the preview build failed to compile $name: ${outcome.reason}"
+            is SourceCompileOutcome.Unavailable ->
+              "the preview build could not compile $name: ${outcome.reason}"
+            else -> "the preview build did not compile $name (nothing was pending)"
+          }
+        }
+    }
+    return null
+  }
 
   /**
    * Counters surfaced via the `status` tool (probe outcomes, polling cycles, sampling determinism),

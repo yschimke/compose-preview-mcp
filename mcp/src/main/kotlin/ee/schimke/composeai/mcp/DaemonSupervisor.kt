@@ -79,6 +79,12 @@ class DaemonSupervisor(
    * next render. [DaemonMcpMain] passes [DEFAULT_MAX_ACTIVE_PROJECTS].
    */
   private val maxActiveProjects: Int = 0,
+  /**
+   * Rewrites a module's launch descriptor when the one on disk names classpath entries that no
+   * longer exist; see [launchableDescriptor]. Null leaves a stale descriptor to fail with its
+   * missing entries named. [DaemonMcpMain] passes [ProjectBootstrap.refreshDescriptor].
+   */
+  private val refreshDescriptor: ((RegisteredProject, String) -> Unit)? = null,
 ) {
 
   init {
@@ -286,8 +292,45 @@ class DaemonSupervisor(
 
   // Internals.
 
+  /**
+   * The module's launch descriptor, checked before a JVM is started on it. A descriptor whose
+   * classpath names jars that are gone (a cleaned Gradle transforms cache) starts a daemon that
+   * dies at once with `ClassNotFoundException`, which the client only noticed when `initialize`
+   * timed out, minutes later. Such a descriptor is rewritten once through [refreshDescriptor]; one
+   * still missing entries fails here, naming them.
+   */
+  private fun launchableDescriptor(
+    project: RegisteredProject,
+    modulePath: String,
+  ): DaemonLaunchDescriptor {
+    val first = descriptorProvider.descriptorFor(project, modulePath)
+    val missing = missingClasspath(first)
+    if (missing.isEmpty()) return first
+    val refresh =
+      refreshDescriptor ?: throw IllegalStateException(staleMessage(modulePath, missing))
+    runCatching { refresh(project, modulePath) }
+    val second = descriptorProvider.descriptorFor(project, modulePath)
+    val stillMissing = missingClasspath(second)
+    if (stillMissing.isNotEmpty())
+      throw IllegalStateException(staleMessage(modulePath, stillMissing))
+    return second
+  }
+
+  private fun missingClasspath(descriptor: DaemonLaunchDescriptor): List<String> =
+    // Only absolute jars. A class directory may not exist yet (a module not compiled since a clean)
+    // and the daemon copes with that; a jar that is gone means the descriptor predates a cache
+    // clean. A relative entry resolves against the daemon's working directory; the plugin writes
+    // absolute ones.
+    descriptor.classpath.filter { it.endsWith(".jar") && File(it).isAbsolute && !File(it).exists() }
+
+  private fun staleMessage(modulePath: String, missing: List<String>): String =
+    "the daemon launch descriptor for $modulePath names ${missing.size} classpath " +
+      "entr${if (missing.size == 1) "y" else "ies"} that no longer exist (first: ${missing.first()}); " +
+      "run `./gradlew $modulePath:composePreviewDaemonStart` (or `compose-preview mcp install`) " +
+      "to rewrite it"
+
   private fun spawn(project: RegisteredProject, modulePath: String): SupervisedDaemon {
-    val baseDescriptor = descriptorProvider.descriptorFor(project, modulePath)
+    val baseDescriptor = launchableDescriptor(project, modulePath)
     // Inject `composeai.daemon.sandboxCount = 1 + replicasPerDaemon` (SANDBOX-POOL.md) into a copy
     // of the descriptor's systemProperties; the descriptor is cached and shared across `daemonFor`
     // calls.

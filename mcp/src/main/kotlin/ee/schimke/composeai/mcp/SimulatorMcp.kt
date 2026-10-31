@@ -71,10 +71,10 @@ class SimulatorMcp(
   /**
    * Compiles a `simulator_reload`'s edited `files` through the preview build (the server's
    * `notify_file_changed`), so the reload can take the classes it wrote instead of running Gradle.
-   * True only when every file was compiled, and each compile succeeded; null when the server has no
-   * preview build.
+   * Answers null when every file was compiled and each compile succeeded, else why not (reported as
+   * `precompileSkipped`); the seam itself is null when the server has no preview build.
    */
-  private val precompile: ((List<String>) -> Boolean)? = null,
+  private val precompile: ((List<String>) -> String?)? = null,
 ) {
 
   private val simulators = ConcurrentHashMap<String, Simulator>()
@@ -325,24 +325,38 @@ class SimulatorMcp(
     }
     if (simulator(args) == null) return noSimulator()
     val start = System.nanoTime()
-    val compiled = runCatching { compiler(files) }.getOrDefault(false)
+    var skipped: String? =
+      try {
+        compiler(files)
+      } catch (e: Exception) {
+        "the preview build's compile threw: ${e.message ?: e}"
+      }
     val precompileMs = (System.nanoTime() - start) / 1_000_000
-    if (compiled) {
+    if (skipped == null) {
       val fast = replace(RELOAD, "reload", args, compile = false)
       val mode = fast.structuredContent?.get("mode")?.let { it as? JsonPrimitive }?.contentOrNull
       if (fast.isError != true && mode != "unchanged") {
-        return fast.withPrecompile(precompiled = true, precompileMs)
+        return fast.withPrecompile(precompileMs, skipped = null)
       }
+      skipped =
+        if (fast.isError == true) {
+          "the reload without Gradle failed: " +
+            (fast.content.firstOrNull() as? ContentBlock.Text)?.text.orEmpty().take(300)
+        } else {
+          "the preview build's classes changed nothing the app runs (its module is not the " +
+            "app's, or the app is built from another variant)"
+        }
     }
-    return replace(RELOAD, "reload", args).withPrecompile(precompiled = false, precompileMs)
+    return replace(RELOAD, "reload", args).withPrecompile(precompileMs, skipped)
   }
 
-  private fun CallToolResult.withPrecompile(precompiled: Boolean, ms: Long): CallToolResult {
+  private fun CallToolResult.withPrecompile(ms: Long, skipped: String?): CallToolResult {
     val structured = structuredContent ?: return this
     val merged = buildJsonObject {
       for ((key, value) in structured) put(key, value)
-      put("precompiled", precompiled)
+      put("precompiled", skipped == null)
       put("precompileMs", ms)
+      skipped?.let { put("precompileSkipped", it) }
     }
     return if (isError == true) copy(structuredContent = merged)
     else copy(content = listOf(ContentBlock.Text(merged.toString())), structuredContent = merged)
@@ -368,6 +382,7 @@ class SimulatorMcp(
       args.string("apk")?.let { put("apk", File(it).absolutePath) }
       args.boolean("keepData")?.let { put("keepData", it) }
       args.boolean("full")?.let { put("full", it) }
+      args.boolean("hotswap")?.let { put("hotswap", it) }
       args.string("device")?.let { put("device", it) }
       compile?.let { put("compile", it) }
     }
@@ -975,17 +990,24 @@ class SimulatorMcp(
       title = "Live reload the simulated app",
       description =
         "After editing the app's source: compile it (the module's Kotlin/Java compile, which " +
-          "also relinks resources; no dexing or APK packaging) and restart the app on the " +
-          "classes that changed, ahead of the converted APK. Needs a simulator_launch with " +
-          "`project`. Data is kept; UI state (back stack, scroll) is not. A resource change " +
-          "swaps in the relinked resources; an asset or native-library change, or `full`, " +
-          "rebuilds the APK instead. A compile error is returned with the compiler's messages " +
-          "and the app keeps running. Pass the edited source paths as `files`: the preview " +
-          "build compiles them (as notify_file_changed does, refreshing their previews too) and " +
-          "the reload skips Gradle, about a second from edit to pixels; it falls back to the " +
-          "Gradle compile whenever that cannot be done. Returns mode " +
-          "(classes|resources|apk|unchanged), build {ok, ms, tasks, errors}, classesChanged, " +
-          "the new info, timings, and with `files` precompiled/precompileMs.",
+          "also relinks resources; no dexing or APK packaging) and put the changed classes in " +
+          "the running app. Needs a simulator_launch with `project`. An edit inside composables " +
+          "only is hot-swapped (mode `hotswap`): the classes are redefined and the activity " +
+          "re-created as on a rotation, so the app stays on its screen and keeps " +
+          "rememberSaveable and saveable navigation state. Anything else restarts the app on " +
+          "the changed classes (mode `classes`; data kept, UI state lost), and `hotswapSkipped` " +
+          "says why: the first edit of a class since launch, a method or field added or " +
+          "removed, a change outside a composable, a resource change, or more than one " +
+          "activity. `hotswap: false` always restarts. A resource change swaps in the relinked " +
+          "resources (`resources`); an asset or native-library change, or `full`, rebuilds the " +
+          "APK (`apk`). A compile error is returned with the compiler's messages and the app " +
+          "keeps running. Pass the edited source paths as `files`: the preview build compiles " +
+          "them (as notify_file_changed does, refreshing their previews too) and the reload " +
+          "skips Gradle, about a second from edit to pixels. When it cannot, it reloads through " +
+          "Gradle and `precompileSkipped` says why. Returns mode " +
+          "(hotswap|classes|resources|apk|unchanged), hotswapSkipped, build {ok, ms, tasks, " +
+          "errors}, classesChanged, the new info, timings, and with `files` precompiled, " +
+          "precompileMs and precompileSkipped.",
       inputSchema =
         schema(
           """
@@ -993,6 +1015,7 @@ class SimulatorMcp(
             "simulator":{"type":"string","description":"Simulator id; optional when only one runs."},
             "full":{"type":"boolean","description":"Rebuild and reinstall the APK instead of overlaying classes."},
             "files":{"type":"array","items":{"type":"string"},"description":"The source files edited since the last reload (absolute paths). The preview build compiles them first, so the reload runs no Gradle."},
+            "hotswap":{"type":"boolean","description":"false restarts the app even when the edit could be hot-swapped (default true)."},
             "keepData":{"type":"boolean","description":"Keep the app's data (default true)."}
           }}
           """

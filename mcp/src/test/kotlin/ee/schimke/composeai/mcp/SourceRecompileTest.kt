@@ -905,7 +905,10 @@ class SourceRecompileTest {
   fun `a build file edit that changes the launch restarts the daemon`() {
     lateinit var fixture: Fixture
     val relaunched = CopyOnWriteArrayList<List<File>>()
-    start(relaunchingCompiler(relaunched) { listOf("/deps/added-dependency.jar") })
+    // A jar that exists, as a rewritten descriptor's new dependency does: the supervisor refuses
+    // to start a daemon on jars that are gone.
+    val added = File.createTempFile("added-dependency", ".jar").apply { deleteOnExit() }
+    start(relaunchingCompiler(relaunched) { listOf(added.absolutePath) })
     fixture = fixture()
     factory.daemonConfigurer = { replacement ->
       replacement.autoRenderPngPath = { fixture.classes.absolutePath }

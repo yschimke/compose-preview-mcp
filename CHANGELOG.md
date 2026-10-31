@@ -1,5 +1,12 @@
 # Changelog
 
+## [4.15.0](https://github.com/yschimke/compose-preview-mcp/compare/v4.14.0...v4.15.0) (2026-10-31)
+
+
+### Bug Fixes
+
+* **deps:** update dependency ee.schimke.composeai:compose-ai-tools-bom to v2.79.0 ([#139](https://github.com/yschimke/compose-preview-mcp/issues/139)) ([4a7caf7](https://github.com/yschimke/compose-preview-mcp/commit/4a7caf7faae8c9ab146854d53d8a6458c0529137))
+
 ## [4.14.0](https://github.com/yschimke/compose-preview-mcp/compare/v4.13.0...v4.14.0) (2026-10-31)
 
 

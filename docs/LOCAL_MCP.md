@@ -65,7 +65,9 @@ control protocol and the constraints). No emulator, device or `adb`.
   `tiles` on the launch): `home` (the watch face), `launcher`, `notifications` (`op: open |
   close | clear`), `notification` (`key`, `op: tap | action | reply | dismiss | snooze`; any form
   factor), `ongoing`, `tiles` (`op: list | add | remove | show | next | prev | refresh`,
-  `component`), `health` (`heartRate`, `steps`, … for tiles and widgets), `quickSettings`, and
+  `component`), `watchface` (`op: status | set | unset | complication | uncomplication`,
+  `component`, `watchface`, `slot`, `type`: hosts the app's androidx watch face and binds its
+  complication data sources), `health` (`heartRate`, `steps`, … for tiles and widgets), `quickSettings`, and
   `rotary` for the crown — with its arguments beside `cmd`, and returns its result plus the `events` the app produced since
   the last call (activities resumed or destroyed by its own navigation, services started, intents
   nothing handled).
@@ -109,7 +111,8 @@ control protocol and the constraints). No emulator, device or `adb`.
   the simulator, which `launch --adb` serves to adb and Android Studio as an emulator
   (`emulator-5554` and up). `install` / `uninstall` (each boots a simulator on the new package;
   the app is installed, not started), `shell` (`am start`, `pm`, `input`, `getprop`, and Android
-  Studio's Wear `DEBUG_SURFACE` broadcasts that add a tile or widget), `push` / `pull` under
+  Studio's Wear `DEBUG_SURFACE` broadcasts that add a tile or widget, set a watch face or fill
+  a complication), `push` / `pull` under
   `/data/local/tmp` and `/sdcard` (a pull names its local path, as adb's does), and `exec-out screencap -p` with `output` (stdout written there
   as bytes). It returns `exitCode`, `stdout` (or `output` and `bytes`), `stderr` and the
   simulator's events; options that point adb at another device or server (`-s`, `connect`,

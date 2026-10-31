@@ -59,8 +59,11 @@ import kotlinx.serialization.json.put
  * layer rule.
  */
 class SimulatorMcp(
-  /** Starts `compose-preview <args>`; a seam so tests need neither the CLI nor a JVM. */
-  private val start: (List<String>) -> Process = defaultStarter(),
+  /**
+   * Starts `compose-preview <args>` in a directory (the build it launches from, else this server's
+   * own); a seam so tests need neither the CLI nor a JVM.
+   */
+  private val start: (List<String>, File?) -> Process = defaultStarter(),
   private val readyTimeoutMs: Long = TimeUnit.MINUTES.toMillis(5),
   private val commandTimeoutMs: Long = TimeUnit.MINUTES.toMillis(1),
   /** Runs `adb <args>`; a seam so tests need no SDK. */
@@ -170,7 +173,7 @@ class SimulatorMcp(
     }
     val process =
       try {
-        withContext(Dispatchers.IO) { start(cliArgs) }
+        withContext(Dispatchers.IO) { start(cliArgs, launchDirectory(project, file)) }
       } catch (e: CancellationException) {
         throw e
       } catch (e: Exception) {
@@ -241,6 +244,14 @@ class SimulatorMcp(
     }
     return ok(result)
   }
+
+  /**
+   * Where the CLI runs: the `project`, else the build holding the APK. The CLI finds the SDK from
+   * `local.properties` above its working directory, which for a server started outside the checkout
+   * (a Claude Code session opened above it) is not the app's build.
+   */
+  private fun launchDirectory(project: File?, apk: File?): File? =
+    project ?: apk?.parentFile?.let { ProjectDiscovery.enclosingBuild(it) }
 
   private fun notStarted(simulator: Simulator, cause: String): CallToolResult =
     error("simulator_launch: the simulator did not start ($cause).\n" + simulator.stderrTail())
@@ -469,6 +480,9 @@ class SimulatorMcp(
     init {
       daemon("simulator-$id-stdout") {
         process.inputStream.bufferedReader().useLines { lines -> lines.forEach(::onLine) }
+        // Its stdout closes a moment before the process is reaped: wait, so the exit is reported
+        // as its code rather than "still running".
+        process.waitFor(EXIT_WAIT_MS, TimeUnit.MILLISECONDS)
         val exited = IllegalStateException("the simulator exited (${exitCode()})")
         ready.completeExceptionally(exited)
         install.completeExceptionally(exited)
@@ -1082,23 +1096,36 @@ class SimulatorMcp(
     private const val DEFAULT_LOG_LINES = 100
     private const val STDERR_REPORTED = 40
     private const val MAX_EVENTS = 200
+    private const val EXIT_WAIT_MS = 5_000L
 
     /**
      * `compose-preview` from `COMPOSE_PREVIEW_CLI`, `PATH` or `~/.local/bin`, as `init-script`
      * finds it. For local development point `COMPOSE_PREVIEW_CLI` at a compose-ai-tools
      * `cli/build/install/compose-preview/bin/compose-preview`.
+     *
+     * In a build directory it runs there, and is given [AndroidSdks]' SDK as `ANDROID_HOME` when
+     * neither this server's environment nor the build's `local.properties` names one, as a Gradle
+     * child is.
      */
     fun defaultStarter(
       environment: Map<String, String> = System.getenv(),
       userHome: File = File(System.getProperty("user.home")),
-    ): (List<String>) -> Process = { args ->
+      androidSdks: AndroidSdks = AndroidSdks(environment, userHome),
+    ): (List<String>, File?) -> Process = { args, directory ->
       val cli =
         CliInitScript.locate(environment, userHome)
           ?: throw IllegalStateException(
             "no compose-preview launcher was found (COMPOSE_PREVIEW_CLI, PATH or " +
               "~/.local/bin/compose-preview)"
           )
-      ProcessBuilder(listOf(cli.absolutePath) + args).start()
+      ProcessBuilder(listOf(cli.absolutePath) + args)
+        .apply {
+          if (directory != null) {
+            directory(directory)
+            androidSdks.forBuild(directory)?.let { environment()["ANDROID_HOME"] = it.absolutePath }
+          }
+        }
+        .start()
     }
 
     private fun schema(text: String): JsonElement = Json.parseToJsonElement(text.trimIndent())

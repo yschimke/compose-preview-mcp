@@ -1,5 +1,20 @@
 # Changelog
 
+## [4.17.0](https://github.com/yschimke/compose-preview-mcp/compare/v4.16.0...v4.17.0) (2026-11-01)
+
+
+### Features
+
+* describe the simulator's watchface command ([#143](https://github.com/yschimke/compose-preview-mcp/issues/143)) ([afb703b](https://github.com/yschimke/compose-preview-mcp/commit/afb703baa24699489cc28675c6572c432509be44))
+
+
+### Bug Fixes
+
+* **deps:** update compose-ai-tools to 2.80.0 and compose-preview-daemon to 3.27.1 ([#145](https://github.com/yschimke/compose-preview-mcp/issues/145)) ([f9e757c](https://github.com/yschimke/compose-preview-mcp/commit/f9e757cf4118d9610ed61a491dee34bce9600f03))
+* **deps:** update dependency ee.schimke.composeai:compose-preview-contracts-bom to v3.39.1 ([#146](https://github.com/yschimke/compose-preview-mcp/issues/146)) ([094fea7](https://github.com/yschimke/compose-preview-mcp/commit/094fea7bfaafc1d4adf8c0882670bd34f74c7e3a))
+* **deps:** update dependency ee.schimke.composeai:compose-preview-daemon-bom to v3.27.1 ([#147](https://github.com/yschimke/compose-preview-mcp/issues/147)) ([a06a173](https://github.com/yschimke/compose-preview-mcp/commit/a06a173e0c1a70313afde2850968674238c327a8))
+* **deps:** update dependency ee.schimke.composeai:remote-compose-player-js-dist to v2.22.0 ([#148](https://github.com/yschimke/compose-preview-mcp/issues/148)) ([6888303](https://github.com/yschimke/compose-preview-mcp/commit/6888303dc8935a26c92ec200bc0127a184e4f9c0))
+
 ## [4.16.0](https://github.com/yschimke/compose-preview-mcp/compare/v4.15.0...v4.16.0) (2026-10-31)
 
 

@@ -7,7 +7,7 @@ harness. It moved here from
 [compose-preview-server](https://github.com/yschimke/compose-preview-server) with its history;
 [`docs/design/MCP_REPOSITORY.md`](docs/design/MCP_REPOSITORY.md) says why.
 
-Using it rather than building it? Start at <https://preview.coo.ee/start/>: one
+Using it rather than building it? Start at <https://yschimke.github.io/compose-ai-tools/>: one
 `compose-preview` plugin install per agent host brings this server with it.
 
 | Path | What |

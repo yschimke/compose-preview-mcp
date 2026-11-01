@@ -13,9 +13,9 @@ ktor = "3.6.1"
 mcp-kotlin-sdk = "0.16.0"
 junit = "4.13.2"
 truth = "1.4.5"
-composeai-tools = "2.79.0"
+composeai-tools = "2.80.0"
 composeai-contracts = "3.39.0"
-composeai-preview-daemon = "3.27.0"
+composeai-preview-daemon = "3.27.1"
 composeai-ui-builder = "3.124.0"
 # The TypeScript Remote Compose player the `.rc` viewer inlines (rc-players' browser bundle).
 # `harness/stage-rc-player.mjs` reads this line too.

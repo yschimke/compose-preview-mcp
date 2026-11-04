@@ -1,11 +1,11 @@
 {
   "repository": "https://github.com/yschimke/compose-preview-server",
-  "release": "v3.154.0",
+  "release": "v3.155.0",
   "files": {
     "compose-preview-viewer.html": {
       "path": "mcp-app/compose-preview-viewer.html",
-      "commit": "d169f9a0bee0ec2223f53a7abb19845b17b26e9b",
-      "sha256": "4d33693ab51c60bf14e12c57a2ce0e87b8730a10ccafa1baf3121b2230ffe18c"
+      "commit": "c55c159b8e13c2610f35c0c80c8fd9a5ce3f4e39",
+      "sha256": "5cc9bdc2446b04f05081f10fb9a3f91605177ece78f813a2606f7ab1c82caa02"
     },
     "preview-library.html": {
       "path": "mcp-app/preview-library.html",

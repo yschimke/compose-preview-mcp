@@ -138,7 +138,7 @@ class UiBuilderMcpAdapter internal constructor(private val client: UiBuilderDesi
         val format =
           suppliedDocumentFormats.firstOrNull { it.name.equals(formatName, true) }
             ?: throw IllegalArgumentException(
-              "supplied documents support only PNG, JSON and RC export"
+              "supplied documents support only PNG, JSON and RC export",
             )
         val artifact = client.exportDocument(document, format)
         CallToolResult(
@@ -157,13 +157,13 @@ class UiBuilderMcpAdapter internal constructor(private val client: UiBuilderDesi
         when (name) {
           "create_design" ->
             CreateDesignRequestV1(
-              json.decodeFromJsonElement<DesignDocumentV1>(args.required("document"))
+              json.decodeFromJsonElement<DesignDocumentV1>(args.required("document")),
             )
           "open_design" -> OpenDesignRequestV1(args.requiredString("designId"))
           "list_components" -> ListCatalogsRequestV1
           "apply_design_operations" ->
             ApplyOperationRequestV1(
-              json.decodeFromJsonElement<DesignSubmissionV1>(args.boundSubmission())
+              json.decodeFromJsonElement<DesignSubmissionV1>(args.boundSubmission()),
             )
           "render_design" -> args.exportRequest(ExportFormatV1.PNG)
           "export_svg" -> args.exportRequest(ExportFormatV1.SVG)
@@ -206,7 +206,7 @@ class UiBuilderMcpAdapter internal constructor(private val client: UiBuilderDesi
       serverInfo = Implementation(name = "compose-preview-ui-builder", version = MCP_VERSION),
       options =
         ServerOptions(
-          capabilities = ServerCapabilities(tools = ServerCapabilities.Tools(listChanged = false))
+          capabilities = ServerCapabilities(tools = ServerCapabilities.Tools(listChanged = false)),
         ),
     ) {
       toolDefs().forEach { definition ->
@@ -308,7 +308,7 @@ internal class UiBuilderDesignApiClient(
     require(id.isNotBlank()) { "UI-builder request id must not be blank" }
     val body =
       json.encodeToString(
-        HttpRequestEnvelopeV1(requestId = id, actorId = actorId, request = request)
+        HttpRequestEnvelopeV1(requestId = id, actorId = actorId, request = request),
       )
     val response = transport.post(body)
     val envelope =
@@ -319,12 +319,12 @@ internal class UiBuilderDesignApiClient(
       }
     if (envelope.requestId != id) {
       throw UiBuilderApiException(
-        "Design API response id '${envelope.requestId}' did not match request '$id'"
+        "Design API response id '${envelope.requestId}' did not match request '$id'",
       )
     }
     if (envelope.schemaVersion != UI_BUILDER_SCHEMA_VERSION_V1) {
       throw UiBuilderApiException(
-        "Design API returned unsupported schema version ${envelope.schemaVersion}"
+        "Design API returned unsupported schema version ${envelope.schemaVersion}",
       )
     }
     if (response.status !in 200..299) {

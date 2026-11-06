@@ -264,7 +264,7 @@ class PreviewSettingsStore(
         buildJsonObject {
           put("schema", SCHEMA)
           put("values", JsonObject(stored))
-        }
+        },
       )
       cached = null
       read()

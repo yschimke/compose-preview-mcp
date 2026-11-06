@@ -47,7 +47,7 @@ class EditLoopIntegrationTest {
   private val repoRoot = File(System.getProperty("composeai.mcp.repoRoot") ?: "..").absoluteFile
   private val reportFile =
     File(
-      System.getProperty("composeai.mcp.editLoopReport") ?: "build/edit-loop/edit-loop-report.json"
+      System.getProperty("composeai.mcp.editLoopReport") ?: "build/edit-loop/edit-loop-report.json",
     )
   private val cycles = mutableListOf<JsonObject>()
 
@@ -142,7 +142,7 @@ class EditLoopIntegrationTest {
         assertThat(compile).isNotNull()
         assertThat(compile!!.trigger)
           .isEqualTo(
-            if (notifies) DaemonMcpServer.TRIGGER_NOTIFY else DaemonMcpServer.TRIGGER_DETECTED
+            if (notifies) DaemonMcpServer.TRIGGER_NOTIFY else DaemonMcpServer.TRIGGER_DETECTED,
           )
         // The daemon compiles the edit itself by default (#55); Gradle runs only when it can't. A
         // fallback here means the in-process path quietly stopped working, as it did when one
@@ -252,7 +252,7 @@ class EditLoopIntegrationTest {
         )
         .firstTextContent()
     return WorkspaceId(
-      json.parseToJsonElement(text).jsonObject["workspaceId"]!!.jsonPrimitive.content
+      json.parseToJsonElement(text).jsonObject["workspaceId"]!!.jsonPrimitive.content,
     )
   }
 

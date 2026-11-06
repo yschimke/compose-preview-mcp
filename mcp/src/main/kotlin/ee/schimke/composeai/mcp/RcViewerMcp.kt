@@ -66,7 +66,7 @@ class RcViewerMcp(
         description = "Plays a .rc Remote Compose document, live-reloading when the file changes.",
         mimeType = MCP_APP_MIME_TYPE,
         meta = resourceMeta(),
-      )
+      ),
     )
 
   /** `rc_open`'s result, or null when [name] is not this viewer's tool. */
@@ -97,15 +97,15 @@ class RcViewerMcp(
               mimeType = MCP_APP_MIME_TYPE,
               text = viewerHtml,
               meta = resourceMeta(),
-            )
-          )
+            ),
+          ),
       )
     }
     if (!uri.startsWith(DOCUMENT_URI_PREFIX)) return null
     val document =
       documents[uri]
         ?: throw IllegalArgumentException(
-          "Unknown Remote Compose document: open it with rc_open first."
+          "Unknown Remote Compose document: open it with rc_open first.",
         )
     val bytes =
       when (val read = readDocument(document.file)) {
@@ -119,8 +119,8 @@ class RcViewerMcp(
             uri = uri,
             mimeType = RC_MIME_TYPE,
             blob = Base64.getEncoder().encodeToString(bytes),
-          )
-        )
+          ),
+        ),
     )
   }
 
@@ -162,8 +162,8 @@ class RcViewerMcp(
         listOf(
           ContentBlock.Text(
             "Opened $baseName in the Remote Compose viewer. The viewer reads it through the host " +
-              "and reloads when it changes."
-          )
+              "and reloads when it changes.",
+          ),
         ),
       structuredContent = structured,
     )
@@ -201,8 +201,8 @@ class RcViewerMcp(
         listOf(
           ContentBlock.Text(
             "Opened $name (${opened.bytes.size} bytes, sha256 ${opened.sha256.take(12)}) in the " +
-              "Remote Compose viewer. It reloads when the file changes."
-          )
+              "Remote Compose viewer. It reloads when the file changes.",
+          ),
         ),
       structuredContent = structured,
       // The bytes are for the app, so it can play without a second round trip; `_meta` stays out
@@ -334,7 +334,7 @@ class RcViewerMcp(
               buildJsonObject {
                 put("type", "string")
                 put("description", "Absolute path to a .rc Remote Compose document.")
-              })
+              }),
         ),
       )
     }
@@ -353,7 +353,7 @@ class RcViewerMcp(
             }
           }
         }
-      }
+      },
     )
 
   private fun error(code: String, message: String): CallToolResult =

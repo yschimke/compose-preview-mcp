@@ -154,7 +154,7 @@ internal class PreviewParameterRows<K : Any> {
       runCatching(fetch)
         .onFailure {
           System.err.println(
-            "compose-preview-mcp: preview/rows failed for $baseId: ${it.message ?: it.javaClass.simpleName}"
+            "compose-preview-mcp: preview/rows failed for $baseId: ${it.message ?: it.javaClass.simpleName}",
           )
         }
         .getOrElse {

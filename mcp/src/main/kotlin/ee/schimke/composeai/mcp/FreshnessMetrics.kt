@@ -137,7 +137,7 @@ class FreshnessMetrics {
             buildJsonObject {
               put("uri", uri)
               put("lastSeenMs", JsonPrimitive(ts))
-            }
+            },
           )
         }
       }
@@ -151,7 +151,7 @@ class FreshnessMetrics {
               put("uri", record.uri)
               put("reason", record.reason)
               put("atMs", JsonPrimitive(record.atMs))
-            }
+            },
           )
         }
       }

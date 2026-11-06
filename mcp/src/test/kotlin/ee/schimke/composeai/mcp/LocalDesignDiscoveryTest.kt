@@ -86,7 +86,7 @@ class LocalDesignDiscoveryTest {
       anotherUnscoped.close()
       File(directory, "legacy.json")
         .writeText(
-          """{"pid":${ProcessHandle.current().pid()},"start":0,"roots":["/private/legacy"]}"""
+          """{"pid":${ProcessHandle.current().pid()},"start":0,"roots":["/private/legacy"]}""",
         )
       assertThat(sameHost.all()).containsExactly(root.canonicalFile)
       writer.close()

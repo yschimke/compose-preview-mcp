@@ -196,7 +196,7 @@ class FakeDaemon : DaemonSpawn {
   @Volatile
   var onCompileWarmUp:
     ((List<String>) -> java.util.concurrent.CompletableFuture<
-        ee.schimke.composeai.daemon.protocol.CompileWarmUpResult
+        ee.schimke.composeai.daemon.protocol.CompileWarmUpResult,
       >)? =
     null
 
@@ -339,7 +339,7 @@ class FakeDaemon : DaemonSpawn {
                 put("previewParameterProviderClassName", previewParameterProvider)
               }
             }
-          }
+          },
         )
       }
       putJsonArray("removed") {}
@@ -638,7 +638,12 @@ class FakeDaemon : DaemonSpawn {
               )
             }
         recordingStarts.offer(
-          RecordingStartCall(previewId = previewId, fps = fps, scale = scale, overrides = overrides)
+          RecordingStartCall(
+            previewId = previewId,
+            fps = fps,
+            scale = scale,
+            overrides = overrides,
+          ),
         )
         val recordingId = "fake-rec-${nextRecordingId.getAndIncrement()}"
         sendResponse(

@@ -118,7 +118,7 @@ class PreviewLibraryMcpTest {
     val read = tools.getValue(PreviewSettingsMcp.READ_TOOL)
     assertThat(read["annotations"]!!.jsonObject["readOnlyHint"]).isEqualTo(JsonPrimitive(true))
     assertThat(
-        read["outputSchema"]!!.jsonObject["required"]!!.jsonArray.map { it.jsonPrimitive.content }
+        read["outputSchema"]!!.jsonObject["required"]!!.jsonArray.map { it.jsonPrimitive.content },
       )
       .containsExactly("schema", "values")
     assertThat(
@@ -127,7 +127,7 @@ class PreviewLibraryMcpTest {
           .jsonObject["ui"]!!
           .jsonObject["resourceUri"]!!
           .jsonPrimitive
-          .content
+          .content,
       )
       .isEqualTo(PreviewLibrary.RESOURCE_URI)
 
@@ -264,7 +264,7 @@ class PreviewLibraryMcpTest {
     assertThat(
         read.raw["structuredContent"]!!
           .jsonObject["values"]!!
-          .jsonObject[PreviewSettings.DARK_THEME]
+          .jsonObject[PreviewSettings.DARK_THEME],
       )
       .isEqualTo(JsonPrimitive(true))
 

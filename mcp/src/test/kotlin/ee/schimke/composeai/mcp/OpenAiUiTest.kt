@@ -42,8 +42,8 @@ class OpenAiUiTest {
               {"type": "file", "extensions": ["rc", "uid"]}
             ]}
           }
-          """
-        )
+          """,
+        ),
       )
   }
 
@@ -55,8 +55,8 @@ class OpenAiUiTest {
       .isEqualTo(
         parse(
           """{"ui": {"resourceUri": "ui://x"},
-             "openai/ui": {"keep": true, "entrypoints": [{"type": "thread"}]}}"""
-        )
+             "openai/ui": {"keep": true, "entrypoints": [{"type": "thread"}]}}""",
+        ),
       )
     assertThat(OpenAiUi.withEntrypoints(existing, emptyList())).isEqualTo(existing)
   }
@@ -83,8 +83,8 @@ class OpenAiUiTest {
         parse(
           """{"ui": {"prefersBorder": true},
              "openai/ui": {"availableDisplayModes": ["inline", "fullscreen"],
-                           "preferredDisplayMode": "fullscreen"}}"""
-        )
+                           "preferredDisplayMode": "fullscreen"}}""",
+        ),
       )
     assertThat(OpenAiUi.withDisplayModes(null))
       .isEqualTo(parse("""{"openai/ui": {"availableDisplayModes": ["inline", "fullscreen"]}}"""))
@@ -101,7 +101,7 @@ class OpenAiUiTest {
   fun `mention search meta marks the extension and forces app visibility`() {
     assertThat(OpenAiUi.mentionSearchToolMeta())
       .isEqualTo(
-        parse("""{"ui": {"visibility": ["app"]}, "openai/extensions": {"mentions/search": {}}}""")
+        parse("""{"ui": {"visibility": ["app"]}, "openai/extensions": {"mentions/search": {}}}"""),
       )
     val merged =
       OpenAiUi.mentionSearchToolMeta(parse("""{"ui": {"visibility": ["model"]}, "x": 1}"""))
@@ -109,8 +109,8 @@ class OpenAiUiTest {
       .isEqualTo(
         parse(
           """{"x": 1, "ui": {"visibility": ["model", "app"]},
-             "openai/extensions": {"mentions/search": {}}}"""
-        )
+             "openai/extensions": {"mentions/search": {}}}""",
+        ),
       )
   }
 
@@ -161,8 +161,8 @@ class OpenAiUiTest {
                  "resourceUri": {"type": "string",
                    "description": "Opaque host-resource:// URI; read it through the host."}},
                "required": ["name", "resourceUri"]}},
-             "required": ["file"]}"""
-        )
+             "required": ["file"]}""",
+        ),
       )
   }
 

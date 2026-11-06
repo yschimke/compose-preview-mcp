@@ -263,7 +263,7 @@ class DaemonSupervisorTest {
             attachable = false,
             fetchable = true,
             requiresRerender = false,
-          )
+          ),
         )
       daemon.advertisedSupportedOverrides = listOf("device")
       // A Robolectric daemon answers only once its sandbox is up.
@@ -410,7 +410,7 @@ class DaemonSupervisorTest {
           "manifestPath": "manifest.json"
         }
         """
-          .trimIndent()
+          .trimIndent(),
       )
   }
 }

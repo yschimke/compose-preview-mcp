@@ -130,7 +130,7 @@ private suspend fun ApplicationCall.respondUiBuilderAsset(
           object : OutgoingContent.NoContent() {
             override val contentType: ContentType = type
             override val contentLength: Long = entry.size
-          }
+          },
         )
       } else {
         respond(
@@ -139,7 +139,7 @@ private suspend fun ApplicationCall.respondUiBuilderAsset(
             override val contentLength: Long = entry.size
 
             override fun readFrom(): ByteReadChannel = entry.open().toByteReadChannel()
-          }
+          },
         )
       }
     }
@@ -179,5 +179,5 @@ internal fun uiBuilderAssetContentType(path: String): ContentType =
       "woff2" -> "font/woff2"
       "txt" -> "text/plain; charset=utf-8"
       else -> "application/octet-stream"
-    }
+    },
   )

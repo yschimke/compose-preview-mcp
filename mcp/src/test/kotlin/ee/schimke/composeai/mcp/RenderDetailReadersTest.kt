@@ -29,7 +29,7 @@ class RenderDetailReadersTest {
             "size":{"width":180,"height":42},
             "transform":{"scaleX":0.8333,"scaleY":0.8333,"scaled":true,"rotated":false}}]}}
         """
-          .trimIndent()
+          .trimIndent(),
       )
 
     assertThat(boxes).hasSize(2)

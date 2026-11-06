@@ -78,7 +78,7 @@ class BuildSystemSourceCompiler(
     if (BundleProjects.isBundleWorkspace(projectRoot)) {
       return SourceCompileOutcome.Unavailable(
         "${BundleProjects.sourceOf(projectRoot)} is a prebuilt preview bundle with no sources to " +
-          "recompile; repack it and register it again"
+          "recompile; repack it and register it again",
       )
     }
     if (!ProjectDiscovery.isBazelWorkspace(projectRoot)) {
@@ -88,7 +88,7 @@ class BuildSystemSourceCompiler(
     val launcher =
       cli()
         ?: return SourceCompileOutcome.Unavailable(
-          "no compose-preview launcher to rebuild the Bazel workspace ${projectRoot.path}"
+          "no compose-preview launcher to rebuild the Bazel workspace ${projectRoot.path}",
         )
     val started = System.nanoTime()
     val arguments =
@@ -100,7 +100,7 @@ class BuildSystemSourceCompiler(
       result.timedOut -> SourceCompileOutcome.Failed("compose-preview bazel prepare timed out")
       result.exitCode != 0 ->
         SourceCompileOutcome.Failed(
-          "compose-preview bazel prepare failed: " + CommandFailure.summarize(result.output)
+          "compose-preview bazel prepare failed: " + CommandFailure.summarize(result.output),
         )
       else -> SourceCompileOutcome.Ok(durationMs)
     }
@@ -215,7 +215,7 @@ class GradleSourceCompiler(
         result.copy(
           reason =
             "${result.reason} (the project does not apply the Compose Preview plugin and no " +
-              "compose-preview init script was found; run `compose-preview mcp install` once)"
+              "compose-preview init script was found; run `compose-preview mcp install` once)",
         )
       } else result
     }

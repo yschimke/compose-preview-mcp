@@ -46,7 +46,7 @@ class UiBuilderMcpAdapterTest {
           HttpResponseEnvelopeV1(
             requestId = request.requestId,
             response = CatalogsResponseV1(emptyList()),
-          )
+          ),
         ),
     )
   }
@@ -111,7 +111,7 @@ class UiBuilderMcpAdapterTest {
         ) +
           if (McpBuildFeatures.remoteCompose && ExportFormatV1.entries.any { it.name == "RC" })
             listOf("export_document")
-          else emptyList()
+          else emptyList(),
       )
       .inOrder()
     assertThat(tools.map { it.inputSchema.jsonObject["type"]?.jsonPrimitive?.content }.distinct())
@@ -124,7 +124,7 @@ class UiBuilderMcpAdapterTest {
             .jsonObject
             .getValue("required")
             .jsonArray
-            .map { it.jsonPrimitive.content }
+            .map { it.jsonPrimitive.content },
         )
         .containsExactly("designId", "revision")
         .inOrder()
@@ -212,7 +212,7 @@ class UiBuilderMcpAdapterTest {
         adapter.handle(
           "apply_design_operations",
           buildJsonObject { put("submission", JsonObject(submission)) },
-        )
+        ),
       )
 
     assertThat(result.isError).isNull()
@@ -230,7 +230,7 @@ class UiBuilderMcpAdapterTest {
         adapter.handle(
           "apply_design_operations",
           buildJsonObject { put("submission", JsonObject(submission)) },
-        )
+        ),
       )
 
     assertThat(result.isError).isNull()
@@ -259,7 +259,7 @@ class UiBuilderMcpAdapterTest {
           buildJsonObject {
             put("submission", json.encodeToJsonElement(DesignSubmissionV1.serializer(), spoofed))
           },
-        )
+        ),
       )
 
     assertThat(result.isError).isTrue()
@@ -312,12 +312,12 @@ class UiBuilderMcpAdapterTest {
                 HttpResponseEnvelopeV1(
                   requestId = "different-call",
                   response = CatalogsResponseV1(emptyList()),
-                )
+                ),
               ),
             )
           },
           requestId = { "expected-call" },
-        )
+        ),
       )
     val mismatchResult = requireNotNull(mismatch.handle("list_components", JsonObject(emptyMap())))
     assertThat(mismatchResult.isError).isTrue()
@@ -336,12 +336,12 @@ class UiBuilderMcpAdapterTest {
                   requestId = "failed-call",
                   response =
                     ErrorResponseV1(ServiceErrorV1(ServiceErrorCodeV1.FORBIDDEN, message = secret)),
-                )
+                ),
               ),
             )
           },
           requestId = { "failed-call" },
-        )
+        ),
       )
     val failedResult = requireNotNull(failed.handle("list_components", JsonObject(emptyMap())))
     assertThat(failedResult.isError).isTrue()

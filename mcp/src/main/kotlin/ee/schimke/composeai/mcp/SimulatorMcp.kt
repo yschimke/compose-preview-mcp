@@ -129,7 +129,7 @@ class SimulatorMcp(
     if (apk == null && project == null && !adbDevice) {
       return error(
         "simulator_launch: `apk` (a path) or `project` (a Gradle build) is required, unless " +
-          "`adb` starts a device with nothing installed."
+          "`adb` starts a device with nothing installed.",
       )
     }
     if (adbDevice && project != null) {
@@ -276,7 +276,7 @@ class SimulatorMcp(
           buildJsonObject {
             put("result", reply.result)
             put("events", simulator.drainEvents())
-          }
+          },
         )
       is Reply.Failed -> error("$cmd: ${reply.message}", simulator.drainEvents())
     }
@@ -392,7 +392,7 @@ class SimulatorMcp(
           buildJsonObject {
             for ((key, value) in reply.result) put(key, value)
             put("events", simulator.drainEvents())
-          }
+          },
         )
       is Reply.Failed -> error("$tool: ${reply.message}", simulator.drainEvents())
     }
@@ -408,14 +408,14 @@ class SimulatorMcp(
     val device =
       simulator.device
         ?: return error(
-          "$ADB: ${simulator.id} is not an adb device: launch it with simulator_launch `adb: true`."
+          "$ADB: ${simulator.id} is not an adb device: launch it with simulator_launch `adb: true`.",
         )
     val serial = device.string("serial") ?: return error("$ADB: the device has no serial.")
     val argv =
       (args["args"] as? JsonArray)?.mapNotNull { (it as? JsonPrimitive)?.contentOrNull }
         ?: args.string("command")?.let(::splitCommand)
         ?: return error(
-          "$ADB: `args` (adb's arguments, e.g. [\"install\", \"/path/app.apk\"]) is required."
+          "$ADB: `args` (adb's arguments, e.g. [\"install\", \"/path/app.apk\"]) is required.",
         )
     val words = argv.dropWhile { it == "adb" }
     if (words.isEmpty()) return error("$ADB: no adb command given.")
@@ -437,7 +437,7 @@ class SimulatorMcp(
       }
     if (wait.exitCode != 0) {
       return error(
-        "$ADB: $serial did not come up in adb: ${wait.stderr.ifBlank { wait.stdoutText() }}"
+        "$ADB: $serial did not come up in adb: ${wait.stderr.ifBlank { wait.stdoutText() }}",
       )
     }
     val run = adb(listOf("-s", serial) + words, timeout)
@@ -505,7 +505,7 @@ class SimulatorMcp(
   private fun noSimulator(): CallToolResult =
     error(
       if (simulators.isEmpty()) "No simulator is running: start one with simulator_launch."
-      else "Name the simulator: one of ${simulators.keys.sorted().joinToString()}."
+      else "Name the simulator: one of ${simulators.keys.sorted().joinToString()}.",
     )
 
   // -----------------------------------------------------------------------------------------------
@@ -737,7 +737,7 @@ class SimulatorMcp(
             "widgets":{"type":"array","items":{"type":"string"},"description":"Widget providers (a receiver class or its short name) to place on the home screen at launch: the app starts once, then the home screen shows with them. Implies launcher."},
             "tiles":{"type":"array","items":{"type":"string"},"description":"Wear: tile or Wear Widget services (a class or its short name) in the carousel at launch. Implies launcher."}
           }}
-          """
+          """,
         ),
     )
 
@@ -899,7 +899,7 @@ class SimulatorMcp(
             "addCapability":{"type":"string"},"removeCapability":{"type":"string"},
             "state":{"type":"string","enum":["on","ambient","off","installed","none","outdated","disabled","invalid"],"description":"screen: on / ambient / off. playServices: installed / none / outdated / disabled / invalid."},"timeoutMs":{"type":"integer"},"alwaysOn":{"type":"boolean"},"burnIn":{"type":"boolean"},"lowBit":{"type":"boolean"}
           }}
-          """
+          """,
         ),
     )
 
@@ -918,7 +918,7 @@ class SimulatorMcp(
             "path":{"type":"string","description":"Also write the PNG here; the image is then not inlined."},
             "device":{"type":"string","enum":["phone","watch"],"description":"With a paired launch: which device's display (default phone)."}
           }}
-          """
+          """,
         ),
       readOnlyHint = true,
     )
@@ -940,7 +940,7 @@ class SimulatorMcp(
             "contains":{"type":"string","description":"Only lines containing this text."},
             "lines":{"type":"integer","description":"How many of the latest lines (default 100)."}
           }}
-          """
+          """,
         ),
       readOnlyHint = true,
     )
@@ -964,7 +964,7 @@ class SimulatorMcp(
             "device":{"type":"string","enum":["phone","watch"],"description":"With a paired launch: which device restarts (default phone)."},
             "keepData":{"type":"boolean","description":"Keep the app's data (default true); false starts from a clean install."}
           }}
-          """
+          """,
         ),
     )
 
@@ -987,7 +987,7 @@ class SimulatorMcp(
             "device":{"type":"string","enum":["phone","watch"],"description":"With a paired launch: which device updates (default phone)."},
             "keepData":{"type":"boolean","description":"Keep the app's data (default true)."}
           }}
-          """
+          """,
         ),
     )
 
@@ -1025,7 +1025,7 @@ class SimulatorMcp(
             "hotswap":{"type":"boolean","description":"false restarts the app even when the edit could be hot-swapped (default true)."},
             "keepData":{"type":"boolean","description":"Keep the app's data (default true)."}
           }}
-          """
+          """,
         ),
     )
 
@@ -1057,7 +1057,7 @@ class SimulatorMcp(
             "output":{"type":"string","description":"Absolute path to write stdout to, as bytes, for a command whose output is data (exec-out screencap -p, exec-out run-as … cat). A pull writes to its own local path: [\"pull\", \"/sdcard/f\", \"/abs/f\"]."},
             "timeoutMs":{"type":"integer","description":"How long the command may take, at most 1800000 (default 600000: a first install converts the APK)."}
           }}
-          """
+          """,
         ),
     )
 
@@ -1070,7 +1070,7 @@ class SimulatorMcp(
         schema(
           """
           {"type":"object","properties":{"simulator":{"type":"string","description":"Simulator id; optional when only one runs."}}}
-          """
+          """,
         ),
     )
 
@@ -1115,7 +1115,7 @@ class SimulatorMcp(
      * `PATH`.
      */
     fun defaultAdb(
-      environment: Map<String, String> = System.getenv()
+      environment: Map<String, String> = System.getenv(),
     ): (List<String>, Long) -> AdbRun = { args, timeoutMs ->
       val sdkAdb =
         listOfNotNull(environment["ANDROID_HOME"], environment["ANDROID_SDK_ROOT"])
@@ -1204,7 +1204,7 @@ class SimulatorMcp(
         CliInitScript.locate(environment, userHome)
           ?: throw IllegalStateException(
             "no compose-preview launcher was found (COMPOSE_PREVIEW_CLI, PATH or " +
-              "~/.local/bin/compose-preview)"
+              "~/.local/bin/compose-preview)",
           )
       ProcessBuilder(listOf(cli.absolutePath) + args)
         .apply {

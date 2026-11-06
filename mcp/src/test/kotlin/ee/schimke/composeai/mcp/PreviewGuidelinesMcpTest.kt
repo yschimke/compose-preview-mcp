@@ -52,7 +52,7 @@ class PreviewGuidelinesMcpTest {
            "rules":[{"id":"touch","kind":"visual","severity":"warning",
              "guidance":"Tap targets are at least 48dp.","check":"Are tap targets 48dp?",
              "source":"https://developer.android.com/x"}]}
-          """
+          """,
         )
     }
 
@@ -139,7 +139,7 @@ class PreviewGuidelinesMcpTest {
       png().also { renders++ }
 
     override fun a11yHierarchy(
-      preview: PreviewGuidelinesMcp.Resolved
+      preview: PreviewGuidelinesMcp.Resolved,
     ): PreviewGuidelinesMcp.Hierarchy =
       if (hierarchyProblem != null) PreviewGuidelinesMcp.Hierarchy(null, hierarchyProblem)
       else PreviewGuidelinesMcp.Hierarchy(hierarchyJson())
@@ -154,7 +154,7 @@ class PreviewGuidelinesMcpTest {
               put("role", "Button")
               put("label", "Stop")
               put("boundsInScreen", "2,2,20,20")
-            }
+            },
           )
         },
       )
@@ -183,14 +183,14 @@ class PreviewGuidelinesMcpTest {
   private fun args(vararg previews: String, extra: Map<String, Double> = emptyMap()) =
     JsonObject(
       mapOf("previews" to JsonArray(previews.map { JsonPrimitive(it) })) +
-        extra.mapValues { JsonPrimitive(it.value) }
+        extra.mapValues { JsonPrimitive(it.value) },
     )
 
   private fun endpointArgs(baseUrl: String, model: String? = "llava:13b") =
     JsonObject(
       args("Stop") +
         mapOf("base_url" to JsonPrimitive(baseUrl)) +
-        listOfNotNull(model?.let { "model" to JsonPrimitive(it) })
+        listOfNotNull(model?.let { "model" to JsonPrimitive(it) }),
     )
 
   @Test
@@ -200,7 +200,7 @@ class PreviewGuidelinesMcpTest {
     assertThat(result.isError).isNull()
     val request =
       kotlinx.serialization.json.Json.parseToJsonElement(
-          (result.content.first() as ContentBlock.Text).text
+          (result.content.first() as ContentBlock.Text).text,
         )
         .jsonObject
     assertThat(request["subjects"]!!.jsonArray).hasSize(2)
@@ -220,7 +220,7 @@ class PreviewGuidelinesMcpTest {
           {"id": "com.example.Widget", "params": {"device": null, "widthDp": 216, "heightDp": 124},
            "widget": {"host": "wear", "profile": "wear-widgets"}}
         ]}
-        """
+        """,
       )
     val host = FakeHost(key = null)
     val widget = host.resolve("Widget")!!
@@ -229,7 +229,7 @@ class PreviewGuidelinesMcpTest {
       val call =
         JsonObject(
           mapOf("previews" to JsonArray(listOf(JsonPrimitive("Widget")))) +
-            extra.associate { (k, v) -> k to JsonPrimitive(v) }
+            extra.associate { (k, v) -> k to JsonPrimitive(v) },
         )
       val text = (PreviewGuidelinesMcp.prompt(call, host).content.first() as ContentBlock.Text).text
       return kotlinx.serialization.json.Json.parseToJsonElement(text)
@@ -258,7 +258,7 @@ class PreviewGuidelinesMcpTest {
       )
       .inOrder()
     assertThat(
-        catalog["includes"]!!.jsonArray.map { it.jsonObject["sha256"]!!.jsonPrimitive.content }
+        catalog["includes"]!!.jsonArray.map { it.jsonObject["sha256"]!!.jsonPrimitive.content },
       )
       .containsExactly(
         DefaultGuidelinePacks.Pack.REMOTE_COMPOSE.sha256,
@@ -329,7 +329,7 @@ class PreviewGuidelinesMcpTest {
   fun `a widget the manifest puts on the Wear host is a Wear widget, profile or not`() {
     val entry =
       kotlinx.serialization.json.Json.parseToJsonElement(
-          """{"id": "w", "params": {"device": null}, "widget": {"host": "wear"}}"""
+          """{"id": "w", "params": {"device": null}, "widget": {"host": "wear"}}""",
         )
         .jsonObject
     val choice =
@@ -352,7 +352,7 @@ class PreviewGuidelinesMcpTest {
              "rules":[{"id":"margins","kind":"visual","severity":"warning","surfaces":["screen"],
                "guidance":"Use proportional margins.","check":"Are margins proportional?",
                "source":"https://developer.android.com/x"}]}
-            """
+            """,
         )
       }
     val host = FakeHost(key = "sk-or-test", dir = moduleWithoutGuidelines(wearWidget("Weather")))
@@ -361,7 +361,7 @@ class PreviewGuidelinesMcpTest {
         mapOf(
           "previews" to JsonArray(listOf(JsonPrimitive("Weather"))),
           "guidelines" to JsonPrimitive(screens.path),
-        )
+        ),
       )
     val text = errorText(PreviewGuidelinesMcp.prompt(call, host))
     assertThat(text).contains("applies to surface `widget`, profile `wear-widgets`")
@@ -410,7 +410,7 @@ class PreviewGuidelinesMcpTest {
     val prompt = PreviewGuidelinesMcp.prompt(args("Stop"), host)
     assertThat(prompt.content.filterIsInstance<ContentBlock.Text>().map { it.text })
       .contains(
-        "Note: com.example.Stop: no accessibility nodes (a11y/hierarchy: not enabled), so its findings cannot name nodes"
+        "Note: com.example.Stop: no accessibility nodes (a11y/hierarchy: not enabled), so its findings cannot name nodes",
       )
     val check = PreviewGuidelinesMcp.check(args("Stop"), host)
     assertThat(check.structuredContent!!["notes"]!!.jsonArray.single().jsonPrimitive.content)
@@ -423,7 +423,7 @@ class PreviewGuidelinesMcpTest {
       mapOf(
         "previews" to JsonArray(listOf(JsonPrimitive("Stop"))),
         "guidelines" to JsonPrimitive(location),
-      )
+      ),
     )
 
   private fun errorText(result: ee.schimke.composeai.mcp.protocol.CallToolResult): String {
@@ -465,8 +465,8 @@ class PreviewGuidelinesMcpTest {
         PreviewGuidelinesMcp.redactedProblem(
           "not a readable ui-builder.guidelines.json: Unexpected JSON token at offset 0: " +
             "Expected start of the object '{', but had 'S' instead at path: \$\n" +
-            "JSON input: SECRET=hunter2"
-        )
+            "JSON input: SECRET=hunter2",
+        ),
       )
       .isEqualTo("not a readable ui-builder.guidelines.json (invalid at offset 0)")
     assertThat(PreviewGuidelinesMcp.redactedProblem("https://x answered 500\nbody"))
@@ -542,7 +542,7 @@ class PreviewGuidelinesMcpTest {
     val host = FakeHost(key = null)
     assertThat(
         PreviewGuidelinesMcp.check(endpointArgs("http://localhost:1/v1", model = null), host)
-          .isError
+          .isError,
       )
       .isTrue()
     assertThat(PreviewGuidelinesMcp.check(endpointArgs("file:///etc/passwd"), host).isError)

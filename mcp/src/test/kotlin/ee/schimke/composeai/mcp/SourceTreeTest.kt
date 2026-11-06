@@ -200,7 +200,7 @@ class SourceTreeTest {
             emptyList(),
             "//ui:ui",
             buildFiles = listOf(build, config),
-          )
+          ),
         )
       }
     tree.refresh()
@@ -234,7 +234,7 @@ class SourceTreeTest {
             emptyList(),
             "//ui:ui",
             outputs = listOf(manifest),
-          )
+          ),
         )
       }
 
@@ -336,7 +336,7 @@ class SourceTreeTest {
             ":app",
             outputs = listOf(manifest),
             classOutputs = listOf(File(app, "build/tmp/kotlin-classes/debug")),
-          )
+          ),
         )
       }
 
@@ -365,7 +365,7 @@ class SourceTreeTest {
             emptyList(),
             ":app",
             classOutputs = listOf(debugClasses.parentFile),
-          )
+          ),
         )
       }
 
@@ -434,7 +434,7 @@ class SourceTreeTest {
             "//a:a",
             outputs = listOf(manifest),
             classOutputs = listOf(dependency),
-          )
+          ),
         )
       }
 

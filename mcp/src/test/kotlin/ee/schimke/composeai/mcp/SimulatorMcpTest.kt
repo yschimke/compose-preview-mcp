@@ -507,7 +507,7 @@ class SimulatorMcpTest {
           put(
             "gradleArgs",
             kotlinx.serialization.json.JsonArray(
-              listOf(kotlinx.serialization.json.JsonPrimitive("--max-workers=2"))
+              listOf(kotlinx.serialization.json.JsonPrimitive("--max-workers=2")),
             ),
           )
         },
@@ -588,7 +588,7 @@ class SimulatorMcpTest {
         precompile = {
           asked += it
           null
-        }
+        },
       )
     try {
       val reload = reloadWithFiles(mcp, listOf("/p/app/src/main/kotlin/Main.kt"))
@@ -777,7 +777,7 @@ class SimulatorMcpTest {
           echo '{"event":"installFailed","apk":"x.apk","error":"invalid package name"}'
           while IFS= read -r line; do :; done
           """
-            .trimIndent()
+            .trimIndent(),
       )
     try {
       val result = runBlocking {
@@ -833,7 +833,7 @@ class SimulatorMcpTest {
             "false" in args -> SimulatorMcp.AdbRun(1, ByteArray(0), "boom")
             else -> SimulatorMcp.AdbRun(0, ByteArray(0), "")
           }
-        }
+        },
       )
     try {
       runBlocking { device.handle(SimulatorMcp.LAUNCH, buildJsonObject { put("adb", true) })!! }

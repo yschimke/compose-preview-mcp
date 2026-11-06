@@ -123,7 +123,7 @@ class PreviewSettingsMcp(
           "java",
           true,
           "${System.getProperty("java.version")} at ${System.getProperty("java.home")}",
-        )
+        ),
       )
       val problem = store.problem()
       add(
@@ -133,7 +133,7 @@ class PreviewSettingsMcp(
           if (problem != null) "${store.file}: $problem"
           else if (store.file.isFile) "${store.file}"
           else "${store.file} (not written yet; defaults apply)",
-        )
+        ),
       )
       addAll(doctorReport())
     }
@@ -176,7 +176,7 @@ class PreviewSettingsMcp(
           buildJsonObject {
             put("readTool", READ_TOOL)
             put("updateTool", UPDATE_TOOL)
-          }
+          },
       )
 
     /** The `SettingsReadResult.schema`: primitives only, a title each, no `default`s. */
@@ -354,7 +354,7 @@ internal fun projectDoctorChecks(
         "android-sdk",
         dir.isDirectory,
         "$sdkVar=${dir.path}" + if (dir.isDirectory) "" else " is not a directory",
-      )
+      ),
     )
   } else {
     val found = projects.firstNotNullOfOrNull { AndroidSdks(environment).forBuild(it.path) }
@@ -364,7 +364,7 @@ internal fun projectDoctorChecks(
         true,
         found?.let { "no ANDROID_HOME; a recompile will use $it" }
           ?: "no ANDROID_HOME; each build's local.properties sdk.dir applies (needed only for Android builds)",
-      )
+      ),
     )
   }
   if (projects.isEmpty()) {
@@ -373,7 +373,7 @@ internal fun projectDoctorChecks(
         "projects",
         false,
         "none registered; call register_project with a Gradle project path",
-      )
+      ),
     )
   }
   projects.forEach { project ->
@@ -384,7 +384,7 @@ internal fun projectDoctorChecks(
           name,
           false,
           "${project.path} no longer exists; unregister_project it",
-        )
+        ),
       )
       return@forEach
     }
@@ -400,7 +400,7 @@ internal fun projectDoctorChecks(
           (if (prepared == 0) "not prepared yet (the first render runs the Gradle bootstrap)"
           else "$prepared module(s) prepared") +
           ", ${project.daemons.size} daemon(s), ${previewCount(project)} preview(s)",
-      )
+      ),
     )
   }
 }

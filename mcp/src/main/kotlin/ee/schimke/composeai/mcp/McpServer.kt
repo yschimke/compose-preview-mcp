@@ -130,8 +130,8 @@ class McpSession(
               // RawParamsTransport lets `openai/elicitation/create` carry its untyped schema.
               session.connect(
                 RawParamsTransport(
-                  StdioServerTransport(input.asSource().buffered(), output.asSink().buffered()) {}
-                )
+                  StdioServerTransport(input.asSource().buffered(), output.asSink().buffered()) {},
+                ),
               )
               while (!closed.isDone) {
                 delay(100)
@@ -168,7 +168,7 @@ class McpSession(
         val client = session.clientVersion
         System.err.println(
           "compose-preview-mcp: client ${client?.name ?: "<unknown>"} ${client?.version ?: ""}"
-            .trimEnd()
+            .trimEnd(),
         )
         if (result is InitializeResult) result.copy(instructions = instructions(client?.name))
         else result
@@ -196,7 +196,7 @@ class McpSession(
     val session = sdkSession ?: return
     runBlocking {
       session.sendResourceUpdated(
-        ResourceUpdatedNotification(ResourceUpdatedNotificationParams(uri = uri))
+        ResourceUpdatedNotification(ResourceUpdatedNotificationParams(uri = uri)),
       )
     }
   }
@@ -227,7 +227,7 @@ class McpSession(
             progress = progress,
             total = total,
             message = message,
-          )
+          ),
         ),
         progressToken,
       )
@@ -441,7 +441,7 @@ internal fun installComposePreviewHandlers(
  * which MCP `2025-11-25` and earlier hosts read.
  */
 internal fun composePreviewServerOptions(
-  extensions: Map<String, JsonObject> = emptyMap()
+  extensions: Map<String, JsonObject> = emptyMap(),
 ): ServerOptions =
   ServerOptions(
     capabilities =
@@ -451,7 +451,7 @@ internal fun composePreviewServerOptions(
         prompts = ServerCapabilities.Prompts(listChanged = false),
         experimental = extensions.takeIf { it.isNotEmpty() }?.let(::JsonObject),
         extensions = extensions.takeIf { it.isNotEmpty() },
-      )
+      ),
   )
 
 internal fun ToolDef.toSdkTool(): Tool {
@@ -548,7 +548,7 @@ internal fun CallToolResult.withJsonTextStructure(): CallToolResult {
       runCatching { Json.parseToJsonElement(block.text) as? JsonObject }.getOrNull()
     }
   return copy(
-    structuredContent = JsonObject(objects.fold(emptyMap<String, JsonElement>()) { a, b -> a + b })
+    structuredContent = JsonObject(objects.fold(emptyMap<String, JsonElement>()) { a, b -> a + b }),
   )
 }
 

@@ -37,7 +37,7 @@ class BundleProjectsTest {
         .writeText(
           """{"schemaVersion":2,"modulePath":":catalog","variant":"desktop","enabled":true,""" +
             """"mainClass":"x","classpath":[],"jvmArgs":[],"systemProperties":{},""" +
-            """"workingDirectory":"${out.path}","manifestPath":"previews.json"}"""
+            """"workingDirectory":"${out.path}","manifestPath":"previews.json"}""",
         )
       return GradleTaskRunner.Result(0, "")
     }

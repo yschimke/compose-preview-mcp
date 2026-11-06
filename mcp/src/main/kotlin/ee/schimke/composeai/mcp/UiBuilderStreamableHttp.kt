@@ -163,7 +163,7 @@ internal fun Application.installUiBuilderStreamableHttp(
 internal fun runUiBuilderStreamableHttp(config: UiBuilderStreamableHttpConfig) {
   System.err.println(
     "compose-preview-mcp: UI Builder Streamable HTTP listening on " +
-      "http://${config.host}:${config.port}${config.path}; upstream=${config.uiBuilderUrl}"
+      "http://${config.host}:${config.port}${config.path}; upstream=${config.uiBuilderUrl}",
   )
   embeddedServer(CIO, host = config.host, port = config.port) {
       installUiBuilderStreamableHttp(config)

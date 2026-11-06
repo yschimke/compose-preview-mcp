@@ -43,11 +43,11 @@ class UiBuilderStreamableHttpTest {
                     HttpResponseEnvelopeV1(
                       requestId = request.requestId,
                       response = CatalogsResponseV1(emptyList()),
-                    )
+                    ),
                   ),
               )
             },
-        )
+        ),
       )
     application {
       installUiBuilderStreamableHttp(
@@ -105,7 +105,7 @@ class UiBuilderStreamableHttpTest {
         ) +
           if (McpBuildFeatures.remoteCompose && ExportFormatV1.entries.any { it.name == "RC" })
             listOf("export_document")
-          else emptyList()
+          else emptyList(),
       )
       .inOrder()
 

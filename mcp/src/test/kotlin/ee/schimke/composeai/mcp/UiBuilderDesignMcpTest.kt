@@ -133,8 +133,8 @@ class UiBuilderDesignMcpTest {
     assertThat(descriptor.meta!!["openai/ui"])
       .isEqualTo(
         Json.parseToJsonElement(
-          """{"availableDisplayModes":["fullscreen"],"preferredDisplayMode":"fullscreen"}"""
-        )
+          """{"availableDisplayModes":["fullscreen"],"preferredDisplayMode":"fullscreen"}""",
+        ),
       )
     assertThat(design.editorVersion).isEqualTo(UiBuilderArchiveFixture.VERSION)
   }
@@ -162,7 +162,7 @@ class UiBuilderDesignMcpTest {
           emptyMap(),
           property = { null },
           codeSource = File(tmp.newFolder("lib"), "x.jar"),
-        )
+        ),
       )
       .isNull()
   }
@@ -175,7 +175,7 @@ class UiBuilderDesignMcpTest {
           mapOf(UiBuilderWebArchive.PATH_ENV to zip.path),
           property = { null },
           codeSource = null,
-        )
+        ),
       )
       .isEqualTo(zip)
 
@@ -190,7 +190,7 @@ class UiBuilderDesignMcpTest {
           mapOf("APP_HOME" to home.path),
           property = { null },
           codeSource = null,
-        )
+        ),
       )
       .isEqualTo(packaged)
     assertThat(
@@ -198,7 +198,7 @@ class UiBuilderDesignMcpTest {
           emptyMap(),
           property = { null },
           codeSource = File(home, "lib/compose-preview-mcp.jar"),
-        )
+        ),
       )
       .isEqualTo(packaged)
 
@@ -266,7 +266,7 @@ class UiBuilderDesignMcpTest {
     assertThat(csp["resourceDomains"]).isEqualTo(Json.parseToJsonElement("""["$origin"]"""))
     assertThat(csp["connectDomains"]).isEqualTo(Json.parseToJsonElement("""["$origin"]"""))
     assertThat(
-        content.meta!!["openai/ui"]!!.jsonObject["preferredDisplayMode"]!!.jsonPrimitive.content
+        content.meta!!["openai/ui"]!!.jsonObject["preferredDisplayMode"]!!.jsonPrimitive.content,
       )
       .isEqualTo("fullscreen")
 
@@ -594,7 +594,7 @@ class UiBuilderDesignMcpServerTest {
         UiBuilderArchiveFixture.zip(
           tmp.newFolder(),
           UiBuilderArchiveFixture.files(shell = UiBuilderArchiveFixture.LAYOUT_SHELL),
-        )
+        ),
       )!!
     val file = File(tmp.root, "layout-settings.json")
     val settings = PreviewSettingsStore(file) {}
@@ -616,7 +616,7 @@ class UiBuilderDesignMcpServerTest {
     assertThat(layout()).isEqualTo("full")
     // A hand-edited value the schema refuses falls back to the default.
     file.writeText(
-      """{"schema":"compose-preview-settings/v1","values":{"uiBuilderMcpAppLayout":"wide"}}"""
+      """{"schema":"compose-preview-settings/v1","values":{"uiBuilderMcpAppLayout":"wide"}}""",
     )
     file.setLastModified(System.currentTimeMillis() + 5_000)
     assertThat(layout()).isEqualTo("focused")

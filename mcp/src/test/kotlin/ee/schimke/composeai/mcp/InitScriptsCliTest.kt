@@ -56,7 +56,7 @@ class InitScriptsCliTest {
             home,
             cli = writingCli(home, calls),
           )
-          .forProject(plain)
+          .forProject(plain),
       )
       .isNull()
     assertThat(calls.get()).isEqualTo(0)
@@ -90,7 +90,7 @@ class InitScriptsCliTest {
         CliInitScript.locate(
           mapOf("COMPOSE_PREVIEW_CLI" to named.absolutePath, "PATH" to onPath.parent),
           home,
-        )
+        ),
       )
       .isEqualTo(named)
   }
@@ -113,7 +113,7 @@ class InitScriptsCliTest {
         |echo "Picked up JAVA_TOOL_OPTIONS: noise" >&2
         |echo ${script.absolutePath}
         """
-          .trimMargin()
+          .trimMargin(),
       )
       setExecutable(true)
     }

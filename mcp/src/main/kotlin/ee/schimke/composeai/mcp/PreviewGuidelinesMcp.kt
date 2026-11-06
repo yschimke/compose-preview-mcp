@@ -265,7 +265,7 @@ object PreviewGuidelinesMcp {
     requests.forEach { request ->
       content +=
         ContentBlock.Text(
-          REPLY_JSON.encodeToString(GuidelineRequestV1.serializer(), stripped(request))
+          REPLY_JSON.encodeToString(GuidelineRequestV1.serializer(), stripped(request)),
         )
       request.pictures.forEach { picture ->
         picture.dataUrl
@@ -277,7 +277,7 @@ object PreviewGuidelinesMcp {
     content +=
       ContentBlock.Text(
         "Judge every rule for every subject; name the subject and cite node ids from the " +
-          "a11y-hierarchy evidence in each verdict, as the request's response schema asks."
+          "a11y-hierarchy evidence in each verdict, as the request's response schema asks.",
       )
     prepared.notes.forEach { content += ContentBlock.Text("Note: $it") }
     return CallToolResult(content = content)
@@ -292,7 +292,7 @@ object PreviewGuidelinesMcp {
           "$CHECK_TOOL: no OpenRouter key. Store one with `compose-preview guidelines key set`, " +
             "or set $KEY_ENV in the environment the MCP server runs in (create a key at " +
             "openrouter.ai, Settings, then Keys), or use $PROMPT_TOOL and judge the prompt with " +
-            "your own model."
+            "your own model.",
         )
     val prepared =
       prepare(CHECK_TOOL, args, host) { previews ->
@@ -324,14 +324,14 @@ object PreviewGuidelinesMcp {
       (args["model"] as? JsonPrimitive)?.contentOrNull?.takeIf { it.isNotBlank() }
         ?: return error(
           "$CHECK_TOOL: `base_url` needs `model`, the endpoint's own name for a model that reads " +
-            "pictures"
+            "pictures",
         )
     val resolvedKey = host.endpointKey(baseUrl)?.takeIf { it.key.isNotBlank() }
     if (resolvedKey == null && !OpenAiCompatibleClient.isLoopback(baseUrl)) {
       return error(
         "$CHECK_TOOL: no key stored for $baseUrl. Ask the user to run `compose-preview " +
           "guidelines key set --for $baseUrl` in a terminal; only a loopback server is asked " +
-          "without one."
+          "without one.",
       )
     }
     val prepared =
@@ -515,7 +515,7 @@ object PreviewGuidelinesMcp {
             (if (defaults != null) {
               "; the module has no ${CatalogGuidelinesV1.FILE_NAME}, so pass `guidelines` with a " +
                 "file or URL"
-            } else "")
+            } else ""),
         )
     if (defaults != null) {
       notes +=

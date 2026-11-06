@@ -252,7 +252,7 @@ object DaemonMcpMain {
   internal fun parseInitializeTimeout(
     raw: String? =
       System.getProperty("composeai.mcp.initializeTimeoutSeconds")
-        ?: System.getenv("COMPOSE_PREVIEW_INITIALIZE_TIMEOUT_SECONDS")
+        ?: System.getenv("COMPOSE_PREVIEW_INITIALIZE_TIMEOUT_SECONDS"),
   ): Duration {
     val default = DaemonSupervisor.DEFAULT_INITIALIZE_TIMEOUT
     if (raw.isNullOrBlank()) return default
@@ -260,7 +260,7 @@ object DaemonMcpMain {
     if (seconds == null || seconds <= 0) {
       System.err.println(
         "compose-preview-mcp: ignoring invalid initialize timeout '$raw' (want positive seconds); " +
-          "falling back to default $default"
+          "falling back to default $default",
       )
       return default
     }
@@ -272,7 +272,7 @@ object DaemonMcpMain {
    * which leaves the daemon's own render timeout in place.
    */
   internal fun parseMaxRenderMs(
-    raw: String? = System.getProperty("composeai.mcp.maxRenderMs")
+    raw: String? = System.getProperty("composeai.mcp.maxRenderMs"),
   ): Long? {
     val default = DaemonSupervisor.DEFAULT_MAX_RENDER_MS
     if (raw.isNullOrBlank()) return default
@@ -280,7 +280,7 @@ object DaemonMcpMain {
     if (ms == null || ms < 0) {
       System.err.println(
         "compose-preview-mcp: ignoring invalid max render time '$raw' (want milliseconds, 0 for " +
-          "the daemon's default); falling back to default ${default}ms"
+          "the daemon's default); falling back to default ${default}ms",
       )
       return default
     }
@@ -319,7 +319,7 @@ object DaemonMcpMain {
     if (parsed == null || parsed < 0) {
       System.err.println(
         "compose-preview-mcp: ignoring invalid --replicas-per-daemon='$raw' (want non-negative int); " +
-          "falling back to default $default"
+          "falling back to default $default",
       )
       return default
     }

@@ -78,7 +78,7 @@ class OpenAiProbe(private val log: (String) -> Unit = { System.err.println(it) }
             "unchanged so a resource subscription can be observed.",
         inputSchema =
           parseProbeSchema(
-            """{"type":"object","properties":{"touch":{"type":"boolean","description":"Rewrite the opened file with its own bytes and bump its mtime."}}}"""
+            """{"type":"object","properties":{"touch":{"type":"boolean","description":"Rewrite the opened file with its own bytes and bump its mtime."}}}""",
           ),
         meta =
           buildJsonObject { putJsonObject("ui") { putJsonArray("visibility") { add("app") } } },
@@ -104,7 +104,7 @@ class OpenAiProbe(private val log: (String) -> Unit = { System.err.println(it) }
         description = "Diagnostic MCP App for the OpenAI MCP Extensions probe (#1236).",
         mimeType = DaemonMcpServer.MCP_APP_MIME_TYPE,
         meta = resourceMeta(),
-      )
+      ),
     )
 
   /** The probe panel or a mention target; null for any other URI. */
@@ -117,8 +117,8 @@ class OpenAiProbe(private val log: (String) -> Unit = { System.err.println(it) }
             mimeType = DaemonMcpServer.MCP_APP_MIME_TYPE,
             text = html(),
             meta = resourceMeta(),
-          )
-        )
+          ),
+        ),
       )
     }
     val item = MENTION_ITEMS.firstOrNull { it.uri == uri } ?: return null
@@ -129,8 +129,8 @@ class OpenAiProbe(private val log: (String) -> Unit = { System.err.println(it) }
           uri = uri,
           mimeType = "text/plain",
           text = "Probe mention '${item.name}': ${item.description}",
-        )
-      )
+        ),
+      ),
     )
   }
 
@@ -149,7 +149,7 @@ class OpenAiProbe(private val log: (String) -> Unit = { System.err.println(it) }
     val requestMeta = OpenAiUi.currentRequestMeta()
     log(
       "compose-preview-mcp: openai probe $name client=${clientName ?: "<unknown>"} " +
-        "args=$args meta=${requestMeta ?: "{}"}"
+        "args=$args meta=${requestMeta ?: "{}"}",
     )
     val structured = buildJsonObject {
       put("probe", name)
@@ -163,8 +163,8 @@ class OpenAiProbe(private val log: (String) -> Unit = { System.err.println(it) }
         listOf(
           ContentBlock.Text(
             "OpenAI extensions probe '$name' opened for client ${clientName ?: "<unknown>"}. " +
-              "The probe panel shows what the host reported."
-          )
+              "The probe panel shows what the host reported.",
+          ),
         ),
       structuredContent = structured,
     )
@@ -193,7 +193,7 @@ class OpenAiProbe(private val log: (String) -> Unit = { System.err.println(it) }
     }
     log(
       "compose-preview-mcp: openai probe $PROBE_FILE_ECHO client=${clientName ?: "<unknown>"} " +
-        "path=${path ?: "<none>"} touch=$touch${touched?.let { " ($it)" } ?: ""}"
+        "path=${path ?: "<none>"} touch=$touch${touched?.let { " ($it)" } ?: ""}",
     )
     val structured = buildJsonObject {
       put("probe", PROBE_FILE_ECHO)
@@ -211,8 +211,8 @@ class OpenAiProbe(private val log: (String) -> Unit = { System.err.println(it) }
         listOf(
           ContentBlock.Text(
             if (path == null) "No _meta[\"openai/resource\"].path on this call."
-            else "Host-injected openai/resource.path: $path"
-          )
+            else "Host-injected openai/resource.path: $path",
+          ),
         ),
       structuredContent = structured,
     )
@@ -222,7 +222,7 @@ class OpenAiProbe(private val log: (String) -> Unit = { System.err.println(it) }
     val query = (args["query"] as? JsonPrimitive)?.contentOrNull
     log(
       "compose-preview-mcp: openai probe mentions/search client=${clientName ?: "<unknown>"} " +
-        "query=${query?.let { JsonPrimitive(it).toString() } ?: "<missing>"}"
+        "query=${query?.let { JsonPrimitive(it).toString() } ?: "<missing>"}",
     )
     return CallToolResult(
       content = MENTION_ITEMS,
@@ -237,7 +237,7 @@ class OpenAiProbe(private val log: (String) -> Unit = { System.err.println(it) }
                   put("name", item.name)
                   item.mimeType?.let { put("mimeType", it) }
                   item.description?.let { put("description", it) }
-                }
+                },
               )
             }
           }

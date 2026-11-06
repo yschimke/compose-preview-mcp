@@ -163,7 +163,7 @@ class DaemonSupervisor(
   fun forgetProjectsMissingFromStore(): Set<WorkspaceId> {
     val removed =
       workspaceStore.takeExternallyRemovedIds().mapTo(LinkedHashSet(), ::WorkspaceId).filterTo(
-        LinkedHashSet()
+        LinkedHashSet(),
       ) {
         projects.containsKey(it)
       }
@@ -250,7 +250,7 @@ class DaemonSupervisor(
         System.err.println(
           "compose-preview-mcp: stopping ${idle.rootProjectName}'s daemons (" +
             "${idle.daemons.keys.sorted().joinToString(", ")}) to start ${except.rootProjectName}; " +
-            "at most $maxActiveProjects build(s) render at once"
+            "at most $maxActiveProjects build(s) render at once",
         )
         idle.daemons.keys.toList().forEach { forgetDaemon(idle.workspaceId, it) }
       }
@@ -404,7 +404,7 @@ class DaemonSupervisor(
         if (enableResult.unknown.isNotEmpty()) {
           System.err.println(
             "daemon ${project.workspaceId}/${descriptor.modulePath}: extensions/enable " +
-              "skipped unknown ids ${enableResult.unknown}"
+              "skipped unknown ids ${enableResult.unknown}",
           )
         }
         initialDataProducts = enableResult.dataProducts
@@ -435,7 +435,7 @@ class DaemonSupervisor(
     }
       .onFailure { e ->
         System.err.println(
-          "daemon initialize failed for ${project.workspaceId}/${descriptor.modulePath}: ${e.message}"
+          "daemon initialize failed for ${project.workspaceId}/${descriptor.modulePath}: ${e.message}",
         )
       }
 
@@ -657,12 +657,12 @@ class SupervisedDaemon(val workspaceId: WorkspaceId, val modulePath: String) {
       val init =
         initializeResult
           ?: error(
-            "SupervisedDaemon($workspaceId/$modulePath): initialize handshake hasn't completed"
+            "SupervisedDaemon($workspaceId/$modulePath): initialize handshake hasn't completed",
           )
       val root =
         workspaceRootPath
           ?: error(
-            "SupervisedDaemon($workspaceId/$modulePath): workspaceRootPath not captured at spawn"
+            "SupervisedDaemon($workspaceId/$modulePath): workspaceRootPath not captured at spawn",
           )
       return DaemonClientRenderSession(
         workspaceRoot = root,
@@ -762,7 +762,7 @@ fun interface DescriptorProvider {
                   ?: error(
                     "Missing daemon launch descriptor for $modulePath under " +
                       "${project.path.absolutePath}. " +
-                      "Run `./gradlew $modulePath:composePreviewDaemonStart` first."
+                      "Run `./gradlew $modulePath:composePreviewDaemonStart` first.",
                   )
               }
           }

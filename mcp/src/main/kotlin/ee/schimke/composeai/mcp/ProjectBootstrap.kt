@@ -61,7 +61,7 @@ class ProjectBootstrap(
       if (!wrapper.isFile) {
         return Outcome.NotPrepared(
           "no Gradle wrapper at ${wrapper.path}, so compose-preview cannot run its discovery " +
-            "task there; run `compose-preview mcp install` in ${projectRoot.path}"
+            "task there; run `compose-preview mcp install` in ${projectRoot.path}",
         )
       }
       val initScript =
@@ -80,7 +80,7 @@ class ProjectBootstrap(
       }
       progress(
         "preparing ${projectRoot.name}: ./gradlew ${TASKS.joinToString(" ")}" +
-          if (initScript != null) " (with the compose-preview init script)" else ""
+          if (initScript != null) " (with the compose-preview init script)" else "",
       )
       val started = System.nanoTime()
       val result =
@@ -198,7 +198,7 @@ class ProjectBootstrap(
         ?: return Outcome.NotPrepared(
           "${projectRoot.path} is a Bazel workspace, which the compose-preview CLI prepares, and " +
             "no compose-preview launcher was found (COMPOSE_PREVIEW_CLI, PATH or " +
-            "~/.local/bin/compose-preview)"
+            "~/.local/bin/compose-preview)",
         )
     progress("preparing ${projectRoot.name}: compose-preview bazel prepare")
     val started = System.nanoTime()
@@ -214,7 +214,7 @@ class ProjectBootstrap(
         result.exitCode != 0 ->
           "compose-preview bazel prepare failed: " + CommandFailure.summarize(result.output)
         else -> "compose-preview bazel prepare wrote no daemon launch descriptor"
-      }
+      },
     )
   }
 
@@ -225,7 +225,7 @@ class ProjectBootstrap(
         ?: return Outcome.NotPrepared(
           "$source is a preview bundle, which the compose-preview CLI unpacks, and no " +
             "compose-preview launcher was found (COMPOSE_PREVIEW_CLI, PATH or " +
-            "~/.local/bin/compose-preview)"
+            "~/.local/bin/compose-preview)",
         )
     progress("preparing bundle $source: compose-preview bundle prepare")
     val started = System.nanoTime()
@@ -244,7 +244,7 @@ class ProjectBootstrap(
             CommandFailure.summarize(result.output) +
             " (`bundle prepare` needs a compose-preview CLI newer than 2.59.0)"
         else -> "compose-preview bundle prepare wrote no daemon launch descriptor"
-      }
+      },
     )
   }
 

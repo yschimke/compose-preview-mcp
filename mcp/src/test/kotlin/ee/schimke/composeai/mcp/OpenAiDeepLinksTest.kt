@@ -18,10 +18,10 @@ class OpenAiDeepLinksTest {
           OpenAiPlugin("bits-and-bolts"),
           "cad.library",
           "/parts?tag=bolt&sort=asc",
-        )
+        ),
       )
       .isEqualTo(
-        "codex://plugins/bits-and-bolts/app/cad.library?path=%2Fparts%3Ftag%3Dbolt%26sort%3Dasc"
+        "codex://plugins/bits-and-bolts/app/cad.library?path=%2Fparts%3Ftag%3Dbolt%26sort%3Dasc",
       )
   }
 
@@ -30,7 +30,7 @@ class OpenAiDeepLinksTest {
     val route = LibraryRoute.Project("ws-1")
     assertThat(OpenAiDeepLinks.link(marketplacePlugin, PreviewLibrary.TOOL, route))
       .isEqualTo(
-        "codex://plugins/compose-preview@yschimke/app/previews_library?path=%2Fproject%2Fws-1"
+        "codex://plugins/compose-preview@yschimke/app/previews_library?path=%2Fproject%2Fws-1",
       )
     assertThat(
         OpenAiDeepLinks.link(
@@ -38,10 +38,10 @@ class OpenAiDeepLinksTest {
           PreviewLibrary.TOOL,
           route,
           OpenAiDeepLinks.Surface.MOBILE,
-        )
+        ),
       )
       .isEqualTo(
-        "chatgpt://plugins/compose-preview@yschimke/app/previews_library?path=%2Fproject%2Fws-1"
+        "chatgpt://plugins/compose-preview@yschimke/app/previews_library?path=%2Fproject%2Fws-1",
       )
     // The web form carries no marketplace.
     assertThat(
@@ -50,10 +50,10 @@ class OpenAiDeepLinksTest {
           PreviewLibrary.TOOL,
           route,
           OpenAiDeepLinks.Surface.WEB,
-        )
+        ),
       )
       .isEqualTo(
-        "https://chatgpt.com/plugins/compose-preview/app/previews_library?path=%2Fproject%2Fws-1"
+        "https://chatgpt.com/plugins/compose-preview/app/previews_library?path=%2Fproject%2Fws-1",
       )
     // A plugin published directly to ChatGPT omits `@{marketplace}`.
     assertThat(OpenAiDeepLinks.link(directPlugin, "catalog_library"))
@@ -96,7 +96,7 @@ class OpenAiDeepLinksTest {
     val link = OpenAiDeepLinks.link(odd, "ui builder/open", LibraryRoute.Design("d 1"))
     assertThat(link)
       .isEqualTo(
-        "codex://plugins/my%20plugin%2F1@team%40corp/app/ui%20builder%2Fopen?path=%2Fdesign%2Fd%25201"
+        "codex://plugins/my%20plugin%2F1@team%40corp/app/ui%20builder%2Fopen?path=%2Fdesign%2Fd%25201",
       )
     val parsed = URI(link)
     assertThat(parsed.scheme).isEqualTo("codex")
@@ -139,8 +139,8 @@ class OpenAiDeepLinksTest {
     assertThat(OpenAiPlugin.fromEnvironment(mapOf(OpenAiPlugin.PLUGIN_ID_ENV to " "))).isNull()
     assertThat(
         OpenAiPlugin.fromEnvironment(
-          mapOf(OpenAiPlugin.PLUGIN_ID_ENV to "cp", OpenAiPlugin.MARKETPLACE_ENV to "mk")
-        )
+          mapOf(OpenAiPlugin.PLUGIN_ID_ENV to "cp", OpenAiPlugin.MARKETPLACE_ENV to "mk"),
+        ),
       )
       .isEqualTo(OpenAiPlugin("cp", "mk"))
     assertThat(OpenAiPlugin.fromEnvironment(mapOf(OpenAiPlugin.PLUGIN_ID_ENV to "cp")))

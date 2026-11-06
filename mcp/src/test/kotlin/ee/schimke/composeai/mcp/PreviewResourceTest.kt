@@ -67,7 +67,7 @@ class PreviewResourceTest {
     val s = uri.toUri()
     assertThat(s)
       .isEqualTo(
-        "compose-preview://compose-ai-tools-abc12345/_samples_android/com.example.app.RedSquare?config=phone-portrait"
+        "compose-preview://compose-ai-tools-abc12345/_samples_android/com.example.app.RedSquare?config=phone-portrait",
       )
     val parsed = PreviewUri.parse(s)
     assertThat(parsed).isEqualTo(uri)
@@ -97,8 +97,8 @@ class PreviewResourceTest {
     assertThat(PreviewUri.parse(encoded)).isEqualTo(uri)
     assertThat(
         PreviewUri.parseOrNull(
-          "compose-preview://workspace-abc12345/_app/com.example.Card?overrides=%%%"
-        )
+          "compose-preview://workspace-abc12345/_app/com.example.Card?overrides=%%%",
+        ),
       )
       .isNull()
   }
@@ -154,7 +154,7 @@ class PreviewResourceTest {
     assertThat(wire)
       .isEqualTo(
         "compose-preview://ws-abc12345/_app/" +
-          "com.example.ActionButtonPreview_Devices%20-%20Large%20Round?config=round"
+          "com.example.ActionButtonPreview_Devices%20-%20Large%20Round?config=round",
       )
     assertThat(java.net.URI(wire).scheme).isEqualTo("compose-preview")
     assertThat(PreviewUri.parse(wire)).isEqualTo(uri)
@@ -199,7 +199,7 @@ class PreviewResourceTest {
     assertThat(canonicalOverrides(PreviewOverrides(fontScale = 1.0f))).isNull()
     assertThat(canonicalOverrides(PreviewOverrides(device = "id:wearos_small_round")))
       .isEqualTo(
-        canonicalOverrides(PreviewOverrides(device = "id:wearos_small_round", fontScale = 1f))
+        canonicalOverrides(PreviewOverrides(device = "id:wearos_small_round", fontScale = 1f)),
       )
     assertThat(canonicalOverrides(PreviewOverrides(fontScale = 1.5f)))
       .isEqualTo(PreviewOverrides(fontScale = 1.5f))

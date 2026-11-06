@@ -186,7 +186,7 @@ object OpenAiUi {
         mapOf(
           "ui" to JsonObject(ui + ("visibility" to JsonArray(visibility.map(::JsonPrimitive)))),
           EXTENSIONS_KEY to JsonObject(extensions + (MENTIONS_SEARCH to JsonObject(emptyMap()))),
-        )
+        ),
     )
   }
 

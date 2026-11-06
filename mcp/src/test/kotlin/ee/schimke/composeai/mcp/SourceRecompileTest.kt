@@ -303,7 +303,7 @@ class SourceRecompileTest {
     fixture = fixture()
     val warmUp =
       java.util.concurrent.CompletableFuture<
-        ee.schimke.composeai.daemon.protocol.CompileWarmUpResult
+        ee.schimke.composeai.daemon.protocol.CompileWarmUpResult,
       >()
     daemon.onCompileWarmUp = { _ -> warmUp }
     val inProcess = CopyOnWriteArrayList<List<String>>()
@@ -350,7 +350,7 @@ class SourceRecompileTest {
          "sourceWatch":{"sourceDirs":["${sourceDir.absolutePath}"],
            "buildFiles":[${buildFiles.joinToString(",") { "\"${it.absolutePath}\"" }}]}}
         """
-          .trimIndent()
+          .trimIndent(),
       )
     }
   }
@@ -385,7 +385,7 @@ class SourceRecompileTest {
     assertThat(sent["sources"]!!.jsonArray.map { it.jsonPrimitive.content })
       .containsExactly(fixture.source.absolutePath, sibling.absolutePath)
     assertThat(
-        sent["changes"]!!.jsonObject["modified"]!!.jsonArray.map { it.jsonPrimitive.content }
+        sent["changes"]!!.jsonObject["modified"]!!.jsonArray.map { it.jsonPrimitive.content },
       )
       .containsExactly(fixture.source.absolutePath)
   }
@@ -422,7 +422,7 @@ class SourceRecompileTest {
       SourceCompiler { _, modulePath, _ ->
         gradle += modulePath
         SourceCompileOutcome.Ok(durationMs = 1, work = nextWork)
-      }
+      },
     )
     val projectDir = tmp.newFolder("workspace")
     fun module(name: String): File {
@@ -488,7 +488,7 @@ class SourceRecompileTest {
          "workingDirectory":"${app.absolutePath}","manifestPath":"${app.absolutePath}/p.json",
          "sourceWatch":{"sourceDirs":["${sourceDir.absolutePath}"]}}
         """
-          .trimIndent()
+          .trimIndent(),
       )
     }
     fun sourceWatch(paths: List<String>?) =
@@ -504,7 +504,7 @@ class SourceRecompileTest {
               },
               timeoutMs = 10_000,
             )
-            .firstTextContent()
+            .firstTextContent(),
         )
         .jsonObject
 
@@ -595,7 +595,7 @@ class SourceRecompileTest {
               line = 1,
               column = 25,
               message = "Unresolved reference 'Txt'.",
-            )
+            ),
           ),
         durationMs = 3,
       )
@@ -722,14 +722,14 @@ class SourceRecompileTest {
    * renders. Returns each module's in-process compiles and the modules Gradle compiled.
    */
   private fun twoModulesEditedTogether(
-    appDependsOnFeature: Boolean
+    appDependsOnFeature: Boolean,
   ): Pair<Map<String, List<List<String>>>, List<String>> {
     val gradle = CopyOnWriteArrayList<String>()
     start(
       SourceCompiler { _, modulePath, _ ->
         gradle += modulePath
         SourceCompileOutcome.Ok(durationMs = 1, work = nextWork)
-      }
+      },
     )
     val projectDir = tmp.newFolder("workspace")
     fun module(name: String): File {
@@ -820,7 +820,7 @@ class SourceRecompileTest {
       SourceCompiler { _, modulePath, _ ->
         gradle += modulePath
         SourceCompileOutcome.Ok(durationMs = 1, work = nextWork)
-      }
+      },
     )
     val projectDir = tmp.newFolder("workspace")
     for (name in listOf("app", "feature")) {
@@ -956,7 +956,7 @@ class SourceRecompileTest {
       object : SourceCompiler {
         override fun compile(projectRoot: File, modulePath: String, sources: List<File>) =
           SourceCompileOutcome.Unavailable("no Gradle wrapper")
-      }
+      },
     )
     fixture = fixture()
     val build = editBuildFile(fixture)
@@ -1034,7 +1034,7 @@ class SourceRecompileTest {
 
     nextFailure =
       SourceCompileOutcome.Failed(
-        ":app:composePreviewCompile failed: MainActivity.kt:1:30 Unresolved reference 'Txt'"
+        ":app:composePreviewCompile failed: MainActivity.kt:1:30 Unresolved reference 'Txt'",
       )
     edit(fixture, """@Preview fun Header() { Txt("Hello Android") }""")
     val swapsBefore = daemon.fileChanges.size
@@ -1141,7 +1141,7 @@ class SourceRecompileTest {
           fixture.classes.writeText(sources.single().readText())
           SourceCompileOutcome.Ok(durationMs = 1)
         }
-      }
+      },
     )
     fixture = fixture()
     val projectDir = File(fixture.source.path.substringBefore("/app/src/"))
@@ -1240,13 +1240,13 @@ class SourceRecompileTest {
     assertThat(args.readText()).contains(":app:composePreviewCompile")
 
     wrapper.writeText(
-      "#!/bin/sh\necho 'e: file:///x/MainActivity.kt:3:5 Unresolved reference Txt'\nexit 1\n"
+      "#!/bin/sh\necho 'e: file:///x/MainActivity.kt:3:5 Unresolved reference Txt'\nexit 1\n",
     )
     val failed = GradleSourceCompiler().compile(root, ":app", emptyList())
     assertThat(failed).isInstanceOf(SourceCompileOutcome.Failed::class.java)
     assertThat((failed as SourceCompileOutcome.Failed).reason)
       .isEqualTo(
-        ":app:composePreviewCompile failed: file:///x/MainActivity.kt:3:5 Unresolved reference Txt"
+        ":app:composePreviewCompile failed: file:///x/MainActivity.kt:3:5 Unresolved reference Txt",
       )
   }
 
@@ -1505,7 +1505,7 @@ class SourceRecompileTest {
 
     nextFailure =
       SourceCompileOutcome.Failed(
-        ":app:composePreviewCompile failed: MainActivity.kt:1:30 Unresolved reference 'Txt'"
+        ":app:composePreviewCompile failed: MainActivity.kt:1:30 Unresolved reference 'Txt'",
       )
     edit(fixture, """@Preview fun Header() { Txt("Hello Android") }""")
     val broken = render(fixture)
@@ -1680,7 +1680,7 @@ class SourceRecompileTest {
     assertThat(args.readText().trim())
       .isEqualTo(
         "--init-script ${newest.absolutePath} -Dorg.gradle.unsafe.isolated-projects=false " +
-          "-Dorg.gradle.isolated-projects=false --console=plain :app:composePreviewCompile"
+          "-Dorg.gradle.isolated-projects=false --console=plain :app:composePreviewCompile",
       )
   }
 
@@ -1729,7 +1729,7 @@ class SourceRecompileTest {
     val explicit = tmp.newFile("explicit.init.gradle.kts")
     assertThat(
         InitScripts(mapOf("COMPOSE_PREVIEW_INIT_SCRIPT" to explicit.absolutePath), home)
-          .forProject(root)
+          .forProject(root),
       )
       .isEqualTo(explicit)
     val xdg = tmp.newFolder("xdg")
@@ -1767,8 +1767,8 @@ class SourceRecompileTest {
   fun `gradle failure summary falls back to what went wrong`() {
     assertThat(
         GradleSourceCompiler.summarizeGradleFailure(
-          "\nFAILURE: Build failed.\n\n* What went wrong:\nTask 'composePreviewCompile' not found.\n"
-        )
+          "\nFAILURE: Build failed.\n\n* What went wrong:\nTask 'composePreviewCompile' not found.\n",
+        ),
       )
       .isEqualTo("Task 'composePreviewCompile' not found.")
   }
@@ -1786,7 +1786,7 @@ class SourceRecompileTest {
         .firstTextContent()
     client.expectNotification("notifications/resources/list_changed", 2_000)
     return WorkspaceId(
-      json.parseToJsonElement(text).jsonObject["workspaceId"]!!.jsonPrimitive.content
+      json.parseToJsonElement(text).jsonObject["workspaceId"]!!.jsonPrimitive.content,
     )
   }
 

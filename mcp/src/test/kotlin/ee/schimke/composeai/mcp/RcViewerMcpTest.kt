@@ -71,8 +71,8 @@ class RcViewerMcpTest {
             "ui/resourceUri": "ui://compose-preview/rc-viewer",
             "openai/ui": {"entrypoints": [{"type": "file", "extensions": ["rc"]}]}
           }
-          """
-        )
+          """,
+        ),
       )
     val properties = tool.inputSchema.jsonObject["properties"]!!.jsonObject
     // FileInput's `file`, unchanged, plus `path` for the model.
@@ -98,8 +98,8 @@ class RcViewerMcpTest {
             },
             "openai/ui": {"availableDisplayModes": ["inline", "fullscreen"]}
           }
-          """
-        )
+          """,
+        ),
       )
 
     val content = viewer.readResource(RcViewerMcp.VIEWER_URI)!!.contents.single()
@@ -167,15 +167,15 @@ class RcViewerMcpTest {
             put("name", "watch.rc")
             put("resourceUri", "host-resource://watch")
           }
-        }
+        },
       )
     assertThat(result.isError).isNull()
     assertThat(result.structuredContent)
       .isEqualTo(
         parse(
           """{"schema": "compose-preview/rc-document/v1", "source": "host", "name": "watch.rc",
-              "resourceUri": "host-resource://watch"}"""
-        )
+              "resourceUri": "host-resource://watch"}""",
+        ),
       )
     assertThat(result.meta).isNull()
   }
@@ -418,7 +418,7 @@ class RcViewerMcpServerTest {
           .jsonObject["error"]!!
           .jsonObject["code"]!!
           .jsonPrimitive
-          .content
+          .content,
       )
       .isEqualTo(RcViewerMcp.NOT_FOUND)
   }

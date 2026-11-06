@@ -39,7 +39,7 @@ class ActiveDesignRoots(
         directory?.resolve(
           java.security.MessageDigest.getInstance("SHA-256")
             .digest(it.toByteArray(Charsets.UTF_8))
-            .joinToString("") { byte -> "%02x".format(byte.toInt() and 0xff) }
+            .joinToString("") { byte -> "%02x".format(byte.toInt() and 0xff) },
         )
       }
   private val sessions = mutableMapOf<Any, List<File>>()
@@ -111,7 +111,7 @@ class ActiveDesignRoots(
             }
           }
         }
-          .toString()
+          .toString(),
       )
       Files.move(
         temp.toPath(),

@@ -66,7 +66,7 @@ object StorybookMcp {
           title = title,
           name = name,
           fqn = uri.previewFqn,
-        )
+        ),
       )
     }
     return out

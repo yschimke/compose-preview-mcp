@@ -107,7 +107,7 @@ class DaemonMcpServerTest {
           awaitElicitation(60_000) {
             throw McpException(RPCError.ErrorCode.REQUEST_TIMEOUT, "Request timed out")
           }
-        }
+        },
       )
       .isEqualTo(FormElicitation.TimedOut)
     assertThat(
@@ -116,7 +116,7 @@ class DaemonMcpServerTest {
             delay(5_000)
             ElicitResult(action = ElicitResult.Action.Accept)
           }
-        }
+        },
       )
       .isEqualTo(FormElicitation.TimedOut)
     val declined = ElicitResult(action = ElicitResult.Action.Decline)
@@ -259,7 +259,7 @@ class DaemonMcpServerTest {
         .jsonObject
     assertThat(viewer["mimeType"]!!.jsonPrimitive.content).isEqualTo("text/html;profile=mcp-app")
     assertThat(
-        viewer["_meta"]!!.jsonObject["ui"]!!.jsonObject["prefersBorder"]!!.jsonPrimitive.content
+        viewer["_meta"]!!.jsonObject["ui"]!!.jsonObject["prefersBorder"]!!.jsonPrimitive.content,
       )
       .isEqualTo("true")
 
@@ -301,7 +301,7 @@ class DaemonMcpServerTest {
       .doesNotContain("notify('ui/update-model-context'")
     assertThat(content["text"]!!.jsonPrimitive.content)
       .contains(
-        "if (image && !cells.some(cell => typeof cell?.png === 'string' && cell.png.length > 0))"
+        "if (image && !cells.some(cell => typeof cell?.png === 'string' && cell.png.length > 0))",
       )
     assertThat(content["text"]!!.jsonPrimitive.content).contains("RESOURCE_READ_TIMEOUT_MS,")
     assertThat(content["text"]!!.jsonPrimitive.content).contains("typeof content.blob === 'string'")
@@ -311,7 +311,7 @@ class DaemonMcpServerTest {
       .contains("{ name: overlayToolName, arguments: argumentsValue }")
     assertThat(content["text"]!!.jsonPrimitive.content).contains("await request('tools/list', {})")
     assertThat(
-        content["text"]!!.jsonPrimitive.content.indexOf("notify('ui/notifications/initialized'")
+        content["text"]!!.jsonPrimitive.content.indexOf("notify('ui/notifications/initialized'"),
       )
       .isLessThan(content["text"]!!.jsonPrimitive.content.indexOf("void discoverViewerActions();"))
     assertThat(content["text"]!!.jsonPrimitive.content)
@@ -381,7 +381,7 @@ class DaemonMcpServerTest {
             UiBuilderDesignApiClient(
               actorId = "agent:0123456789ab",
               transport = UiBuilderHttpTransport { error("Storybook dispatched a hidden tool") },
-            )
+            ),
           ),
       )
     val (c2s, sfc) = pipedPair()
@@ -447,7 +447,7 @@ class DaemonMcpServerTest {
                   )
                 },
               requestId = { "native-call-1" },
-            )
+            ),
           ),
       )
     val (c2s, sfc) = pipedPair()
@@ -534,7 +534,7 @@ class DaemonMcpServerTest {
               description = "stub for the test",
               inputSchema =
                 Json.parseToJsonElement("""{"type":"object","properties":{}}""").jsonObject,
-            )
+            ),
           )
         },
       )
@@ -784,7 +784,7 @@ class DaemonMcpServerTest {
           .parseToJsonElement(register.firstTextContent())
           .jsonObject["workspaceId"]!!
           .jsonPrimitive
-          .content
+          .content,
       )
     client.expectNotification("notifications/resources/list_changed", 2_000)
 
@@ -915,7 +915,7 @@ class DaemonMcpServerTest {
     val firstUri = entries[0].jsonObject["resourceUri"]?.jsonPrimitive?.contentOrNull
     assertThat(firstUri)
       .isEqualTo(
-        "compose-preview-history://${workspaceId.value}/_module/com.example.RedSquare/entry-1"
+        "compose-preview-history://${workspaceId.value}/_module/com.example.RedSquare/entry-1",
       )
   }
 
@@ -1450,7 +1450,7 @@ class DaemonMcpServerTest {
               },
               timeoutMs = 10_000,
             )
-            .firstTextContent()
+            .firstTextContent(),
         )
         .jsonObject
 
@@ -1636,7 +1636,7 @@ class DaemonMcpServerTest {
                   add(buildJsonObject { put("uri", projectDir.toPath().toUri().toString()) })
                 }
               }
-            }
+            },
         ),
     )
     client.initialize(capabilities = buildJsonObject { putJsonObject("roots") {} })
@@ -1744,7 +1744,7 @@ class DaemonMcpServerTest {
               dirs.forEach { add(buildJsonObject { put("uri", it.toPath().toUri().toString()) }) }
             }
           }
-        }
+        },
     )
 
   @Test
@@ -1791,12 +1791,12 @@ class DaemonMcpServerTest {
         .writeText(
           """{"schemaVersion":2,"modulePath":":catalog","variant":"desktop","enabled":true,""" +
             """"mainClass":"x","classpath":[],"jvmArgs":[],"systemProperties":{},""" +
-            """"workingDirectory":"${dir.path}","manifestPath":"previews.json"}"""
+            """"workingDirectory":"${dir.path}","manifestPath":"previews.json"}""",
         )
       File(dir, "previews.json")
         .writeText(
           """{"previews":[{"id":"com.example.CatalogPreview","className":"com.example",""" +
-            """"functionName":"CatalogPreview"}]}"""
+            """"functionName":"CatalogPreview"}]}""",
         )
       GradleTaskRunner.Result(0, "")
     }
@@ -1837,12 +1837,12 @@ class DaemonMcpServerTest {
         .writeText(
           """{"schemaVersion":2,"modulePath":"$module","variant":"debug","enabled":true,""" +
             """"mainClass":"x","classpath":[],"jvmArgs":[],"systemProperties":{},""" +
-            """"workingDirectory":"${dir.parentFile.parent}","manifestPath":"previews.json"}"""
+            """"workingDirectory":"${dir.parentFile.parent}","manifestPath":"previews.json"}""",
         )
       File(dir, "previews.json")
         .writeText(
           """{"previews":[{"id":"com.example.${preview}_Devices - Small Round",""" +
-            """"className":"com.example","functionName":"$preview"}]}"""
+            """"className":"com.example","functionName":"$preview"}]}""",
         )
     }
     val desktop = DaemonMcpServer(supervisor, workingDirectory = null)
@@ -1977,7 +1977,7 @@ class DaemonMcpServerTest {
         File(repo, "ComposeAdvanced").canonicalPath,
       )
     assertThat(
-        supervisor.listProjects().single { it.path.name == "ComposeStarter" }.workspaceId.value
+        supervisor.listProjects().single { it.path.name == "ComposeStarter" }.workspaceId.value,
       )
       .isEqualTo("ComposeStarter-0")
   }
@@ -2110,7 +2110,7 @@ class DaemonMcpServerTest {
         .writeText(
           """{"schemaVersion":2,"modulePath":":app","variant":"desktop","enabled":true,""" +
             """"mainClass":"x","classpath":[],"jvmArgs":[],"systemProperties":{},""" +
-            """"workingDirectory":"${dir.parentFile.parent}","manifestPath":"manifest.json"}"""
+            """"workingDirectory":"${dir.parentFile.parent}","manifestPath":"manifest.json"}""",
         )
       GradleTaskRunner.Result(0, "BUILD SUCCESSFUL")
     }
@@ -2178,7 +2178,7 @@ class DaemonMcpServerTest {
         .writeText(
           """{"schemaVersion":2,"modulePath":":app","variant":"desktop","enabled":true,""" +
             """"mainClass":"x","classpath":[],"jvmArgs":[],"systemProperties":{},""" +
-            """"workingDirectory":"${dir.parentFile.parent}","manifestPath":"manifest.json"}"""
+            """"workingDirectory":"${dir.parentFile.parent}","manifestPath":"manifest.json"}""",
         )
       GradleTaskRunner.Result(0, "BUILD SUCCESSFUL")
     }
@@ -2270,7 +2270,7 @@ class DaemonMcpServerTest {
               GradleTaskRunner { _, _, _, _ ->
                 stuck.await(30, TimeUnit.SECONDS)
                 GradleTaskRunner.Result(1, "boom")
-              }
+              },
           ),
         callBudgetMs = 300,
       )
@@ -2292,7 +2292,7 @@ class DaemonMcpServerTest {
       .writeText(
         """{"schemaVersion":2,"modulePath":":app","variant":"desktop","enabled":true,""" +
           """"mainClass":"x","classpath":[],"jvmArgs":[],"systemProperties":{},""" +
-          """"workingDirectory":"${dir.parentFile.parent}","manifestPath":"manifest.json"}"""
+          """"workingDirectory":"${dir.parentFile.parent}","manifestPath":"manifest.json"}""",
       )
   }
 
@@ -2386,7 +2386,7 @@ class DaemonMcpServerTest {
     assertThat(preparedRoots).containsExactly(starter.canonicalPath)
     assertThat(factory.daemons.keys.map { it.first })
       .containsExactly(
-        supervisor.listProjects().single { it.path == starter.canonicalFile }.workspaceId
+        supervisor.listProjects().single { it.path == starter.canonicalFile }.workspaceId,
       )
     warmServer.shutdown()
   }
@@ -2503,7 +2503,7 @@ class DaemonMcpServerTest {
       json.parseToJsonElement(render("MainActivityKt.DetailPreview").firstTextContent()).jsonObject
     assertThat(bySuffix["uri"]!!.jsonPrimitive.content)
       .isEqualTo(
-        PreviewUri(workspaceId, ":app", "com.example.MainActivityKt.DetailPreview").toUri()
+        PreviewUri(workspaceId, ":app", "com.example.MainActivityKt.DetailPreview").toUri(),
       )
     assertThat(bySuffix["otherMatches"]).isNull()
 
@@ -2513,12 +2513,12 @@ class DaemonMcpServerTest {
       .isEqualTo(
         "render_preview: no preview matches 'ListScreenPrevew'. Closest: ListScreenPreview, " +
           "DetailPreview (3 previews in 1 module). Call find_previews_for_file with the source file " +
-          "to list its previews."
+          "to list its previews.",
       )
     assertThat(
         missing.raw["structuredContent"]!!.jsonObject["suggestions"]!!.jsonArray.map {
           it.jsonPrimitive.content
-        }
+        },
       )
       .containsExactly("ListScreenPreview", "DetailPreview")
       .inOrder()
@@ -2555,7 +2555,7 @@ class DaemonMcpServerTest {
               buildJsonObject { put("preview", "CardPreview") },
               timeoutMs = 10_000,
             )
-            .firstTextContent()
+            .firstTextContent(),
         )
         .jsonObject
     val cardFile = File(result["cardPath"]!!.jsonPrimitive.content)
@@ -2622,7 +2622,7 @@ class DaemonMcpServerTest {
               },
               timeoutMs = 10_000,
             )
-            .firstTextContent()
+            .firstTextContent(),
         )
         .jsonObject
 
@@ -2719,7 +2719,7 @@ class DaemonMcpServerTest {
                             put("right", 2)
                             put("bottom", 1)
                           }
-                        }
+                        },
                       )
                       add(buildJsonObject { put("component", "Spacer") })
                     }
@@ -3016,7 +3016,7 @@ class DaemonMcpServerTest {
               },
               timeoutMs = 10_000,
             )
-            .firstTextContent()
+            .firstTextContent(),
         )
         .jsonObject
 
@@ -3065,7 +3065,7 @@ class DaemonMcpServerTest {
           .meta
           ?.get("sourceFile")
           ?.jsonPrimitive
-          ?.contentOrNull
+          ?.contentOrNull,
       )
       .isEqualTo(previewFile.canonicalPath)
     assertThat(
@@ -3074,7 +3074,7 @@ class DaemonMcpServerTest {
           .meta
           ?.get("sourceLine")
           ?.jsonPrimitive
-          ?.contentOrNull
+          ?.contentOrNull,
       )
       .isEqualTo("24")
 
@@ -3089,7 +3089,7 @@ class DaemonMcpServerTest {
                 put("path", "module/$sourcePath")
               },
             )
-            .firstTextContent()
+            .firstTextContent(),
         )
         .jsonObject["previews"]!!
         .jsonArray
@@ -3099,7 +3099,7 @@ class DaemonMcpServerTest {
     assertThat(
         found
           .map { it["uri"]?.jsonPrimitive?.contentOrNull }
-          .all { it!!.startsWith("compose-preview://${workspaceId.value}/") }
+          .all { it!!.startsWith("compose-preview://${workspaceId.value}/") },
       )
       .isTrue()
     assertThat(found.map { it["bodyLine"]?.jsonPrimitive?.contentOrNull })
@@ -3113,7 +3113,7 @@ class DaemonMcpServerTest {
               "find_previews_for_file",
               buildJsonObject { put("path", previewFile.absolutePath) },
             )
-            .firstTextContent()
+            .firstTextContent(),
         )
         .jsonObject["previews"]!!
         .jsonArray
@@ -3133,7 +3133,7 @@ class DaemonMcpServerTest {
           .meta
           ?.get("sourceFile")
           ?.jsonPrimitive
-          ?.contentOrNull
+          ?.contentOrNull,
       )
       .isEqualTo(previewFile.canonicalPath)
 
@@ -3148,7 +3148,7 @@ class DaemonMcpServerTest {
                 put("path", unrelatedFile.absolutePath)
               },
             )
-            .firstTextContent()
+            .firstTextContent(),
         )
         .jsonObject["previews"]!!
         .jsonArray
@@ -3206,7 +3206,7 @@ class DaemonMcpServerTest {
                   put("rootProjectName", "remapped-demo")
                 },
               )
-              .firstTextContent()
+              .firstTextContent(),
           )
           .jsonObject
       val workspaceId = WorkspaceId(registered["workspaceId"]!!.jsonPrimitive.content)
@@ -3231,7 +3231,7 @@ class DaemonMcpServerTest {
             .meta
             ?.get("sourceFile")
             ?.jsonPrimitive
-            ?.contentOrNull
+            ?.contentOrNull,
         )
         .isEqualTo(previewFile.canonicalPath)
 
@@ -3243,7 +3243,7 @@ class DaemonMcpServerTest {
                 "find_previews_for_file",
                 buildJsonObject { put("path", previewFile.absolutePath) },
               )
-              .firstTextContent()
+              .firstTextContent(),
           )
           .jsonObject["previews"]!!
           .jsonArray
@@ -3272,7 +3272,7 @@ class DaemonMcpServerTest {
             attachable = true,
             fetchable = true,
             requiresRerender = false,
-          )
+          ),
         )
       d.dataFetchHandler = { _, kind, _, _ ->
         FakeDaemon.DataFetchOutcome.Ok(
@@ -3368,7 +3368,7 @@ class DaemonMcpServerTest {
               putJsonArray("mimeTypes") { add(JsonPrimitive("text/html;profile=mcp-app")) }
             }
           }
-        }
+        },
     )
     val uri = solidPreview("AppsClient")
     val result =
@@ -3451,7 +3451,7 @@ class DaemonMcpServerTest {
             attachable = true,
             fetchable = true,
             requiresRerender = false,
-          )
+          ),
         )
       d.dataFetchHandler = { _, kind, _, _ ->
         FakeDaemon.DataFetchOutcome.Ok(
@@ -3539,7 +3539,7 @@ class DaemonMcpServerTest {
             attachable = true,
             fetchable = true,
             requiresRerender = false,
-          )
+          ),
         )
       d.dataFetchHandler = { _, kind, _, _ ->
         FakeDaemon.DataFetchOutcome.Ok(
@@ -3556,7 +3556,7 @@ class DaemonMcpServerTest {
                       put("nodeId", "2")
                       put("boundsInRoot", "10,5,30,25")
                       put("testTag", "hero")
-                    }
+                    },
                   )
                 }
               }
@@ -3687,7 +3687,7 @@ class DaemonMcpServerTest {
             attachable = true,
             fetchable = true,
             requiresRerender = false,
-          )
+          ),
         )
       d.dataFetchHandler = { _, kind, _, _ ->
         FakeDaemon.DataFetchOutcome.Ok(
@@ -3704,14 +3704,14 @@ class DaemonMcpServerTest {
                       put("nodeId", "2")
                       put("boundsInRoot", "0,0,20,30")
                       put("role", "Button")
-                    }
+                    },
                   )
                   add(
                     buildJsonObject {
                       put("nodeId", "3")
                       put("boundsInRoot", "20,0,40,30")
                       put("role", "Button")
-                    }
+                    },
                   )
                 }
               }
@@ -3809,11 +3809,11 @@ class DaemonMcpServerTest {
     val cells = parsed["cells"]!!.jsonArray
     assertThat(cells).hasSize(2)
     assertThat(
-        cells[0].jsonObject["overrides"]!!.jsonObject["uiMode"]?.jsonPrimitive?.contentOrNull
+        cells[0].jsonObject["overrides"]!!.jsonObject["uiMode"]?.jsonPrimitive?.contentOrNull,
       )
       .isEqualTo("light")
     assertThat(
-        cells[1].jsonObject["overrides"]!!.jsonObject["uiMode"]?.jsonPrimitive?.contentOrNull
+        cells[1].jsonObject["overrides"]!!.jsonObject["uiMode"]?.jsonPrimitive?.contentOrNull,
       )
       .isEqualTo("dark")
     assertThat(cells[0].jsonObject["sha256"]?.jsonPrimitive?.contentOrNull).isNotEmpty()
@@ -3954,7 +3954,7 @@ class DaemonMcpServerTest {
     val manifest = tmp.newFile("rediscover.previews.json")
     manifest.writeText(
       """{"previews":[{"id":"com.example.Initial","className":"com.example",""" +
-        """"functionName":"Initial","displayName":"Initial"}]}"""
+        """"functionName":"Initial","displayName":"Initial"}]}""",
     )
     assertThat(manifest.setLastModified(System.currentTimeMillis() - 60_000)).isTrue()
     factory.daemonConfigurer = { it.advertisedManifestPath = manifest.absolutePath }
@@ -3969,7 +3969,7 @@ class DaemonMcpServerTest {
         """{"previews":[{"id":"com.example.Initial","className":"com.example",""" +
           """"functionName":"Initial","displayName":"Initial"},""" +
           """{"id":"com.example.FreshPreview","className":"com.example",""" +
-          """"functionName":"FreshPreview","displayName":"FreshPreview"}]}"""
+          """"functionName":"FreshPreview","displayName":"FreshPreview"}]}""",
       )
       GradleTaskRunner.Result(0, "BUILD SUCCESSFUL")
     }
@@ -4029,7 +4029,7 @@ class DaemonMcpServerTest {
       """{"previews":[{"id":"com.example.GreetingPreview","className":"com.example",""" +
         """"functionName":"GreetingPreview","displayName":"GreetingPreview"},""" +
         """{"id":"activity__MainActivity","className":"com.example",""" +
-        """"functionName":"MainActivity","displayName":"MainActivity"}]}"""
+        """"functionName":"MainActivity","displayName":"MainActivity"}]}""",
     )
     factory.daemonConfigurer = { it.advertisedManifestPath = manifest.absolutePath }
     val rediscoveries = java.util.concurrent.atomic.AtomicInteger()
@@ -4151,7 +4151,7 @@ class DaemonMcpServerTest {
                 if (case.form) putJsonObject("form") {}
                 if (case.url) putJsonObject("url") {}
               }
-            }
+            },
       )
       val workspaceId = registerWorkspace(tmp.newFolder("variants-$index"), "variants-$index")
       val daemon = warmDaemonFor(workspaceId, ":app")
@@ -4267,7 +4267,7 @@ class DaemonMcpServerTest {
               if (case.formCapability) putJsonObject("form") {}
               if (case.urlCapability) putJsonObject("url") {}
             }
-          }
+          },
       )
       val projectDir = tmp.newFolder("form-workspace-$index")
       tmp.newFolder("form-workspace-$index", "module")
@@ -4447,7 +4447,7 @@ class DaemonMcpServerTest {
           .first { it["variantChoice"] != null }["variantChoice"]!!
           .jsonObject["mode"]!!
           .jsonPrimitive
-          .content
+          .content,
       )
       .isEqualTo("text")
     assertThat(resp.raw["_meta"]!!.jsonObject["composePreview/cellPngs"]!!.jsonArray).hasSize(2)
@@ -4477,7 +4477,7 @@ class DaemonMcpServerTest {
           .first { it["variantChoice"] != null }["variantChoice"]!!
           .jsonObject["choices"]!!
           .jsonArray
-          .map { it.jsonPrimitive.content }
+          .map { it.jsonPrimitive.content },
       )
       .containsExactlyElementsIn(ids.map { PreviewUri(workspaceId, ":app", it).toUri() })
     assertThat(daemon.renderOverrides).hasSize(1)
@@ -4577,7 +4577,7 @@ class DaemonMcpServerTest {
     assertThat(resp.isError()).isTrue()
     assertThat(resp.firstTextContent())
       .startsWith(
-        "render_matrix: no preview matches 'com.example.MainActivityKt.ListScreenPrevew'."
+        "render_matrix: no preview matches 'com.example.MainActivityKt.ListScreenPrevew'.",
       )
     assertThat(resp.firstTextContent()).contains("Closest: ListScreenPreview")
   }
@@ -4597,7 +4597,7 @@ class DaemonMcpServerTest {
             widthDp = 393,
             heightDp = 851,
             density = 2.75f,
-          )
+          ),
         )
     }
     val daemon = warmDaemonFor(workspaceId, ":module")
@@ -4791,7 +4791,7 @@ class DaemonMcpServerTest {
             widthDp = 393,
             heightDp = 851,
             density = 2.75f,
-          )
+          ),
         )
       d.autoRenderPngPath = { _ ->
         java.io.File.createTempFile("preview", ".png").also { it.deleteOnExit() }.absolutePath
@@ -4842,8 +4842,8 @@ class DaemonMcpServerTest {
       .containsExactly("recording/script")
     assertThat(
         DaemonMcpServer.recordingScriptExtensionIds(
-          listOf("input.click", "a11y.action.click", "uia.click", "navigation.back")
-        )
+          listOf("input.click", "a11y.action.click", "uia.click", "navigation.back"),
+        ),
       )
       .containsExactly("recording/script", "a11y", "uiautomator", "navigation")
       .inOrder()
@@ -4868,7 +4868,7 @@ class DaemonMcpServerTest {
               displayName = "a11y.action.click",
               summary = "a11y click",
               supported = true,
-            )
+            ),
           ),
       )
     factory.daemonConfigurer = { d ->
@@ -4911,7 +4911,7 @@ class DaemonMcpServerTest {
                 buildJsonObject {
                   put("tMs", index * 100)
                   put("kind", kind)
-                }
+                },
               )
             }
           }
@@ -4974,7 +4974,7 @@ class DaemonMcpServerTest {
                 label = "before-rotate",
                 checkpointId = "checkpoint-1",
                 message = "probe marker reached",
-              )
+              ),
             ),
         )
     }
@@ -5003,7 +5003,7 @@ class DaemonMcpServerTest {
                 put("kind", "input.click")
                 put("pixelX", 120)
                 put("pixelY", 40)
-              }
+              },
             )
             add(
               buildJsonObject {
@@ -5011,7 +5011,7 @@ class DaemonMcpServerTest {
                 put("kind", "input.click")
                 put("pixelX", 120)
                 put("pixelY", 40)
-              }
+              },
             )
             add(
               buildJsonObject {
@@ -5020,7 +5020,7 @@ class DaemonMcpServerTest {
                 put("label", "before-rotate")
                 put("checkpointId", "checkpoint-1")
                 putJsonArray("tags") { add(JsonPrimitive("state-restoration")) }
-              }
+              },
             )
           }
           putJsonObject("overrides") {
@@ -5106,7 +5106,7 @@ class DaemonMcpServerTest {
           .jsonObject["changedPixelsFromPrevious"]
           ?.jsonPrimitive
           ?.contentOrNull
-          ?.toIntOrNull()
+          ?.toIntOrNull(),
       )
       .isEqualTo(4)
     assertThat(frames[2].jsonObject["changedFromPrevious"]?.jsonPrimitive?.contentOrNull)
@@ -5124,7 +5124,7 @@ class DaemonMcpServerTest {
           .jsonObject["changedPixelsFromPrevious"]
           ?.jsonPrimitive
           ?.contentOrNull
-          ?.toIntOrNull()
+          ?.toIntOrNull(),
       )
       .isEqualTo(0)
     assertThat(metadata["sizeBytes"]?.jsonPrimitive?.contentOrNull?.toLongOrNull())
@@ -5176,7 +5176,7 @@ class DaemonMcpServerTest {
                 put("kind", "input.click")
                 put("pixelX", 10)
                 put("pixelY", 10)
-              }
+              },
             )
           }
         },
@@ -5254,7 +5254,7 @@ class DaemonMcpServerTest {
                 put("kind", "input.click")
                 put("pixelX", 60)
                 put("pixelY", 20)
-              }
+              },
             )
           }
         },
@@ -5306,7 +5306,7 @@ class DaemonMcpServerTest {
                     ee.schimke.composeai.daemon.protocol.RecordingProbeNode(
                       testTag = "cart",
                       clickable = true,
-                    )
+                    ),
                   ),
               ),
             ),
@@ -5335,14 +5335,14 @@ class DaemonMcpServerTest {
                 put("kind", "input.click")
                 put("pixelX", 60)
                 put("pixelY", 20)
-              }
+              },
             )
             add(
               buildJsonObject {
                 put("tMs", 100)
                 put("kind", "recording.probe")
                 put("label", "after-add")
-              }
+              },
             )
           }
         },
@@ -5404,7 +5404,7 @@ class DaemonMcpServerTest {
             attachable = true,
             fetchable = true,
             requiresRerender = false,
-          )
+          ),
         )
       d.advertisedDataExtensions =
         ee.schimke.composeai.data.render.extensions.RecordingScriptDataExtensions.descriptors +
@@ -5485,7 +5485,7 @@ class DaemonMcpServerTest {
     assertThat(extras["show_fab"]?.jsonPrimitive?.contentOrNull).isEqualTo("true")
     assertThat(extras["source"]?.jsonPrimitive?.contentOrNull).isEqualTo("deeplink")
     assertThat(
-        payload["onBackPressed"]!!.jsonObject["hasEnabledCallbacks"]?.jsonPrimitive?.contentOrNull
+        payload["onBackPressed"]!!.jsonObject["hasEnabledCallbacks"]?.jsonPrimitive?.contentOrNull,
       )
       .isEqualTo("true")
 
@@ -5503,7 +5503,7 @@ class DaemonMcpServerTest {
                 put("tMs", 0)
                 put("kind", "navigation.deepLink")
                 put("deepLinkUri", "app://route/profile/42")
-              }
+              },
             )
             add(
               buildJsonObject {
@@ -5511,7 +5511,7 @@ class DaemonMcpServerTest {
                 put("kind", "navigation.predictiveBackStarted")
                 put("backProgress", 0.0)
                 put("backEdge", "left")
-              }
+              },
             )
             add(
               buildJsonObject {
@@ -5519,13 +5519,13 @@ class DaemonMcpServerTest {
                 put("kind", "navigation.predictiveBackProgressed")
                 put("backProgress", 0.5)
                 put("backEdge", "left")
-              }
+              },
             )
             add(
               buildJsonObject {
                 put("tMs", 150)
                 put("kind", "navigation.back")
-              }
+              },
             )
           }
         },
@@ -5585,7 +5585,7 @@ class DaemonMcpServerTest {
                 put("kind", "scroll") // not a wire-name id any extension advertises
                 put("pixelX", 10)
                 put("pixelY", 10)
-              }
+              },
             )
           }
         },
@@ -5620,7 +5620,7 @@ class DaemonMcpServerTest {
               buildJsonObject {
                 put("tMs", 0)
                 put("kind", "unknown.event")
-              }
+              },
             )
           }
         },
@@ -5660,7 +5660,7 @@ class DaemonMcpServerTest {
                 put("kind", "click")
                 put("pixelX", 10)
                 put("pixelY", 10)
-              }
+              },
             )
           }
         },
@@ -5691,9 +5691,9 @@ class DaemonMcpServerTest {
                   displayName = "State save (planned)",
                   summary = "Planned state-save script event.",
                   supported = false,
-                )
+                ),
               ),
-          )
+          ),
         )
     }
     client.initialize()
@@ -5717,7 +5717,7 @@ class DaemonMcpServerTest {
                 put("tMs", 0)
                 put("kind", "state.save")
                 put("checkpointId", "before")
-              }
+              },
             )
           }
         },
@@ -5810,7 +5810,7 @@ class DaemonMcpServerTest {
                 put("kind", "input.click")
                 put("pixelX", 10)
                 put("pixelY", 10)
-              }
+              },
             )
           }
         },
@@ -6085,7 +6085,7 @@ class DaemonMcpServerTest {
 
       val fileChanged = daemon.fileChanges.poll(2_000, TimeUnit.MILLISECONDS)
       assertWithMessage(
-          "iteration #${i + 1}: expected fileChanged forwarded for advancing-mtime edit"
+          "iteration #${i + 1}: expected fileChanged forwarded for advancing-mtime edit",
         )
         .that(fileChanged)
         .isNotNull()
@@ -6141,7 +6141,7 @@ class DaemonMcpServerTest {
 
     assertWithMessage(
         "expected fileChanged to be forwarded for every edit (got ${notifiedIterations.size}/$iterations); " +
-          "ensureSourceFreshBeforeRender currently relies on mtime advancing, so content-only edits leak through stale"
+          "ensureSourceFreshBeforeRender currently relies on mtime advancing, so content-only edits leak through stale",
       )
       .that(notifiedIterations)
       .hasSize(iterations)
@@ -6231,7 +6231,7 @@ class DaemonMcpServerTest {
                   put("rootProjectName", "metrics-demo")
                 },
               )
-              .firstTextContent()
+              .firstTextContent(),
           )
           .jsonObject["workspaceId"]!!
           .jsonPrimitive
@@ -6322,7 +6322,7 @@ class DaemonMcpServerTest {
                   put("rootProjectName", "poll-demo")
                 },
               )
-              .firstTextContent()
+              .firstTextContent(),
           )
           .jsonObject["workspaceId"]!!
           .jsonPrimitive
@@ -6399,7 +6399,7 @@ class DaemonMcpServerTest {
                   put("rootProjectName", "sampling-demo")
                 },
               )
-              .firstTextContent()
+              .firstTextContent(),
           )
           .jsonObject["workspaceId"]!!
           .jsonPrimitive
@@ -6491,7 +6491,7 @@ class DaemonMcpServerTest {
       // Boot manifest — one entry. The supervisor's `synthesiseInitialDiscovery` reads it on
       // initialize, so the catalog already contains `Initial`.
       manifestFile.writeText(
-        """{"previews":[{"id":"com.example.Initial","className":"com.example","functionName":"Initial","displayName":"Initial"}]}"""
+        """{"previews":[{"id":"com.example.Initial","className":"com.example","functionName":"Initial","displayName":"Initial"}]}""",
       )
       val initialMtime = System.currentTimeMillis() - 60_000
       assertThat(manifestFile.setLastModified(initialMtime)).isTrue()
@@ -6511,7 +6511,7 @@ class DaemonMcpServerTest {
                   put("rootProjectName", "manifest-demo")
                 },
               )
-              .firstTextContent()
+              .firstTextContent(),
           )
           .jsonObject["workspaceId"]!!
           .jsonPrimitive
@@ -6544,7 +6544,7 @@ class DaemonMcpServerTest {
           {"id":"com.example.WeatherForecast_Light","className":"com.example","functionName":"WeatherForecast","displayName":"WeatherForecast_Light","deprecated":false,"overloads":[],"widget":{"kind":"glance"}}
         ]}
         """
-          .trimIndent()
+          .trimIndent(),
       )
       assertThat(manifestFile.setLastModified(initialMtime + 5_000)).isTrue()
 
@@ -6652,7 +6652,7 @@ class DaemonMcpServerTest {
             attachable = true,
             fetchable = true,
             requiresRerender = false,
-          )
+          ),
         )
       daemon.dataFetchHandler = { previewId, kind, _, _ ->
         FakeDaemon.DataFetchOutcome.Ok(
@@ -6665,7 +6665,7 @@ class DaemonMcpServerTest {
                   buildJsonObject {
                     put("label", "Hello $previewId")
                     put("role", "Button")
-                  }
+                  },
                 )
               }
             },
@@ -6714,7 +6714,7 @@ class DaemonMcpServerTest {
               put("boundsInRoot", "0,0,20,20")
               put("testTag", "label")
               put("text", childText)
-            }
+            },
           )
         }
       }
@@ -6729,7 +6729,7 @@ class DaemonMcpServerTest {
             attachable = true,
             fetchable = true,
             requiresRerender = false,
-          )
+          ),
         )
       daemon.dataFetchHandler = { previewId, kind, _, _ ->
         FakeDaemon.DataFetchOutcome.Ok(
@@ -6786,7 +6786,7 @@ class DaemonMcpServerTest {
             attachable = true,
             fetchable = true,
             requiresRerender = false,
-          )
+          ),
         )
       daemon.advertisedSupportedOverrides = listOf("widthPx")
       daemon.autoRenderPngPath = { id -> if (id == previewId) pngFile.absolutePath else null }
@@ -6807,7 +6807,7 @@ class DaemonMcpServerTest {
                       put("boundsInRoot", "0,0,20,20")
                       put("testTag", "width")
                       put("text", renderedWidth.toString())
-                    }
+                    },
                   )
                 }
               }
@@ -6890,7 +6890,7 @@ class DaemonMcpServerTest {
             attachable = true,
             fetchable = true,
             requiresRerender = false,
-          )
+          ),
         )
     }
     val daemon = warmDaemonFor(workspaceId, ":module")
@@ -6945,7 +6945,7 @@ class DaemonMcpServerTest {
             attachable = true,
             fetchable = true,
             requiresRerender = false,
-          )
+          ),
         )
       // First fetch is NotAvailable, then Ok; the auto-render in between completes
       // `awaitNextRender`.
@@ -7005,7 +7005,7 @@ class DaemonMcpServerTest {
             attachable = true,
             fetchable = true,
             requiresRerender = false,
-          )
+          ),
         )
       daemon.dataFetchHandler = { _, kind, params, _ ->
         fetches += params
@@ -7108,7 +7108,7 @@ class DaemonMcpServerTest {
               },
               timeoutMs = 20_000,
             )
-            .firstTextContent()
+            .firstTextContent(),
         )
         .jsonObject["payload"]!!
         .jsonObject["findings"]!!
@@ -7182,7 +7182,7 @@ class DaemonMcpServerTest {
           put("kind", "a11y/atf")
           put("schemaVersion", 1)
           putJsonObject("payload") { put("findings", "default-config") }
-        }
+        },
       ),
     )
     client.expectNotification("notifications/resources/updated", 2_000)
@@ -7200,7 +7200,7 @@ class DaemonMcpServerTest {
               },
               timeoutMs = 10_000,
             )
-            .firstTextContent()
+            .firstTextContent(),
         )
         .jsonObject
 
@@ -7219,7 +7219,7 @@ class DaemonMcpServerTest {
           put("kind", "a11y/atf")
           put("schemaVersion", 1)
           putJsonObject("payload") { put("findings", "default-config") }
-        }
+        },
       ),
     )
     client.expectNotification("notifications/resources/updated", 2_000)
@@ -7274,7 +7274,7 @@ class DaemonMcpServerTest {
             attachable = true,
             fetchable = true,
             requiresRerender = false,
-          )
+          ),
         )
     }
     val daemon = warmDaemonFor(workspaceId, ":module")
@@ -7336,7 +7336,7 @@ class DaemonMcpServerTest {
             attachable = true,
             fetchable = true,
             requiresRerender = false,
-          )
+          ),
         )
     }
     val daemon = warmDaemonFor(workspaceId, ":module")
@@ -7388,7 +7388,7 @@ class DaemonMcpServerTest {
             attachable = true,
             fetchable = true,
             requiresRerender = false,
-          )
+          ),
         )
       // dataFetch fails loudly, so a broken cache short-circuit fails the payload assertion.
       daemon.dataFetchHandler = { _, _, _, _ ->
@@ -7418,7 +7418,7 @@ class DaemonMcpServerTest {
           putJsonObject("payload") {
             putJsonArray("findings") { add(JsonPrimitive("missing-content-description")) }
           }
-        }
+        },
       ),
     )
     client.expectNotification("notifications/resources/updated", 2_000)
@@ -7455,7 +7455,7 @@ class DaemonMcpServerTest {
             attachable = true,
             fetchable = true,
             requiresRerender = false,
-          )
+          ),
         )
       // After the cache evicts, dataFetch is the fallback path — return a distinguishable Ok so
       // we can assert that the second call went through the wire (not the cache).
@@ -7487,7 +7487,7 @@ class DaemonMcpServerTest {
           put("kind", "a11y/atf")
           put("schemaVersion", 1)
           putJsonObject("payload") { put("source", "cache") }
-        }
+        },
       ),
     )
     client.expectNotification("notifications/resources/updated", 2_000)
@@ -7534,7 +7534,7 @@ class DaemonMcpServerTest {
             attachable = true,
             fetchable = true,
             requiresRerender = false,
-          )
+          ),
         )
       daemon.dataFetchHandler = { _, kind, perKindParams, _ ->
         // The wire call must receive the params verbatim — that's how kinds with sub-views (e.g.
@@ -7565,7 +7565,7 @@ class DaemonMcpServerTest {
           put("kind", "layout/inspector")
           put("schemaVersion", 1)
           putJsonObject("payload") { put("nodeId", "root") }
-        }
+        },
       ),
     )
     client.expectNotification("notifications/resources/updated", 2_000)
@@ -7795,7 +7795,7 @@ class DaemonMcpServerTest {
        "version":1,"rules":[{"id":"touch","kind":"structure","severity":"warning","guidance":"g",
        "check":"Is every target 48dp?","source":"https://developer.android.com/x"}]}
       """
-        .trimIndent()
+        .trimIndent(),
     )
   }
 
@@ -7818,7 +7818,7 @@ class DaemonMcpServerTest {
                       put("role", "Button")
                       put("label", "Stop")
                       put("boundsInScreen", "0,0,2,2")
-                    }
+                    },
                   )
                 }
               },
@@ -7923,7 +7923,7 @@ class DaemonMcpServerTest {
               put("path", path)
             },
           )
-          .firstTextContent()
+          .firstTextContent(),
       )
       .jsonObject["previews"]!!
       .jsonArray
@@ -7974,7 +7974,7 @@ class DaemonMcpServerTest {
         found
           .single { it["fqn"]!!.jsonPrimitive.content == "${base}_Dark mode" }["uri"]!!
           .jsonPrimitive
-          .content
+          .content,
       )
       .isEqualTo(rowUris[1])
 
@@ -8109,7 +8109,7 @@ class DaemonMcpServerTest {
     assertThat(first).containsExactlyElementsIn(listOf(slowBase) + rowUris(fast))
     // find_previews_for_file is bounded the same way, and reuses the request in flight.
     assertThat(
-        findPreviews(workspaceId, "module/$sourcePath").map { it["uri"]!!.jsonPrimitive.content }
+        findPreviews(workspaceId, "module/$sourcePath").map { it["uri"]!!.jsonPrimitive.content },
       )
       .containsExactlyElementsIn(listOf(slowBase) + rowUris(fast))
 
@@ -8151,7 +8151,7 @@ class DaemonMcpServerTest {
       assertThat(listed).contains(PreviewUri(workspaceId, ":module", slow).toUri())
       client.expectNotification("notifications/resources/list_changed", 2_000)
       assertThat(
-          listResources().resources.map { it.uri }.filter { it.startsWith("compose-preview") }
+          listResources().resources.map { it.uri }.filter { it.startsWith("compose-preview") },
         )
         .contains(PreviewUri(workspaceId, ":module", "com.example.Late").toUri())
     } finally {
@@ -8412,7 +8412,7 @@ class McpTestClient(
       runCatching { expectNotification("notifications/tools/list_changed", 250) }
     }
     error(
-      "tools/list did not contain '$name' after ${timeoutMs}ms; last names=${last?.tools?.map { it.name }}"
+      "tools/list did not contain '$name' after ${timeoutMs}ms; last names=${last?.tools?.map { it.name }}",
     )
   }
 
@@ -8458,7 +8458,7 @@ class McpTestClient(
               put("id", requestId)
               put("result", requestHandler(obj))
             }
-              .toString()
+              .toString(),
           )
         } else if (method == "elicitation/create" && requestId != null) {
           val result = elicitationHandler?.invoke(obj) ?: continue
@@ -8468,7 +8468,7 @@ class McpTestClient(
               put("id", requestId)
               put("result", result)
             }
-              .toString()
+              .toString(),
           )
         } else if (requestId?.jsonPrimitive?.intOrNull() != null) {
           val id = requestId.jsonPrimitive.intOrNull()!!

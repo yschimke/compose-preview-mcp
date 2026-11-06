@@ -158,7 +158,7 @@ class DaemonMcpLiveCapabilityTest {
     val ONE_PIXEL_PNG: ByteArray =
       Base64.getDecoder()
         .decode(
-          "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAFgwJ/lxBk3QAAAABJRU5ErkJggg=="
+          "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAFgwJ/lxBk3QAAAABJRU5ErkJggg==",
         )
   }
 }

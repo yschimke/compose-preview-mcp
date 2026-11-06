@@ -146,7 +146,7 @@ class WorkspaceStore(private val file: File?) {
                 put("path", entry.path)
                 entry.name?.let { put("name", it) }
                 put("lastUsed", entry.lastUsed)
-              }
+              },
             )
           }
         }

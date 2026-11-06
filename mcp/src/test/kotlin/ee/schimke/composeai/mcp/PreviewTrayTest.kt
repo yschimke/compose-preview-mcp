@@ -155,7 +155,7 @@ class PreviewTrayTest {
       ImageIO.read(
         Base64.getDecoder()
           .decode(icon.string("src")!!.removePrefix("data:image/png;base64,"))
-          .inputStream()
+          .inputStream(),
       )
     assertThat(maxOf(thumbnail.width, thumbnail.height)).isEqualTo(PreviewMentions.ICON_EDGE_PX)
     // Never rendered: no icon, and nothing was rendered to make one.
@@ -245,7 +245,12 @@ class PreviewTrayTest {
     assertThat(meta["ui"]!!.jsonObject.string("resourceUri"))
       .isEqualTo(DaemonMcpServer.MCP_APP_VIEWER_URI)
     assertThat(
-        meta["openai/ui"]!!.jsonObject["entrypoints"]!!.jsonArray.single().jsonObject.string("type")
+        meta["openai/ui"]!!
+          .jsonObject["entrypoints"]!!
+          .jsonArray
+          .single()
+          .jsonObject
+          .string("type"),
       )
       .isEqualTo("thread")
     assertThat(tray.icons).isNotEmpty()
@@ -289,7 +294,7 @@ class PreviewTrayTest {
 
     // A bad pin is an error; an unpin drops it.
     assertThat(
-        client.callTool(PreviewTray.TOOL, buildJsonObject { put("pin", "file:///x.kt") }).isError()
+        client.callTool(PreviewTray.TOOL, buildJsonObject { put("pin", "file:///x.kt") }).isError(),
       )
       .isTrue()
     val unpinned =
@@ -308,7 +313,7 @@ class PreviewTrayTest {
     assertThat(
         mentions.meta!!["ui"]!!.jsonObject["visibility"]!!.jsonArray.map {
           it.jsonPrimitive.content
-        }
+        },
       )
       .contains("app")
 
@@ -386,7 +391,7 @@ class PreviewTrayTest {
         .firstTextContent()
     client.expectNotification("notifications/resources/list_changed", 2_000)
     return WorkspaceId(
-      json.parseToJsonElement(text).jsonObject["workspaceId"]!!.jsonPrimitive.content
+      json.parseToJsonElement(text).jsonObject["workspaceId"]!!.jsonPrimitive.content,
     )
   }
 

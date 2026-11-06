@@ -72,7 +72,7 @@ data class CompileWork(
         "(?i)^(assemble|bundle|install|uninstall|connected|publish|sign|minify|check$|build$)" +
           // `package<Variant>` builds an APK; `package<Variant>Resources` feeds the R class that
           // the Kotlin compile needs, so it stays allowed.
-          "|^package(?!\\w*Resources$)|lint|test"
+          "|^package(?!\\w*Resources$)|lint|test",
       )
 
     /**

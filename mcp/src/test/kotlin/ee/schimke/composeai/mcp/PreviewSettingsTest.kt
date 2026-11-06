@@ -98,7 +98,7 @@ class PreviewSettingsTest {
         validate(
           tools.getValue(PreviewSettingsMcp.UPDATE_TOOL).outputSchema!!,
           updated.structuredContent!!,
-        )
+        ),
       )
       .isEmpty()
     val values = updated.structuredContent!!["values"]!!.jsonObject
@@ -163,7 +163,7 @@ class PreviewSettingsTest {
             PreviewSettings.DARK_THEME to JsonPrimitive(true),
             PreviewSettings.FONT_SCALE to JsonPrimitive(-1),
           )
-          .isError
+          .isError,
       )
       .isTrue()
     assertThat(file.exists()).isFalse()
@@ -176,7 +176,7 @@ class PreviewSettingsTest {
   fun `a hand-edited file with one bad value keeps the rest`() {
     val file = File(tmp.root, "settings.json")
     file.writeText(
-      """{"schema":"compose-preview-settings/v1","values":{"darkTheme":true,"fontScale":"big"}}"""
+      """{"schema":"compose-preview-settings/v1","values":{"darkTheme":true,"fontScale":"big"}}""",
     )
     assertThat(store(file).read()).isEqualTo(PreviewSettings(darkTheme = true))
     file.writeText("not json")
@@ -204,13 +204,13 @@ class PreviewSettingsTest {
     // Codex gets the file result by default; the inline setting overrides that.
     assertThat(
         PreviewSettings(renderResult = "inline")
-          .applyToRenderPreview(call, clientDefaultsToFile = true)["inline"]
+          .applyToRenderPreview(call, clientDefaultsToFile = true)["inline"],
       )
       .isEqualTo(JsonPrimitive(true))
     // A plain client gets inline by default; the file setting overrides that.
     assertThat(
         PreviewSettings(renderResult = "file")
-          .applyToRenderPreview(call, clientDefaultsToFile = false)["inline"]
+          .applyToRenderPreview(call, clientDefaultsToFile = false)["inline"],
       )
       .isEqualTo(JsonPrimitive(false))
     // "auto" leaves the per-client default in charge.
@@ -237,7 +237,7 @@ class PreviewSettingsTest {
       )
     val call =
       args(
-        """{"uri":"u","inline":true,"observe":"png","overrides":{"device":"id:pixel_5","uiMode":"light","fontScale":2.0,"localeTag":"ar"}}"""
+        """{"uri":"u","inline":true,"observe":"png","overrides":{"device":"id:pixel_5","uiMode":"light","fontScale":2.0,"localeTag":"ar"}}""",
       )
     assertThat(settings.applyToRenderPreview(call, clientDefaultsToFile = true)).isEqualTo(call)
 
@@ -252,7 +252,7 @@ class PreviewSettingsTest {
           put("device", PreviewSettings.DEVICE_VALUES[1])
           put("uiMode", "dark")
           put("fontScale", 1.3)
-        }
+        },
       )
     // card implies the file result and crop needs the inline one: the setting stays out of both.
     assertThat(settings.applyToRenderPreview(args("""{"uri":"u","card":true}"""), false))
@@ -269,7 +269,7 @@ class PreviewSettingsTest {
     try {
       System.clearProperty(key)
       assertThat(
-          DaemonMcpMain.parseReplicasPerDaemon(arrayOf("--replicas-per-daemon", "3"), setting)
+          DaemonMcpMain.parseReplicasPerDaemon(arrayOf("--replicas-per-daemon", "3"), setting),
         )
         .isEqualTo(3)
       assertThat(DaemonMcpMain.parseReplicasPerDaemon(emptyArray(), setting)).isEqualTo(2)

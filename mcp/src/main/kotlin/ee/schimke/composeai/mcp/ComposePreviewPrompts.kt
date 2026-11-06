@@ -24,7 +24,7 @@ internal object ComposePreviewPrompts {
               name = "path",
               description = "Absolute or workspace-relative source-file path.",
               required = true,
-            )
+            ),
           ),
       ),
       Prompt(
@@ -61,7 +61,7 @@ internal object ComposePreviewPrompts {
       4. If the source changed outside the daemon watcher, call `notify_file_changed` before
          rendering and then repeat the lookup.
       """
-        .trimIndent()
+        .trimIndent(),
     )
   }
 
@@ -85,7 +85,7 @@ internal object ComposePreviewPrompts {
       5. Show before/after evidence for one to three key screens, and never change the migration
          merely to reproduce the old screenshot.
       """
-        .trimIndent()
+        .trimIndent(),
     )
 
   private fun result(text: String): GetPromptResult =

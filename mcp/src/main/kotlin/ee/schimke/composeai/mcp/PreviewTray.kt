@@ -140,7 +140,7 @@ object PreviewTray {
               put("path", path)
               put("changedAt", Instant.ofEpochMilli(mark.atMs).toString())
               put("previews", catalog.count { it.sourceFile == path })
-            }
+            },
           )
         }
       }
@@ -274,7 +274,7 @@ object PreviewMentions {
         compareBy<Triple<CatalogPreview, Tier, Long?>> { it.second }
           .thenByDescending { it.third ?: -1L }
           .thenBy { it.first.simpleName.lowercase() }
-          .thenBy { it.first.uri }
+          .thenBy { it.first.uri },
       )
       .map { it.first }
       .take(MAX_ITEMS)
@@ -300,7 +300,7 @@ object PreviewMentions {
             put("src", "data:image/png;base64,$thumbnail")
             put("mimeType", "image/png")
             putJsonArray("sizes") { add("${ICON_EDGE_PX}x$ICON_EDGE_PX") }
-          }
+          },
         )
       }
     }

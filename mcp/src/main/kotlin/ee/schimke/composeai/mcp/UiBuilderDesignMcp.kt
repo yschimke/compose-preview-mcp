@@ -55,7 +55,7 @@ internal constructor(
         // The CSP needs the asset origin's port, which exists only once the listener has started on
         // the first read; it is on the read result, where MCP Apps hosts take it from.
         meta = OpenAiUi.withDisplayModes(null, DISPLAY_MODES, OpenAiUi.DisplayMode.FULLSCREEN),
-      )
+      ),
     )
 
   /**
@@ -81,8 +81,8 @@ internal constructor(
             mimeType = MCP_APP_MIME_TYPE,
             text = shell.replace(ASSET_BASE_PLACEHOLDER, base).replace(LAYOUT_PLACEHOLDER, mode),
             meta = resourceMeta(origin),
-          )
-        )
+          ),
+        ),
     )
   }
 
@@ -227,7 +227,7 @@ internal constructor(
       if (contract !in SUPPORTED_MCP_APP) {
         onLog(
           "compose-preview-mcp: UI Builder ${manifest.version} declares mcpApp $contract; this " +
-            "server fills in ${SUPPORTED_MCP_APP.sorted().joinToString()}. design_open is off."
+            "server fills in ${SUPPORTED_MCP_APP.sorted().joinToString()}. design_open is off.",
         )
         return null
       }
@@ -235,7 +235,7 @@ internal constructor(
       if (shell == null) {
         onLog(
           "compose-preview-mcp: UI Builder ${manifest.version} declares mcpApp $contract but " +
-            "$SHELL_PATH is missing or has no asset-base placeholder. design_open is off."
+            "$SHELL_PATH is missing or has no asset-base placeholder. design_open is off.",
         )
         return null
       }

@@ -81,7 +81,7 @@ class PreviewLibrary(
         ),
         listOf(OpenAiEntrypoint.Global),
         title = "Compose Previews",
-      )
+      ),
     )
 
   fun resources(): List<ResourceDescriptor> =
@@ -92,7 +92,7 @@ class PreviewLibrary(
         description = "Browse registered projects, modules and previews, and render one.",
         mimeType = DaemonMcpServer.MCP_APP_MIME_TYPE,
         meta = resourceMeta(),
-      )
+      ),
     )
 
   fun readResource(uri: String): ReadResourceResult? {
@@ -104,8 +104,8 @@ class PreviewLibrary(
           mimeType = DaemonMcpServer.MCP_APP_MIME_TYPE,
           text = html(),
           meta = resourceMeta(),
-        )
-      )
+        ),
+      ),
     )
   }
 
@@ -128,8 +128,8 @@ class PreviewLibrary(
                   "No projects are registered. Call register_project with a Gradle project path."
                 else
                   "${projects.size} project(s), $previews discovered preview(s); the library " +
-                    "app lists them. Render one with render_preview(uri)."
-              )
+                    "app lists them. Render one with render_preview(uri).",
+              ),
             ),
           structuredContent = structured(MODE_LIBRARY, projects, designFiles),
         )
@@ -226,7 +226,7 @@ class PreviewLibrary(
         "mode":{"type":"string","const":"library"},"host":{"type":"string","const":"local"},
         "projects":{"type":"array","items":{"type":"object"}},
         "designs":{"type":"array","items":{"type":"object","required":["id","name","path"],"properties":{
-          "id":{"type":"string"},"name":{"type":"string"},"path":{"type":"string"}}}}}}"""
+          "id":{"type":"string"},"name":{"type":"string"},"path":{"type":"string"}}}}}}""",
         )
         .jsonObject
 

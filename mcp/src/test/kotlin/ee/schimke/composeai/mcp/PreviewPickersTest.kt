@@ -76,8 +76,8 @@ class PreviewPickersTest {
                 "openai/preview":{"target":{"type":"mcp_app_tool","name":"cad.open","arguments":{"x":1}}}}},
              {"uri":"cad://parts/washer","name":"washer","title":"M6 washer"}]},
            "default":"cad://parts/hex-bolt"}
-          """
-        )
+          """,
+        ),
       )
     assertThrows(IllegalArgumentException::class.java) {
       OpenAiForms.singleResourceField(emptyList(), default = "cad://parts/missing")
@@ -102,8 +102,8 @@ class PreviewPickersTest {
              {"uri":"cad://parts/hex-bolt","name":"hex-bolt","title":"M6 hex bolt"},
              {"uri":"cad://parts/washer","name":"washer","title":"M6 washer"}]},
            "default":["cad://parts/hex-bolt"]}
-          """
-        )
+          """,
+        ),
       )
     val implicit =
       OpenAiForms.multiResourceField(options, selection = OpenAiForms.Selection.IMPLICIT)
@@ -143,7 +143,7 @@ class PreviewPickersTest {
     val encoded = OpenAiForms.encodeUri(raw)
     assertThat(encoded)
       .isEqualTo(
-        "compose-preview://ws/_app/com.example.VKt.Screen_Devices%20-%20Small%20Round?config=a%25b"
+        "compose-preview://ws/_app/com.example.VKt.Screen_Devices%20-%20Small%20Round?config=a%25b",
       )
     assertThat(java.net.URI(encoded).scheme).isEqualTo("compose-preview")
     assertThat(OpenAiForms.decodeUri(encoded)).isEqualTo(raw)
@@ -168,7 +168,7 @@ class PreviewPickersTest {
           kotlinx.serialization.json.buildJsonObject { put("f", decodedAnswer) },
           "f",
           listOf(previewUri),
-        )
+        ),
       )
       .isEqualTo(previewUri)
     assertThat(OpenAiForms.decodeUri("a%+1")).isNull()
@@ -192,7 +192,7 @@ class PreviewPickersTest {
           },
           "f",
           offered,
-        )
+        ),
       )
       .containsExactly(raw, offered[1])
       .inOrder()
@@ -207,7 +207,7 @@ class PreviewPickersTest {
           },
           "f",
           offered,
-        )
+        ),
       )
       .isNull()
   }
@@ -221,8 +221,8 @@ class PreviewPickersTest {
           listOf(
             uri("com.example.MainActivityKt.ListScreenPreview_Devices - Small Round"),
             uri("com.example.MainActivityKt.ListScreenPreview_Devices - Large Round"),
-          )
-        )
+          ),
+        ),
       )
       .containsExactly("Devices - Small Round", "Devices - Large Round")
       .inOrder()
@@ -253,21 +253,21 @@ class PreviewPickersTest {
     // Plain MCP form elicitation is not the OpenAI extension.
     assertThat(
         OpenAiForms.supportsForms(
-          ClientCapabilities(elicitation = ClientCapabilities.Elicitation(form = empty))
-        )
+          ClientCapabilities(elicitation = ClientCapabilities.Elicitation(form = empty)),
+        ),
       )
       .isFalse()
     assertThat(OpenAiForms.supportsForms(caps("openai/elicitation" to empty))).isFalse()
     assertThat(
         OpenAiForms.supportsForms(
-          caps("openai/elicitation" to buildJsonObject { put("form", true) })
-        )
+          caps("openai/elicitation" to buildJsonObject { put("form", true) }),
+        ),
       )
       .isFalse()
     assertThat(
         OpenAiForms.supportsForms(
-          caps("openai/elicitation" to buildJsonObject { putJsonObject("form") {} })
-        )
+          caps("openai/elicitation" to buildJsonObject { putJsonObject("form") {} }),
+        ),
       )
       .isTrue()
   }
@@ -298,8 +298,8 @@ class PreviewPickersTest {
     assertThat(meta["openai/preview"])
       .isEqualTo(
         json.parseToJsonElement(
-          """{"target":{"type":"mcp_app_tool","name":"render_preview","arguments":{"uri":"$rendered"}}}"""
-        )
+          """{"target":{"type":"mcp_app_tool","name":"render_preview","arguments":{"uri":"$rendered"}}}""",
+        ),
       )
     val bare = PreviewPickers.option(neverRendered, "B").toJson()
     assertThat(bare["_meta"]!!.jsonObject.keys).containsExactly("openai/preview")
@@ -312,8 +312,8 @@ class PreviewPickersTest {
         mapOf(
           "preview" to
             OpenAiForms.singleResourceField(
-              listOf(OpenAiForms.ResourceOption("a://1", "one", thumbnailPngBase64 = "QQ=="))
-            )
+              listOf(OpenAiForms.ResourceOption("a://1", "one", thumbnailPngBase64 = "QQ==")),
+            ),
         ),
         required = listOf("preview"),
       )
@@ -326,7 +326,7 @@ class PreviewPickersTest {
           put("mode", "form")
           put("message", "Pick one")
           put("requestedSchema", schema)
-        }
+        },
       )
     // Everything else passes through untouched.
     val plain = JSONRPCRequest(method = "roots/list", params = buildJsonObject { put("x", 1) })
@@ -375,7 +375,7 @@ class PreviewPickersTest {
               { request ->
                 openAiRequests += request
                 answer(request)
-              }
+              },
           ),
       )
     closers += { session.close() }
@@ -389,7 +389,7 @@ class PreviewPickersTest {
               putJsonObject(OpenAiForms.EXTENSION_ID) { putJsonObject("form") {} }
             }
           }
-        }
+        },
     )
     return client
   }
@@ -413,7 +413,7 @@ class PreviewPickersTest {
           .parseToJsonElement(registered.firstTextContent())
           .jsonObject["workspaceId"]!!
           .jsonPrimitive
-          .content
+          .content,
       )
     client.expectNotification("notifications/resources/list_changed", 2_000)
     supervisor.daemonFor(id, ":app")
@@ -490,7 +490,7 @@ class PreviewPickersTest {
     assertThat(byUri.getValue(ws.small)["_meta"]!!.jsonObject.keys)
       .containsExactly("openai/thumbnail", "openai/preview")
     assertThat(
-        byUri.getValue(ws.small)["_meta"]!!.jsonObject["openai/preview"]!!.jsonObject["target"]
+        byUri.getValue(ws.small)["_meta"]!!.jsonObject["openai/preview"]!!.jsonObject["target"],
       )
       .isEqualTo(PreviewPickers.renderPreviewTarget(ws.small))
 

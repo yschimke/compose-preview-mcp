@@ -59,7 +59,7 @@ class OpenAiProbeTest {
         supervisor,
         workingDirectory = null,
         openAiProbe = OpenAiProbe(log = { logged += it }),
-      )
+      ),
     )
 
   private fun toolsByName(client: McpTestClient, marker: String): Map<String, JsonObject> {
@@ -83,7 +83,7 @@ class OpenAiProbeTest {
           supervisor,
           workingDirectory = null,
           environment = mapOf(OpenAiProbe.ENV to "0"),
-        )
+        ),
       )
     val tools = toolsByName(client, "diff_semantics")
     assertThat(tools.keys.filter { it.startsWith("probe_") }).isEmpty()
@@ -102,7 +102,7 @@ class OpenAiProbeTest {
           supervisor,
           workingDirectory = null,
           environment = mapOf(OpenAiProbe.ENV to "1"),
-        )
+        ),
       )
     val tools = toolsByName(client, OpenAiProbe.PROBE_GLOBAL)
     assertThat(tools.keys).containsAtLeastElementsIn(OpenAiProbe.TOOL_NAMES)
@@ -135,7 +135,7 @@ class OpenAiProbeTest {
       assertThat(icon["mimeType"]!!.jsonPrimitive.content).isEqualTo("image/svg+xml")
       val svg =
         String(
-          Base64.getDecoder().decode(icon["src"]!!.jsonPrimitive.content.substringAfter("base64,"))
+          Base64.getDecoder().decode(icon["src"]!!.jsonPrimitive.content.substringAfter("base64,")),
         )
       assertThat(svg).contains("currentColor")
     }
@@ -146,7 +146,7 @@ class OpenAiProbeTest {
           .getValue(OpenAiProbe.PROBE_FILE)["inputSchema"]!!
           .jsonObject["required"]!!
           .jsonArray
-          .map { it.jsonPrimitive.content }
+          .map { it.jsonPrimitive.content },
       )
       .containsExactly("file")
   }
@@ -156,7 +156,7 @@ class OpenAiProbeTest {
     val tools = toolsByName(probeClient(), OpenAiProbe.PROBE_MENTIONS)
     assertThat(tools.getValue(OpenAiProbe.PROBE_MENTIONS)["_meta"])
       .isEqualTo(
-        parse("""{"ui": {"visibility": ["app"]}, "openai/extensions": {"mentions/search": {}}}""")
+        parse("""{"ui": {"visibility": ["app"]}, "openai/extensions": {"mentions/search": {}}}"""),
       )
     assertThat(tools.getValue(OpenAiProbe.PROBE_FILE_ECHO)["_meta"])
       .isEqualTo(parse("""{"ui": {"visibility": ["app"]}}"""))
@@ -260,8 +260,8 @@ class OpenAiProbeTest {
       .isEqualTo(
         parse(
           """{"availableDisplayModes": ["inline", "fullscreen"],
-             "preferredDisplayMode": "fullscreen"}"""
-        )
+             "preferredDisplayMode": "fullscreen"}""",
+        ),
       )
   }
 

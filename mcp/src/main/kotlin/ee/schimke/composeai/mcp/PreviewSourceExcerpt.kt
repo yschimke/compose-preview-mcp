@@ -50,7 +50,7 @@ internal object PreviewSourceExcerpt {
       """^(?:(?:public|internal|private|protected|data|sealed|abstract|open|enum|annotation|""" +
         """inline|value|suspend|operator|infix|tailrec|override|expect|actual|const|""" +
         """lateinit|inner)\s+)*(?:fun|class|object|interface|val|var|typealias)\s+""" +
-        """(?:<[^>]*>\s*)?(?:[A-Za-z_][\w]*\.)?([A-Za-z_]\w*)"""
+        """(?:<[^>]*>\s*)?(?:[A-Za-z_][\w]*\.)?([A-Za-z_]\w*)""",
     )
 
   private val IDENTIFIER = Regex("""[A-Za-z_]\w*""")

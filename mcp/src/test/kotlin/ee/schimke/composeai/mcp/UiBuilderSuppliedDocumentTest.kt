@@ -35,7 +35,7 @@ class UiBuilderSuppliedDocumentTest {
       assertThat(call.requestMethod).isEqualTo("POST")
       assertThat(call.requestHeaders.getFirst("Authorization")).isEqualTo("Bearer test-token")
       assertThat(
-          json.decodeFromString<DesignDocumentV1>(call.requestBody.readAllBytes().decodeToString())
+          json.decodeFromString<DesignDocumentV1>(call.requestBody.readAllBytes().decodeToString()),
         )
         .isEqualTo(document)
       call.responseHeaders.add("Content-Type", "application/json")
@@ -52,7 +52,7 @@ class UiBuilderSuppliedDocumentTest {
           UiBuilderDesignApiClient.remote(
             "http://127.0.0.1:${server.address.port}/prefix",
             "test-token",
-          )
+          ),
         )
       for (format in formats) {
         for (refused in listOf(false, true)) {
@@ -61,12 +61,12 @@ class UiBuilderSuppliedDocumentTest {
           assertThat(result.isError).isEqualTo(refused)
           val actual =
             json.decodeFromString<ExportArtifactV1>(
-              (result.content.single() as ContentBlock.Text).text
+              (result.content.single() as ContentBlock.Text).text,
             )
           assertThat(actual).isEqualTo(expected)
           assertThat(received.last())
             .isEqualTo(
-              "/prefix/api/ui-builder/v1/documents/export.${format.name.lowercase()}?artifact=true"
+              "/prefix/api/ui-builder/v1/documents/export.${format.name.lowercase()}?artifact=true",
             )
         }
       }

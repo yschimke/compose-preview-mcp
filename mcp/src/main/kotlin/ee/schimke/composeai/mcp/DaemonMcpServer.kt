@@ -268,7 +268,7 @@ class DaemonMcpServer(
             supervisor
               .listProjects()
               .filter { it.workspaceId !in storeOnlyProjects }
-              .map { it.path }
+              .map { it.path },
         )
       },
       snapshot = { projectId -> libraryProjects(projectId) },
@@ -368,7 +368,7 @@ class DaemonMcpServer(
   /** Daemon clients that declined `compileSources`; their modules compile through Gradle. */
   private val inProcessDeclined: MutableSet<Any> =
     java.util.Collections.synchronizedSet(
-      java.util.Collections.newSetFromMap(java.util.WeakHashMap())
+      java.util.Collections.newSetFromMap(java.util.WeakHashMap()),
     )
 
   /** The last change-detection pass per module, reported as `_meta.work.scan`. */
@@ -640,7 +640,7 @@ class DaemonMcpServer(
         serverInfo = serverInfo,
         options =
           composePreviewServerOptions(
-            if (profile == McpToolProfile.NATIVE) PreviewSettingsMcp.capability else emptyMap()
+            if (profile == McpToolProfile.NATIVE) PreviewSettingsMcp.capability else emptyMap(),
           ),
         input = input,
         output = output,
@@ -709,7 +709,7 @@ class DaemonMcpServer(
           description = "Interactive render and matrix viewer for Compose Preview tools.",
           mimeType = MCP_APP_MIME_TYPE,
           meta = viewerResourceMeta(),
-        )
+        ),
       )
     out += rcViewer.resourceDescriptors()
     uiBuilderDesign?.resourceDescriptors()?.let(out::addAll)
@@ -747,7 +747,7 @@ class DaemonMcpServer(
                   }
                   row?.let { putParameterRow(it, uri.copy(previewFqn = entry.fqn)) }
                 },
-          )
+          ),
         )
       }
     }
@@ -768,8 +768,8 @@ class DaemonMcpServer(
               mimeType = MCP_APP_MIME_TYPE,
               text = viewerHtml(),
               meta = viewerResourceMeta(),
-            )
-          )
+            ),
+          ),
       )
     }
     rcViewer.readResource(uri)?.let {
@@ -809,7 +809,7 @@ class DaemonMcpServer(
     val pngBytes = renderAndReadBytes(parsed, session, progressToken, overrides)
     val encoded = Base64.getEncoder().encodeToString(pngBytes)
     return ReadResourceResult(
-      contents = listOf(ResourceContents.Blob(uri = uri, mimeType = "image/png", blob = encoded))
+      contents = listOf(ResourceContents.Blob(uri = uri, mimeType = "image/png", blob = encoded)),
     )
   }
 
@@ -829,7 +829,8 @@ class DaemonMcpServer(
             .encodeToString(fileSystem.read(file.path.toPath()) { readByteArray() })
         }
     return ReadResourceResult(
-      contents = listOf(ResourceContents.Blob(uri = uriString, mimeType = "image/png", blob = blob))
+      contents =
+        listOf(ResourceContents.Blob(uri = uriString, mimeType = "image/png", blob = blob)),
     )
   }
 
@@ -931,7 +932,7 @@ class DaemonMcpServer(
             append("awaitNextRender failed for $uri: ${outcome.kind} ${outcome.message}")
             // Append the daemon's classified remediation so the agent gets the fix hint inline.
             outcome.suggestion?.let { append(" — suggestion: $it") }
-          }
+          },
         )
       is RenderOutcome.Finished -> {
         val work =
@@ -958,7 +959,7 @@ class DaemonMcpServer(
   /** Daemon clients asked to warm their in-process compiler; each is asked once. */
   private val compileWarmUpAsked: MutableSet<Any> =
     java.util.Collections.synchronizedSet(
-      java.util.Collections.newSetFromMap(java.util.WeakHashMap())
+      java.util.Collections.newSetFromMap(java.util.WeakHashMap()),
     )
 
   /**
@@ -980,7 +981,7 @@ class DaemonMcpServer(
     val previews = catalog[DaemonAddr(uri.workspaceId, uri.modulePath)]
     val sources =
       (listOfNotNull(
-          entryFor(DaemonAddr(uri.workspaceId, uri.modulePath), uri.previewFqn)?.resolvedSourcePath
+          entryFor(DaemonAddr(uri.workspaceId, uri.modulePath), uri.previewFqn)?.resolvedSourcePath,
         ) + previews?.values?.mapNotNull { it.resolvedSourcePath }.orEmpty())
         .distinct()
         .take(COMPILE_WARM_UP_MAX_SOURCES)
@@ -1000,7 +1001,7 @@ class DaemonMcpServer(
             { "failed: ${it.message ?: it.javaClass.simpleName}" },
           )
         System.err.println(
-          "compose-preview-mcp: compile warm-up for ${daemon.modulePath}: $outcome"
+          "compose-preview-mcp: compile warm-up for ${daemon.modulePath}: $outcome",
         )
       }
     }
@@ -1144,7 +1145,7 @@ class DaemonMcpServer(
       val outcome =
         if (root == null) {
           SourceCompileOutcome.Unavailable(
-            "workspace ${daemon.workspaceId.value} is not registered"
+            "workspace ${daemon.workspaceId.value} is not registered",
           )
         } else {
           val module = moduleSourcesOf(daemon, sources)
@@ -1171,7 +1172,7 @@ class DaemonMcpServer(
                     "and falls back to Gradle when an edit needs the rest of the module. The " +
                     "in-process compiler stays on for later edits. Regenerate the descriptor " +
                     "with compose-ai-tools 2.71.0 or newer (2.72.1 for Bazel/Buck2) to publish " +
-                    "one."
+                    "one.",
                 )
               }
             }
@@ -1184,7 +1185,7 @@ class DaemonMcpServer(
         if (disallowed.isNotEmpty()) {
           System.err.println(
             "compose-preview-mcp: recompile of ${daemon.modulePath} ran tasks an edit loop " +
-              "should not need: ${disallowed.joinToString(", ")}"
+              "should not need: ${disallowed.joinToString(", ")}",
           )
         }
       }
@@ -1249,7 +1250,7 @@ class DaemonMcpServer(
     val modulePath = daemon.modulePath
     System.err.println(
       "compose-preview-mcp: a build file of $modulePath changed; restarting its daemon from the " +
-        "rewritten launch descriptor"
+        "rewritten launch descriptor",
     )
     previewQueues.keys
       .filter { it.workspaceId == workspaceId && it.modulePath == modulePath }
@@ -1268,7 +1269,7 @@ class DaemonMcpServer(
       .onFailure {
         System.err.println(
           "compose-preview-mcp: restarting $modulePath after a build file edit failed: " +
-            "${it.message}"
+            "${it.message}",
         )
       }
     sessions.forEach { it.notifyResourceListChanged() }
@@ -1502,7 +1503,7 @@ class DaemonMcpServer(
           runCatching { reloadManifestIfChanged(daemon) }
             .onFailure {
               System.err.println(
-                "compose-preview-mcp: manifest reload failed for ${daemon.workspaceId}/${daemon.modulePath}: ${it.message}"
+                "compose-preview-mcp: manifest reload failed for ${daemon.workspaceId}/${daemon.modulePath}: ${it.message}",
               )
             }
           val byId = catalog[DaemonAddr(project.workspaceId, modulePath)] ?: return@forEach
@@ -1696,7 +1697,7 @@ class DaemonMcpServer(
       }
 
       override fun a11yHierarchy(
-        preview: PreviewGuidelinesMcp.Resolved
+        preview: PreviewGuidelinesMcp.Resolved,
       ): PreviewGuidelinesMcp.Hierarchy {
         val uri = PreviewUri.parseOrNull(preview.uri)!!
         val daemon = runCatching {
@@ -1907,7 +1908,7 @@ class DaemonMcpServer(
     if (name !in URI_OVERRIDE_TOOLS) {
       return UriOverridesFold.Rejected(
         "$name: 'uri' carries render overrides (?overrides=) that this tool does not apply; " +
-          "pass the preview URI without the overrides query"
+          "pass the preview URI without the overrides query",
       )
     }
     val uriOverrides =
@@ -1921,7 +1922,7 @@ class DaemonMcpServer(
     ) {
       return UriOverridesFold.Rejected(
         "$name: 'uri' carries render overrides that differ from the 'overrides' argument; " +
-          "pass one or the other"
+          "pass one or the other",
       )
     }
     return UriOverridesFold.Folded(
@@ -1930,8 +1931,8 @@ class DaemonMcpServer(
           mapOf(
             "uri" to JsonPrimitive(uri.copy(overridesJson = null).toUri()),
             "overrides" to uriOverrides,
-          )
-      )
+          ),
+      ),
     )
   }
 
@@ -2046,7 +2047,7 @@ class DaemonMcpServer(
               "required": ["path"]
             }
             """
-              .trimIndent()
+              .trimIndent(),
           ),
       ),
       ToolDef(
@@ -2097,7 +2098,7 @@ class DaemonMcpServer(
               "required":[]
             }
             """
-              .trimIndent()
+              .trimIndent(),
           ),
         outputSchema = RENDER_PREVIEW_OUTPUT_SCHEMA,
       ),
@@ -2122,7 +2123,7 @@ class DaemonMcpServer(
               "required":["path"]
             }
             """
-              .trimIndent()
+              .trimIndent(),
           ),
       ),
       ToolDef(
@@ -2144,7 +2145,7 @@ class DaemonMcpServer(
               "required":["workspaceId"]
             }
             """
-              .trimIndent()
+              .trimIndent(),
           ),
       ),
       ToolDef(
@@ -2165,7 +2166,7 @@ class DaemonMcpServer(
               "required":["path"]
             }
             """
-              .trimIndent()
+              .trimIndent(),
           ),
       ),
     )
@@ -2196,7 +2197,7 @@ class DaemonMcpServer(
               "required": ["path"]
             }
             """
-              .trimIndent()
+              .trimIndent(),
           ),
       ),
       ToolDef(
@@ -2207,7 +2208,7 @@ class DaemonMcpServer(
             """
             {"type":"object","properties":{"workspaceId":{"type":"string"}},"required":["workspaceId"]}
             """
-              .trimIndent()
+              .trimIndent(),
           ),
       ),
       ToolDef(
@@ -2396,7 +2397,7 @@ class DaemonMcpServer(
               "required":[]
             }
             """
-              .trimIndent()
+              .trimIndent(),
           ),
         outputSchema = RENDER_PREVIEW_OUTPUT_SCHEMA,
       ),
@@ -2421,7 +2422,7 @@ class DaemonMcpServer(
               "required":["path"]
             }
             """
-              .trimIndent()
+              .trimIndent(),
           ),
       ),
       ToolDef(
@@ -2443,7 +2444,7 @@ class DaemonMcpServer(
               "required":["workspaceId"]
             }
             """
-              .trimIndent()
+              .trimIndent(),
           ),
       ),
       ToolDef(
@@ -2462,7 +2463,7 @@ class DaemonMcpServer(
               }
             }
             """
-              .trimIndent()
+              .trimIndent(),
           ),
       ),
       ToolDef(
@@ -2480,7 +2481,7 @@ class DaemonMcpServer(
               }
             }
             """
-              .trimIndent()
+              .trimIndent(),
           ),
       ),
       ToolDef(
@@ -2506,7 +2507,7 @@ class DaemonMcpServer(
               "required":["path"]
             }
             """
-              .trimIndent()
+              .trimIndent(),
           ),
       ),
       ToolDef(
@@ -2537,7 +2538,7 @@ class DaemonMcpServer(
               "required":["workspaceId","module"]
             }
             """
-              .trimIndent()
+              .trimIndent(),
           ),
       ),
       ToolDef(
@@ -2557,7 +2558,7 @@ class DaemonMcpServer(
               "required":["workspaceId","module","ids"]
             }
             """
-              .trimIndent()
+              .trimIndent(),
           ),
       ),
       ToolDef(
@@ -2577,7 +2578,7 @@ class DaemonMcpServer(
               "required":["workspaceId","module","ids"]
             }
             """
-              .trimIndent()
+              .trimIndent(),
           ),
       ),
       ToolDef(
@@ -2598,7 +2599,7 @@ class DaemonMcpServer(
               "required":["workspaceId","module","from","to"]
             }
             """
-              .trimIndent()
+              .trimIndent(),
           ),
       ),
       ToolDef(
@@ -2616,7 +2617,7 @@ class DaemonMcpServer(
               }
             }
             """
-              .trimIndent()
+              .trimIndent(),
           ),
       ),
       ToolDef(
@@ -2635,7 +2636,7 @@ class DaemonMcpServer(
               }
             }
             """
-              .trimIndent()
+              .trimIndent(),
           ),
       ),
       ToolDef(
@@ -2664,7 +2665,7 @@ class DaemonMcpServer(
               "required":["ids"]
             }
             """
-              .trimIndent()
+              .trimIndent(),
           ),
       ),
       ToolDef(
@@ -2689,7 +2690,7 @@ class DaemonMcpServer(
               "required":["commandId"]
             }
             """
-              .trimIndent()
+              .trimIndent(),
           ),
       ),
       ToolDef(
@@ -2726,7 +2727,7 @@ class DaemonMcpServer(
               "required":["uri","kind"]
             }
             """
-              .trimIndent()
+              .trimIndent(),
           ),
       ),
       ToolDef(
@@ -2745,7 +2746,7 @@ class DaemonMcpServer(
               "required":["baseUri","headUri"]
             }
             """
-              .trimIndent()
+              .trimIndent(),
           ),
       ),
       ToolDef(
@@ -2780,7 +2781,7 @@ class DaemonMcpServer(
               "required":[]
             }
             """
-              .trimIndent()
+              .trimIndent(),
           ),
         outputSchema = RENDER_MATRIX_OUTPUT_SCHEMA,
       ),
@@ -2800,7 +2801,7 @@ class DaemonMcpServer(
               "required":["uri","kind"]
             }
             """
-              .trimIndent()
+              .trimIndent(),
           ),
       ),
       ToolDef(
@@ -2819,7 +2820,7 @@ class DaemonMcpServer(
               "required":["uri","kind"]
             }
             """
-              .trimIndent()
+              .trimIndent(),
           ),
       ),
       ToolDef(
@@ -2865,7 +2866,7 @@ class DaemonMcpServer(
               "required":["uri"]
             }
             """
-              .trimIndent()
+              .trimIndent(),
           ),
       ),
       ToolDef(
@@ -2889,7 +2890,7 @@ class DaemonMcpServer(
               "required":["uri","kind"]
             }
             """
-              .trimIndent()
+              .trimIndent(),
           ),
       ),
       ToolDef(
@@ -2980,7 +2981,7 @@ class DaemonMcpServer(
               "required":["uri","events"]
             }
             """
-              .trimIndent()
+              .trimIndent(),
           ),
       ),
       // Storybook-MCP-compatible aliases. Storybook's official MCP server defines tool names agents
@@ -3008,7 +3009,7 @@ class DaemonMcpServer(
             """
             {"type":"object","properties":{"storyId":{"type":"string","description":"Story id from list-all-documentation, or a raw compose-preview:// URI."},"id":{"type":"string","description":"Alias for storyId."}}}
             """
-              .trimIndent()
+              .trimIndent(),
           ),
       ),
       ToolDef(
@@ -3025,7 +3026,7 @@ class DaemonMcpServer(
             """
             {"type":"object","properties":{"storyIds":{"type":"array","items":{"type":"string"},"description":"Story ids from list-all-documentation, or raw compose-preview:// URIs."},"storyId":{"type":"string","description":"A single story id, if not using storyIds."},"observe":{"type":"string","enum":["png","semantics","hash"],"description":"Default 'png'."},"overrides":{"type":"object","description":"Optional per-call display overrides, same shape as render_preview.overrides."}}}
             """
-              .trimIndent()
+              .trimIndent(),
           ),
       ),
       ToolDef(
@@ -3045,7 +3046,7 @@ class DaemonMcpServer(
             """
             {"type":"object","properties":{"storyId":{"type":"string","description":"Story id from list-all-documentation, or a raw compose-preview:// URI."},"id":{"type":"string","description":"Alias for storyId."},"script":{"type":"array","description":"Optional record_preview event timeline (input.* to drive, assert.* to check). Omit to run an accessibility smoke test.","items":{"type":"object"}},"emitTest":{"type":"boolean","description":"Also return a runnable Compose UI test generated from the interaction."},"observe":{"type":"string","enum":["frames","media"],"description":"record_preview observation level; default 'frames' (structured per-frame + per-assertion evidence, no inline media)."},"format":{"type":"string","enum":["apng","gif","mp4","webm"],"description":"Recording format for the artifact; default 'apng'."}}}
             """
-              .trimIndent()
+              .trimIndent(),
           ),
       ),
     ) +
@@ -3271,7 +3272,7 @@ class DaemonMcpServer(
               put("type", "story")
               put("importPath", "virtual:compose-preview/${s.fqn}")
               put("uri", s.uri)
-            }
+            },
           )
         }
       }
@@ -3363,7 +3364,7 @@ class DaemonMcpServer(
         put("observe", args["observe"]?.jsonPrimitive?.contentOrNull ?: "frames")
         args["emitTest"]?.let { put("emitTest", it) }
         args["format"]?.let { put("format", it) }
-      }
+      },
     )
   }
 
@@ -3376,13 +3377,13 @@ class DaemonMcpServer(
       buildJsonObject {
         put("tMs", 0)
         put("kind", "preview.reload")
-      }
+      },
     )
     add(
       buildJsonObject {
         put("tMs", 100)
         put("kind", "assert.a11y")
-      }
+      },
     )
   }
 
@@ -3452,11 +3453,11 @@ class DaemonMcpServer(
                         "previewCount",
                         catalog[DaemonAddr(project.workspaceId, module)]?.size ?: 0,
                       )
-                    }
+                    },
                   )
                 }
               }
-            }
+            },
           )
         }
       }
@@ -3478,7 +3479,7 @@ class DaemonMcpServer(
       else File(path)
     if (!file.isDirectory)
       return errorCallToolResult(
-        "register_project: '$path' is not a directory or a preview bundle (file or URL)"
+        "register_project: '$path' is not a directory or a preview bundle (file or URL)",
       )
     // A `compose-preview bazel --out` directory has renders but nothing to build or re-render.
     ProjectDiscovery.stagedOutput(file)?.let {
@@ -3635,7 +3636,7 @@ class DaemonMcpServer(
       return ProjectArgument.Rejected(
         "project '$path' is not in a Gradle build, Bazel workspace or Buck2 project: no " +
           "settings.gradle(.kts), MODULE.bazel, WORKSPACE or .buckconfig there, above it, or up " +
-          "to ${ProjectDiscovery.SEARCH_DEPTH} levels below it"
+          "to ${ProjectDiscovery.SEARCH_DEPTH} levels below it",
       )
     }
     val ids = builds.mapNotNull { registerQuietly(it)?.workspaceId }.toSet()
@@ -3664,7 +3665,7 @@ class DaemonMcpServer(
       append("no project registered. ")
       append(triedText)
       append(
-        " Pass project=<absolute path> (the Gradle build or Bazel workspace, or any folder in it)."
+        " Pass project=<absolute path> (the Gradle build or Bazel workspace, or any folder in it).",
       )
       if (candidates.isNotEmpty()) append(" Candidate builds: ${candidates.joinToString(", ")}.")
     }
@@ -3851,7 +3852,7 @@ class DaemonMcpServer(
         "project not prepared: " +
           unprepared.entries.joinToString("; ") { (project, reason) ->
             if (unprepared.size == 1) reason else "${project.path}: $reason"
-          }
+          },
       )
     }
     if (matches.isEmpty()) return noPreviewMatches(trimmed)
@@ -3891,7 +3892,7 @@ class DaemonMcpServer(
         if (result.exitCode != 0) {
           System.err.println(
             "compose-preview-mcp: rediscovery in ${project.path} failed: " +
-              GradleSourceCompiler.summarizeGradleFailure(result.output)
+              GradleSourceCompiler.summarizeGradleFailure(result.output),
           )
         }
         project.daemons.values.forEach { reloadManifestIfChanged(it, force = true) }
@@ -3943,7 +3944,7 @@ class DaemonMcpServer(
         "no preview matches '$name' yet, and ${declaring.size} builds declare fun $function(. " +
           "Preparing a build is a full Gradle run, so none was started. Pass project=<absolute " +
           "path> (the folder with the build's settings.gradle(.kts)). Candidate builds: " +
-          "${declaring.take(10).joinToString(", ") { it.path }}."
+          "${declaring.take(10).joinToString(", ") { it.path }}.",
       )
     }
     val chosen =
@@ -3962,7 +3963,7 @@ class DaemonMcpServer(
           "no preview matches '$name' yet, and none of the ${candidates.size} candidate builds " +
             "declares fun $function(. Pass project=<absolute path> (the folder with the build's " +
             "settings.gradle(.kts)). Candidate builds: " +
-            "${candidates.take(10).joinToString(", ") { it.path }}."
+            "${candidates.take(10).joinToString(", ") { it.path }}.",
         )
     }
   }
@@ -4057,7 +4058,7 @@ class DaemonMcpServer(
         }
       }
       .sortedWith(
-        compareBy<Match> { !it.exact }.thenByDescending { it.preference }.thenBy { it.uri }
+        compareBy<Match> { !it.exact }.thenByDescending { it.preference }.thenBy { it.uri },
       )
       .map { it.uri }
   }
@@ -4079,7 +4080,7 @@ class DaemonMcpServer(
       .sortedWith(
         compareBy<String> { !it.lowercase().contains(needle) && !needle.contains(it.lowercase()) }
           .thenBy { editDistance(it.lowercase(), needle) }
-          .thenBy { it }
+          .thenBy { it },
       )
       .take(5)
   }
@@ -4347,13 +4348,13 @@ class DaemonMcpServer(
               put("type", "image")
               put("data", Base64.getEncoder().encodeToString(pngBytes))
               put("mimeType", "image/png")
-            }
+            },
           )
           add(
             buildJsonObject {
               put("type", "text")
               put("text", summary.toString())
-            }
+            },
           )
           if (withDetails) {
             // Detail blocks come after the render and carry a `_meta` marker, so a viewer that
@@ -4365,7 +4366,7 @@ class DaemonMcpServer(
                   put("data", Base64.getEncoder().encodeToString(overlay))
                   put("mimeType", "image/png")
                   putJsonObject("_meta") { put(RenderDetails.META_KEY, DEFAULT_OVERLAY_KIND) }
-                }
+                },
               )
             }
             add(
@@ -4373,7 +4374,7 @@ class DaemonMcpServer(
                 put("type", "text")
                 put("text", details.card.toString())
                 putJsonObject("_meta") { put(RenderDetails.META_KEY, "details") }
-              }
+              },
             )
           }
         }
@@ -4450,7 +4451,7 @@ class DaemonMcpServer(
                 }
               }
               put("branch", JsonPrimitive(detectBranch(project.path)))
-            }
+            },
           )
         }
       }
@@ -4476,7 +4477,7 @@ class DaemonMcpServer(
               put("widthDp", spec.widthDp)
               put("heightDp", spec.heightDp)
               put("density", spec.density.toDouble())
-            }
+            },
           )
         }
       }
@@ -4588,7 +4589,7 @@ class DaemonMcpServer(
             putJsonArray("choices") { choices.forEach { add(JsonPrimitive(it)) } }
           }
         }
-          .toString()
+          .toString(),
       )
     fun renderFirst(mode: String, message: String): CallToolResult {
       val result = toolRenderPreview(session, args, resolved)
@@ -4622,8 +4623,8 @@ class DaemonMcpServer(
                 "declined",
                 "The user declined the preview choice, so nothing was rendered. Do not ask again " +
                   "unless they bring it up; render one by uri if they do.",
-              )
-            )
+              ),
+            ),
         )
       // A cancel is not an answer: headless clients (Claude Code's print mode) cancel every form
       // without showing it. Render the first match, as for a client without forms.
@@ -4638,7 +4639,7 @@ class DaemonMcpServer(
     return result.copy(
       content =
         result.content +
-          choiceBlock("elicitation", "The user chose this preview in a form: $picked")
+          choiceBlock("elicitation", "The user chose this preview in a form: $picked"),
     )
   }
 
@@ -4748,7 +4749,7 @@ class DaemonMcpServer(
         "full" -> true
         else ->
           return errorCallToolResult(
-            "render_preview: 'imageScale' must be default | full (got '$scale')"
+            "render_preview: 'imageScale' must be default | full (got '$scale')",
           )
       }
     val cropArg =
@@ -4756,7 +4757,7 @@ class DaemonMcpServer(
         it as? JsonObject
           ?: return errorCallToolResult(
             "render_preview: 'crop' must be an object (a target {ref|testTag|role/text} or " +
-              "bounds {left,top,right,bottom})"
+              "bounds {left,top,right,bottom})",
           )
       }
     // File-reading harnesses default to the file result; Antigravity also gets a card built from
@@ -4788,7 +4789,7 @@ class DaemonMcpServer(
             it.isNotBlank()
           }
             ?: return errorCallToolResult(
-              "render_preview: 'force' requires a non-empty 'reason' string"
+              "render_preview: 'force' requires a non-empty 'reason' string",
             )
         reason
       }
@@ -4811,7 +4812,7 @@ class DaemonMcpServer(
             .map { element ->
               (element as? JsonPrimitive)?.takeIf { it.isString }?.content?.let(RenderDetail::parse)
                 ?: return errorCallToolResult(
-                  "render_preview: 'details' entries must be \"a11y\" or \"layout\""
+                  "render_preview: 'details' entries must be \"a11y\" or \"layout\"",
                 )
             }
             .toSet()
@@ -4872,7 +4873,7 @@ class DaemonMcpServer(
                   description =
                     "The current preview resource; subscribe to refresh it after edits.",
                 ),
-              )
+              ),
           )
         } else {
           renderObservation(
@@ -4895,8 +4896,8 @@ class DaemonMcpServer(
                   buildJsonObject {
                     putJsonArray("otherMatches") { otherMatches.forEach { add(JsonPrimitive(it)) } }
                   }
-                    .toString()
-                )
+                    .toString(),
+                ),
           )
       }
       .map { result ->
@@ -4905,7 +4906,7 @@ class DaemonMcpServer(
         else {
           val fetched = fetchRenderDetails(uri, details)
           result.copy(
-            content = result.content + ContentBlock.Text(fetched.summaries.joinToString("\n"))
+            content = result.content + ContentBlock.Text(fetched.summaries.joinToString("\n")),
           )
         }
       }
@@ -4988,7 +4989,7 @@ class DaemonMcpServer(
             mimeType = "image/png",
             description = "The current preview resource; subscribe to refresh it after edits.",
           ),
-        )
+        ),
     )
   }
 
@@ -5232,8 +5233,8 @@ class DaemonMcpServer(
         listOf(
           supervisor.project(WorkspaceId(requestedWorkspaceId))
             ?: return errorCallToolResult(
-              "find_previews_for_file: workspace '$requestedWorkspaceId' not registered"
-            )
+              "find_previews_for_file: workspace '$requestedWorkspaceId' not registered",
+            ),
         )
       }
     val requestedFile = File(requestedPath)
@@ -5301,13 +5302,13 @@ class DaemonMcpServer(
     if (presentBounds.isEmpty() && target == null) {
       return errorCallToolResult(
         "render_preview: 'crop' must set a target (ref | testTag | role/text) or explicit bounds " +
-          "{left,top,right,bottom}"
+          "{left,top,right,bottom}",
       )
     }
     if (presentBounds.isNotEmpty() && presentBounds.size != 4) {
       return errorCallToolResult(
         "render_preview: 'crop' bounds need all of left,top,right,bottom (got " +
-          "${presentBounds.joinToString(",")})"
+          "${presentBounds.joinToString(",")})",
       )
     }
 
@@ -5337,12 +5338,12 @@ class DaemonMcpServer(
             SemanticsBounds.parse(res.node.boundsInRoot)
               ?: return errorCallToolResult(
                 "render_preview: matched node '${res.node.ref}' has unparseable bounds " +
-                  "'${res.node.boundsInRoot}'"
+                  "'${res.node.boundsInRoot}'",
               )
         }
         TargetResolution.NotFound ->
           return errorCallToolResult(
-            "render_preview: crop target matched no node in compose/semantics"
+            "render_preview: crop target matched no node in compose/semantics",
           )
         is TargetResolution.Ambiguous ->
           return errorCallToolResult(
@@ -5350,7 +5351,7 @@ class DaemonMcpServer(
               "'ref' to disambiguate (candidates: " +
               res.candidates.take(6).joinToString(", ") { it.ref ?: it.nodeId } +
               (if (res.candidates.size > 6) ", …" else "") +
-              ")"
+              ")",
           )
       }
     }
@@ -5363,7 +5364,7 @@ class DaemonMcpServer(
     if (right - left <= 0 || bottom - top <= 0) {
       return errorCallToolResult(
         "render_preview: crop region ${bounds.left},${bounds.top},${bounds.right},${bounds.bottom}" +
-          " is empty after clamping to ${imgW}x${imgH}"
+          " is empty after clamping to ${imgW}x${imgH}",
       )
     }
 
@@ -5456,7 +5457,7 @@ class DaemonMcpServer(
           ContentBlock.Image(
             data = Base64.getEncoder().encodeToString(croppedBytes),
             mimeType = "image/png",
-          )
+          ),
         )
       }
       add(ContentBlock.Text(meta.toString()))
@@ -5507,13 +5508,13 @@ class DaemonMcpServer(
     if (devices == null && locales == null && uiModes == null && fontScales == null) {
       return errorCallToolResult(
         "render_matrix: 'axes' must set at least one of device | locale | uiMode | fontScale " +
-          "(each a non-empty array)"
+          "(each a non-empty array)",
       )
     }
     val cellCount = MatrixAxes.cellCount(devices, locales, uiModes, fontScales)
     if (cellCount > MatrixAxes.CELL_CAP) {
       return errorCallToolResult(
-        "render_matrix: $cellCount cells exceeds the cap of ${MatrixAxes.CELL_CAP}; narrow the axes"
+        "render_matrix: $cellCount cells exceeds the cap of ${MatrixAxes.CELL_CAP}; narrow the axes",
       )
     }
 
@@ -5599,14 +5600,14 @@ class DaemonMcpServer(
                   it.cell.label,
                   scaleToMaxEdge(it.bytes, CONTACT_SHEET_CELL_EDGE_PX),
                 )
-              }
+              },
             )
           if (sheet != null) {
             add(
               ContentBlock.Image(
                 data = Base64.getEncoder().encodeToString(sheet),
                 mimeType = "image/png",
-              )
+              ),
             )
           }
         }
@@ -5737,7 +5738,7 @@ class DaemonMcpServer(
                   variantLabel(variant),
                   scaleToMaxEdge(bytes, CONTACT_SHEET_CELL_EDGE_PX),
                 )
-              }
+              },
             )
             ?.let { add(ContentBlock.Image(Base64.getEncoder().encodeToString(it), "image/png")) }
         }
@@ -5753,8 +5754,8 @@ class DaemonMcpServer(
               cells.forEach { (_, bytes, _) ->
                 add(
                   JsonPrimitive(
-                    Base64.getEncoder().encodeToString(scaleToMaxEdge(bytes, INLINE_MAX_EDGE_PX))
-                  )
+                    Base64.getEncoder().encodeToString(scaleToMaxEdge(bytes, INLINE_MAX_EDGE_PX)),
+                  ),
                 )
               }
             }
@@ -5964,7 +5965,7 @@ class DaemonMcpServer(
             mimeType = "image/png",
             description = "The current preview resource; subscribe to refresh it after edits.",
           ),
-        )
+        ),
     )
   }
 
@@ -6021,7 +6022,7 @@ class DaemonMcpServer(
     freshnessMetrics.recordForce(uri.toUri(), reason)
     System.err.println(
       "render_preview.force: ${uri.toUri()} reason='$reason' — please report on " +
-        "https://github.com/yschimke/compose-ai-tools/issues/924"
+        "https://github.com/yschimke/compose-ai-tools/issues/924",
     )
   }
 
@@ -6173,7 +6174,7 @@ class DaemonMcpServer(
     val project =
       supervisor.project(workspaceId)
         ?: return errorCallToolResult(
-          "watch: workspace '$ws' not registered. Call register_project first."
+          "watch: workspace '$ws' not registered. Call register_project first.",
         )
     val module = args["module"]?.jsonPrimitive?.contentOrNull
     val glob = args["fqnGlob"]?.jsonPrimitive?.contentOrNull
@@ -6241,7 +6242,7 @@ class DaemonMcpServer(
               put("spawned", state.spawned)
               put("discoveryReady", state.discoveryReady)
               put("previewCount", state.previewCount)
-            }
+            },
           )
         }
       }
@@ -6291,7 +6292,7 @@ class DaemonMcpServer(
         ?: projects.singleOrNull()
         ?: return errorCallToolResult(
           "source_watch: pass 'workspaceId' (list_projects shows them); " +
-            "${projects.size} projects are registered"
+            "${projects.size} projects are registered",
         )
     val paths =
       (args["paths"] as? kotlinx.serialization.json.JsonArray)?.map { it.jsonPrimitive.content }
@@ -6319,7 +6320,7 @@ class DaemonMcpServer(
               putJsonArray("resourceDirs") {
                 module.resourceDirs.forEach { add(JsonPrimitive(it.path)) }
               }
-            }
+            },
           )
         }
       }
@@ -6341,7 +6342,7 @@ class DaemonMcpServer(
               put("workspaceId", e.workspaceId.value)
               if (e.modulePath != null) put("module", e.modulePath)
               if (e.fqnGlob != null) put("fqnGlob", e.fqnGlob)
-            }
+            },
           )
         }
       }
@@ -6447,7 +6448,7 @@ class DaemonMcpServer(
             buildJsonObject {
               obj.forEach { (k, v) -> put(k, v) }
               if (uri != null) put("resourceUri", JsonPrimitive(uri))
-            }
+            },
           )
         }
       }
@@ -6536,7 +6537,7 @@ class DaemonMcpServer(
                         put("attachable", cap.attachable)
                         put("fetchable", cap.fetchable)
                         put("requiresRerender", cap.requiresRerender)
-                      }
+                      },
                     )
                   }
                 }
@@ -6546,11 +6547,11 @@ class DaemonMcpServer(
                       json.encodeToJsonElement(
                         ee.schimke.composeai.daemon.protocol.DataExtensionDescriptor.serializer(),
                         extension,
-                      )
+                      ),
                     )
                   }
                 }
-              }
+              },
             )
           }
         }
@@ -6625,14 +6626,14 @@ class DaemonMcpServer(
                         put("attachable", cap.attachable)
                         put("fetchable", cap.fetchable)
                         put("requiresRerender", cap.requiresRerender)
-                      }
+                      },
                     )
                   }
                 }
               },
               onFailure = { e -> put("error", e.message ?: e::class.java.simpleName) },
             )
-          }
+          },
         )
       }
     }
@@ -6645,7 +6646,7 @@ class DaemonMcpServer(
         }
       return errorCallToolResult(
         "enable_extensions: no spawned daemon matched $scope — register the project + render at " +
-          "least once to spawn a daemon before enabling extensions"
+          "least once to spawn a daemon before enabling extensions",
       )
     }
     val payload = buildJsonObject { putJsonArray("daemons") { perDaemon.forEach { add(it) } } }
@@ -6692,7 +6693,7 @@ class DaemonMcpServer(
         put(
           "inline",
           JsonPrimitive(
-            args["inline"]?.jsonPrimitive?.contentOrNull?.toBooleanStrictOrNull() ?: defaultInline
+            args["inline"]?.jsonPrimitive?.contentOrNull?.toBooleanStrictOrNull() ?: defaultInline,
           ),
         )
       }
@@ -6761,7 +6762,7 @@ class DaemonMcpServer(
         }
     if (supervisor.project(uri.workspaceId) == null) {
       return errorCallToolResult(
-        "get_preview_data: workspace '${uri.workspaceId.value}' not registered"
+        "get_preview_data: workspace '${uri.workspaceId.value}' not registered",
       )
     }
     val daemon = runCatching {
@@ -6806,7 +6807,7 @@ class DaemonMcpServer(
         runCatching { awaitNextRender(uri, overrides = overrides) }
           .onFailure {
             return errorCallToolResult(
-              "get_preview_data: render at the requested overrides failed: ${it.message}"
+              "get_preview_data: render at the requested overrides failed: ${it.message}",
             )
           }
       }
@@ -6819,7 +6820,7 @@ class DaemonMcpServer(
                 DataFetchParams.PARAM_OVERRIDES to
                   json.encodeToJsonElement(PreviewOverrides.serializer(), overrides!!),
                 DataFetchParams.PARAM_FORCE_RERENDER to JsonPrimitive(true),
-              )
+              ),
           )
       return runCatching {
         // Fetch first; on `DataProductNotAvailable` (-32021, never rendered) render once and retry.
@@ -6898,7 +6899,7 @@ class DaemonMcpServer(
       }
     if (supervisor.project(uri.workspaceId) == null) {
       return errorCallToolResult(
-        "render_preview_overlay: workspace '${uri.workspaceId.value}' not registered"
+        "render_preview_overlay: workspace '${uri.workspaceId.value}' not registered",
       )
     }
     val daemon = runCatching {
@@ -6916,7 +6917,7 @@ class DaemonMcpServer(
     if (daemon.dataProductCapabilities.none { it.kind == kind }) {
       return errorCallToolResult(
         "render_preview_overlay: DataProductUnknown: kind '$kind' not advertised by " +
-          "${uri.workspaceId.value}/${uri.modulePath}"
+          "${uri.workspaceId.value}/${uri.modulePath}",
       )
     }
     return runCatching {
@@ -6927,18 +6928,18 @@ class DaemonMcpServer(
         fetchResult.path
           ?: return@runCatching errorCallToolResult(
             "render_preview_overlay: producer for '$kind' returned no path; expected an " +
-              "image-bearing kind"
+              "image-bearing kind",
           )
       if (inline) {
         val file = File(pngPath)
         if (!file.isFile) {
           return@runCatching errorCallToolResult(
-            "render_preview_overlay: overlay PNG missing at $pngPath"
+            "render_preview_overlay: overlay PNG missing at $pngPath",
           )
         }
         pngCallToolResult(
           Base64.getEncoder()
-            .encodeToString(fileSystem.read(file.path.toPath()) { readByteArray() })
+            .encodeToString(fileSystem.read(file.path.toPath()) { readByteArray() }),
         )
       } else {
         val payload = buildJsonObject {
@@ -6955,7 +6956,7 @@ class DaemonMcpServer(
                     put("path", extra.path)
                     if (extra.mediaType != null) put("mediaType", extra.mediaType)
                     if (extra.sizeBytes != null) put("sizeBytes", extra.sizeBytes)
-                  }
+                  },
                 )
               }
             }
@@ -6990,7 +6991,7 @@ class DaemonMcpServer(
         ?: return errorCallToolResult("get_preview_extras: missing 'kind'")
     if (supervisor.project(uri.workspaceId) == null) {
       return errorCallToolResult(
-        "get_preview_extras: workspace '${uri.workspaceId.value}' not registered"
+        "get_preview_extras: workspace '${uri.workspaceId.value}' not registered",
       )
     }
     val daemon = runCatching {
@@ -7033,7 +7034,7 @@ class DaemonMcpServer(
                 put("path", extra.path)
                 if (extra.mediaType != null) put("mediaType", extra.mediaType)
                 if (extra.sizeBytes != null) put("sizeBytes", extra.sizeBytes)
-              }
+              },
             )
           }
         }
@@ -7053,13 +7054,13 @@ class DaemonMcpServer(
     runCatching { daemon.client.dataUnsubscribe(uri.previewFqn, key.kind) }
       .onFailure {
         System.err.println(
-          "DaemonMcpServer: data/unsubscribe for ${key.uri} ($key.kind) failed: ${it.message}"
+          "DaemonMcpServer: data/unsubscribe for ${key.uri} ($key.kind) failed: ${it.message}",
         )
       }
   }
 
   private fun renderDataFetchResult(
-    result: ee.schimke.composeai.daemon.protocol.DataFetchResult
+    result: ee.schimke.composeai.daemon.protocol.DataFetchResult,
   ): CallToolResult {
     val resultPayload = result.payload
     val resultPath = result.path
@@ -7080,7 +7081,7 @@ class DaemonMcpServer(
                 put("path", extra.path)
                 if (extra.mediaType != null) put("mediaType", extra.mediaType)
                 if (extra.sizeBytes != null) put("sizeBytes", extra.sizeBytes)
-              }
+              },
             )
           }
         }
@@ -7229,7 +7230,7 @@ class DaemonMcpServer(
    * Decode a [DataFetchResult] into a [ComposeSemanticsPayload] from whichever transport it used.
    */
   private fun decodeSemanticsPayload(
-    result: ee.schimke.composeai.daemon.protocol.DataFetchResult
+    result: ee.schimke.composeai.daemon.protocol.DataFetchResult,
   ): ComposeSemanticsPayload {
     result.payload?.let {
       return json.decodeFromJsonElement(ComposeSemanticsPayload.serializer(), it)
@@ -7305,7 +7306,7 @@ class DaemonMcpServer(
         "webm" -> RecordingFormat.WEBM
         else ->
           return errorCallToolResult(
-            "record_preview: unsupported 'format' '$formatStr' — supported: apng, gif, mp4, webm"
+            "record_preview: unsupported 'format' '$formatStr' — supported: apng, gif, mp4, webm",
           )
       }
     // Compact default: `frames` returns per-frame hashes, changed-frame indices and on-disk paths
@@ -7324,7 +7325,7 @@ class DaemonMcpServer(
       }
     if (supervisor.project(uri.workspaceId) == null) {
       return errorCallToolResult(
-        "record_preview: workspace '${uri.workspaceId.value}' not registered"
+        "record_preview: workspace '${uri.workspaceId.value}' not registered",
       )
     }
     val daemon = runCatching {
@@ -7360,7 +7361,7 @@ class DaemonMcpServer(
       return errorCallToolResult(
         "record_preview: format '$formatWire' not advertised by this daemon " +
           "(supported: ${advertisedFormats.sorted()}). " +
-          "mp4/webm require an ffmpeg binary on the daemon's PATH."
+          "mp4/webm require an ffmpeg binary on the daemon's PATH.",
       )
     }
 
@@ -7428,7 +7429,7 @@ class DaemonMcpServer(
                 put("changedFromPrevious", frame.changedFromPrevious)
                 frame.changedPixelsFromPrevious?.let { put("changedPixelsFromPrevious", it) }
                 frame.dimensionChangedFromPrevious?.let { put("dimensionChangedFromPrevious", it) }
-              }
+              },
             )
           }
         }
@@ -7458,7 +7459,7 @@ class DaemonMcpServer(
                     ),
                   )
                 }
-              }
+              },
             )
           }
         }
@@ -7480,7 +7481,7 @@ class DaemonMcpServer(
                 uri = "compose-preview-recording://$recordingId",
                 mimeType = encoded.mimeType,
                 blob = Base64.getEncoder().encodeToString(videoBytes),
-              )
+              ),
           )
         }
       CallToolResult(
@@ -7494,10 +7495,12 @@ class DaemonMcpServer(
             // applied evidence so unresolved targets become skipped-step comments.
             if (args["emitTest"]?.jsonPrimitive?.contentOrNull?.toBooleanStrictOrNull() == true) {
               add(
-                ContentBlock.Text(generateRecordingTestSource(uri, events, stopResult.scriptEvents))
+                ContentBlock.Text(
+                  generateRecordingTestSource(uri, events, stopResult.scriptEvents),
+                ),
               )
             }
-          }
+          },
       )
     }
       .getOrElse { errorCallToolResult("record_preview failed: ${it.message}") }
@@ -7545,7 +7548,7 @@ class DaemonMcpServer(
         methodName = "${camel}Interaction",
         composableInvocation = "$method()",
         steps = steps,
-      )
+      ),
     )
   }
 
@@ -7825,14 +7828,14 @@ class DaemonMcpServer(
         if (firstRef) daemon.client.dataSubscribe(uri.previewFqn, kind)
         textCallToolResult(
           "$toolName: ok ($kind for ${uri.previewFqn}, " +
-            if (firstRef) "first session)" else "shared with N≥2 sessions)"
+            if (firstRef) "first session)" else "shared with N≥2 sessions)",
         )
       } else {
         val lastRef = subscriptions.unsubscribeData(uri.toUri(), kind, session)
         if (lastRef) daemon.client.dataUnsubscribe(uri.previewFqn, kind)
         textCallToolResult(
           "$toolName: ok ($kind for ${uri.previewFqn}, " +
-            if (lastRef) "released)" else "still shared with other sessions)"
+            if (lastRef) "released)" else "still shared with other sessions)",
         )
       }
     }
@@ -7918,7 +7921,7 @@ class DaemonMcpServer(
         ?: workspaceForPath(path)?.value
         ?: return errorCallToolResult(
           "notify_file_changed: missing 'workspaceId', and '$path' is not inside exactly one " +
-            "registered project (list_projects shows them)"
+            "registered project (list_projects shows them)",
         )
     val workspaceId = WorkspaceId(ws)
     val project =
@@ -7936,7 +7939,7 @@ class DaemonMcpServer(
           "edited file $path is not in registered project ${project.rootProjectName} " +
             "(${project.path}); rendering from ${registered.path} instead: registered it as " +
             "workspace ${registered.workspaceId.value}. Render its previews by name, or with " +
-            "compose-preview://${registered.workspaceId.value}/… URIs."
+            "compose-preview://${registered.workspaceId.value}/… URIs.",
         )
       }
     val kind =
@@ -8057,9 +8060,9 @@ class DaemonMcpServer(
     }
     return textCallToolResult(
         (listOf(
-            "fileChanged forwarded to $forwarded daemon(s); re-rendered $rendered watched preview(s)"
+            "fileChanged forwarded to $forwarded daemon(s); re-rendered $rendered watched preview(s)",
           ) + compileLines)
-          .joinToString("\n")
+          .joinToString("\n"),
       )
       .let { result ->
         // Each module's recompile, as `_meta.work.compile`, keyed by module path.
@@ -8073,7 +8076,7 @@ class DaemonMcpServer(
                     compileWork.forEach { (module, work) -> put(module, work.toJson()) }
                   }
                 }
-              }
+              },
           )
       }
   }
@@ -8195,7 +8198,7 @@ class DaemonMcpServer(
             completedGroup.overrides,
             entryFor(DaemonAddr(daemon.workspaceId, daemon.modulePath), previewId)
               ?.declaredFontScale,
-          )
+          ),
         )
     } else latestRenderOverrides.remove(key)
     // 3. Build the matching URI and notify subscribers + watchers.
@@ -8350,7 +8353,7 @@ class DaemonMcpServer(
     val reason = params?.get("reason")?.jsonPrimitive?.contentOrNull ?: "<no reason>"
     System.err.println(
       "DaemonMcpServer: classpathDirty for ${daemon.workspaceId}/${daemon.modulePath} " +
-        "(reason=$reason): $detail"
+        "(reason=$reason): $detail",
     )
 
     val workspaceId = daemon.workspaceId
@@ -8385,7 +8388,7 @@ class DaemonMcpServer(
         "DaemonMcpServer: respawn attempt cap reached for $workspaceId/$modulePath " +
           "($attempts > $MAX_RESPAWN_ATTEMPTS_PER_LIFETIME); giving up. " +
           "Re-run `./gradlew $modulePath:composePreviewDaemonStart` and call `register_project` " +
-          "again to retry."
+          "again to retry.",
       )
       return
     }
@@ -8397,7 +8400,7 @@ class DaemonMcpServer(
         .onFailure {
           System.err.println(
             "DaemonMcpServer: classpathDirty respawn failed for $workspaceId/$modulePath: " +
-              "${it.message}"
+              "${it.message}",
           )
         }
       if (outcome.isSuccess) {
@@ -8478,7 +8481,7 @@ class DaemonMcpServer(
     val overrides: PreviewOverrides?,
     val futures:
       java.util.concurrent.CopyOnWriteArrayList<
-        java.util.concurrent.CompletableFuture<RenderOutcome>
+        java.util.concurrent.CompletableFuture<RenderOutcome>,
       > =
       java.util.concurrent.CopyOnWriteArrayList(),
     val notificationUris: MutableSet<String> = ConcurrentHashMap.newKeySet(),

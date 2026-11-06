@@ -52,7 +52,7 @@ class DaemonLaunchDescriptorJailTest {
 
     val parsed =
       DaemonLaunchDescriptor.parse(
-        descriptorJson.encodeToString(DaemonLaunchDescriptor.serializer(), jailed)
+        descriptorJson.encodeToString(DaemonLaunchDescriptor.serializer(), jailed),
       )
 
     assertThat(parsed.jailCommand).containsExactly("unshare", "--net").inOrder()

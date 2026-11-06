@@ -169,7 +169,7 @@ object PreviewPickers {
             putJsonArray("choices") { choices.forEach { add(it) } }
           }
         }
-          .toString()
+          .toString(),
       )
     fun rendered(uri: String, mode: String, message: String): CallToolResult {
       val result = render(uri)
@@ -217,8 +217,8 @@ object PreviewPickers {
                 "declined",
                 "The user declined the preview choice, so nothing was rendered. Do not ask again " +
                   "unless they bring it up; render one by uri if they do.",
-              )
-            )
+              ),
+            ),
         )
     }
   }

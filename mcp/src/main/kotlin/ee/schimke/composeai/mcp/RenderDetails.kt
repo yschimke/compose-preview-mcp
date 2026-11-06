@@ -102,7 +102,7 @@ internal object RenderDetailReaders {
                 putJsonArray("bounds") { bounds.forEach { add(it) } }
               }
             }
-          }
+          },
       )
     return A11y(summary, cardFindings)
   }

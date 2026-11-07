@@ -1,5 +1,24 @@
 # Changelog
 
+## [4.18.0](https://github.com/yschimke/compose-preview-mcp/compare/v4.17.0...v4.18.0) (2026-11-07)
+
+
+### Bug Fixes
+
+* **deps:** update dependency ee.schimke.composeai:compose-ai-tools-bom to v2.81.0 ([#155](https://github.com/yschimke/compose-preview-mcp/issues/155)) ([d830f53](https://github.com/yschimke/compose-preview-mcp/commit/d830f5315cd26b50ff6c0b07cd7e5d24893bd096))
+* **deps:** update dependency ee.schimke.composeai:compose-ai-tools-bom to v2.83.0 ([#156](https://github.com/yschimke/compose-preview-mcp/issues/156)) ([ce4a629](https://github.com/yschimke/compose-preview-mcp/commit/ce4a6290df22a890d457e39f7c652ea49a78e31c))
+* **deps:** update dependency ee.schimke.composeai:compose-ai-tools-bom to v2.85.0 ([#159](https://github.com/yschimke/compose-preview-mcp/issues/159)) ([1da0b2b](https://github.com/yschimke/compose-preview-mcp/commit/1da0b2b1c72c5dc5efb5e3836f0a48bd83d9d2d2))
+* **deps:** update dependency ee.schimke.composeai:compose-ai-tools-bom to v2.86.0 ([#165](https://github.com/yschimke/compose-preview-mcp/issues/165)) ([9be61dc](https://github.com/yschimke/compose-preview-mcp/commit/9be61dcb0ee2c6390a63a9235bc51488f6edb2ba))
+* **deps:** update dependency ee.schimke.composeai:compose-ai-tools-bom to v2.87.0 ([#168](https://github.com/yschimke/compose-preview-mcp/issues/168)) ([02c58cc](https://github.com/yschimke/compose-preview-mcp/commit/02c58cc58e00f9fbb813a487ba87fa2987d51de3))
+* **deps:** update dependency ee.schimke.composeai:compose-preview-contracts-bom to v3.41.0 ([#170](https://github.com/yschimke/compose-preview-mcp/issues/170)) ([c7f87e1](https://github.com/yschimke/compose-preview-mcp/commit/c7f87e12f96a864d8de8fd8b10c209ff097449db))
+* **deps:** update dependency ee.schimke.composeai:compose-preview-daemon-bom to v3.27.2 ([#150](https://github.com/yschimke/compose-preview-mcp/issues/150)) ([f66ad13](https://github.com/yschimke/compose-preview-mcp/commit/f66ad1306c65663c52ae5e015e642b78632a1ff2))
+* **deps:** update dependency ee.schimke.composeai:remote-compose-player-js-dist to v2.23.0 ([#160](https://github.com/yschimke/compose-preview-mcp/issues/160)) ([80ba224](https://github.com/yschimke/compose-preview-mcp/commit/80ba2244e5e3f73a420e3709a42caa221cfc4f43))
+* **deps:** update dependency ee.schimke.composeai:remote-compose-player-js-dist to v2.24.0 ([#166](https://github.com/yschimke/compose-preview-mcp/issues/166)) ([f431e65](https://github.com/yschimke/compose-preview-mcp/commit/f431e654af48090bdbf84ce2ec50ae8fb8351466))
+* **deps:** update dependency ee.schimke.composeai:remote-compose-player-js-dist to v2.26.0 ([#169](https://github.com/yschimke/compose-preview-mcp/issues/169)) ([621500d](https://github.com/yschimke/compose-preview-mcp/commit/621500d1178234ca18db3d6593328c377ad62615))
+* **mcp-app:** take the viewer and preview library from compose-preview-server v3.154.0 ([#149](https://github.com/yschimke/compose-preview-mcp/issues/149)) ([fa37f25](https://github.com/yschimke/compose-preview-mcp/commit/fa37f253b35697574c4124cae9ac4c9d1ae6943f))
+* **mcp-app:** take the viewer and preview library from compose-preview-server v3.155.0 ([#157](https://github.com/yschimke/compose-preview-mcp/issues/157)) ([a5fb468](https://github.com/yschimke/compose-preview-mcp/commit/a5fb468023c8ae195584e9bf4bbb2f4ef18503eb))
+* **mcp-app:** take the viewer and preview library from compose-preview-server v3.156.0 ([#161](https://github.com/yschimke/compose-preview-mcp/issues/161)) ([7a2d9d9](https://github.com/yschimke/compose-preview-mcp/commit/7a2d9d9c169864d286ebe2fd54ee06aede8d2f0f))
+
 ## [4.17.0](https://github.com/yschimke/compose-preview-mcp/compare/v4.16.0...v4.17.0) (2026-11-01)
 
 

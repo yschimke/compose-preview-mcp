@@ -1,5 +1,13 @@
 # Changelog
 
+## [4.20.0](https://github.com/yschimke/compose-preview-mcp/compare/v4.19.0...v4.20.0) (2026-11-14)
+
+
+### Bug Fixes
+
+* **deps:** update dependency ee.schimke.composeai:compose-ai-tools-bom to v2.92.0 ([#195](https://github.com/yschimke/compose-preview-mcp/issues/195)) ([ef8c669](https://github.com/yschimke/compose-preview-mcp/commit/ef8c669c6829eab62ab5f802f62df8fe24ab4de0))
+* **mcp-app:** take the viewer and preview library from compose-preview-server v3.159.0 ([#174](https://github.com/yschimke/compose-preview-mcp/issues/174)) ([a54a7db](https://github.com/yschimke/compose-preview-mcp/commit/a54a7dbca27642e155cf1f506b28e15e776262f4))
+
 ## [4.19.0](https://github.com/yschimke/compose-preview-mcp/compare/v4.18.0...v4.19.0) (2026-11-14)
 
 

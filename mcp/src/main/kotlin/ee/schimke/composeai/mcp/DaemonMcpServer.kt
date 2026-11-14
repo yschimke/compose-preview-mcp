@@ -138,8 +138,10 @@ private val RENDER_MATRIX_OUTPUT_SCHEMA: JsonObject = buildJsonObject {
   put("type", "object")
   putJsonObject("properties") {
     putJsonObject("schema") { put("type", "string") }
+    putJsonObject("mode") { put("type", "string") }
     putJsonObject("uri") { put("type", "string") }
     putJsonObject("cellCount") { put("type", "integer") }
+    putJsonObject("contactSheet") { put("type", "boolean") }
     putJsonObject("cells") {
       put("type", "array")
       putJsonObject("items") { put("type", "object") }
@@ -2367,6 +2369,51 @@ class DaemonMcpServer(
                         "resizeOrder":{"type":"string","enum":["diagonal","widthFirst","heightFirst"],"description":"Hint for a future resize-loop orchestrator; the single-shot connector ignores it."}
                       },
                       "required":["cells"]
+                    },
+                    "complications":{
+                      "type":"object",
+                      "description":"Declarative Watch Face (<WatchFace>) per-slot complication overrides keyed by slotId string (e.g. '0', '1'). Supports both installing a different complication type (pass 'type': EMPTY | SHORT_TEXT | LONG_TEXT | RANGED_VALUE | GOAL_PROGRESS | WEIGHTED_ELEMENTS | MONOCHROMATIC_IMAGE | SMALL_IMAGE | PHOTO_IMAGE, which resets unmentioned fields so prior seeds do not bleed) and updating complication data in place (omit 'type' to patch only text, title, value/min/max, images, or color ramps). Call get_preview_data(kind='watchface/complications') to inspect available slotIds and supportedTypes.",
+                      "additionalProperties":{
+                        "type":"object",
+                        "properties":{
+                          "type":{"type":"string","enum":["EMPTY","SHORT_TEXT","LONG_TEXT","RANGED_VALUE","GOAL_PROGRESS","WEIGHTED_ELEMENTS","MONOCHROMATIC_IMAGE","SMALL_IMAGE","PHOTO_IMAGE"],"description":"Complication type to install in this slot. Omit to keep the slot's current type and update data fields in place."},
+                          "text":{"type":"string","description":"[COMPLICATION.TEXT] string."},
+                          "title":{"type":"string","description":"[COMPLICATION.TITLE] string."},
+                          "value":{"type":"number","description":"[COMPLICATION.RANGED_VALUE_VALUE] / [COMPLICATION.GOAL_PROGRESS_VALUE]."},
+                          "min":{"type":"number","description":"[COMPLICATION.RANGED_VALUE_MIN]."},
+                          "max":{"type":"number","description":"[COMPLICATION.RANGED_VALUE_MAX] / [COMPLICATION.GOAL_PROGRESS_TARGET_VALUE]."},
+                          "targetValue":{"type":"number","description":"Alias for max on GOAL_PROGRESS complications."},
+                          "monochromaticImage":{"type":"boolean","description":"Whether [COMPLICATION.MONOCHROMATIC_IMAGE] is populated."},
+                          "smallImage":{"type":"boolean","description":"Whether [COMPLICATION.SMALL_IMAGE] is populated."},
+                          "photoImage":{"type":"boolean","description":"Whether [COMPLICATION.PHOTO_IMAGE] is populated."},
+                          "imageColor":{"type":"string","description":"Foreground tint (#RRGGBB or #AARRGGBB) for procedural complication icons/photos."},
+                          "accentColor":{"type":"string","description":"Accent/background color (#RRGGBB or #AARRGGBB) for SMALL_IMAGE and PHOTO_IMAGE."},
+                          "colors":{"type":"array","items":{"type":"string"},"description":"1..4 hex colors (#RRGGBB or #AARRGGBB) for RANGED_VALUE_COLORS, GOAL_PROGRESS_COLORS, or WEIGHTED_ELEMENTS_COLORS."},
+                          "weights":{"type":"array","items":{"type":"number"},"description":"1..4 non-negative weights for WEIGHTED_ELEMENTS_WEIGHTS."},
+                          "interpolate":{"type":"boolean","description":"Whether RANGED_VALUE_COLORS / GOAL_PROGRESS_COLORS interpolate smoothly along the stroke."}
+                        }
+                      }
+                    },
+                    "watchFace":{
+                      "type":"object",
+                      "description":"Declarative Watch Face (<WatchFace>) device state, health metrics, user configurations, and theme color overrides.",
+                      "properties":{
+                        "isAmbient":{"type":"boolean","description":"Toggle [STATE.IS_AMBIENT_MODE] / ambient rendering."},
+                        "is24Hour":{"type":"boolean","description":"Toggle [STATE.IS_24_HOUR_MODE]."},
+                        "isDst":{"type":"boolean","description":"Toggle [STATE.IS_DAYLIGHT_SAVING_TIME]."},
+                        "batteryPercent":{"type":"number","description":"[BATTERY.PERCENT] in 0..100 (auto-sets batteryIsLow when <= 15 unless explicit)."},
+                        "batteryIsLow":{"type":"boolean","description":"[BATTERY.IS_LOW]."},
+                        "batteryCharging":{"type":"boolean","description":"[BATTERY.CHARGING_STATUS]."},
+                        "unreadNotifications":{"type":"integer","description":"[NOTIFICATION.UNREAD_COUNT]."},
+                        "stepCount":{"type":"integer","description":"[HEALTH.STEP_COUNT]."},
+                        "stepGoal":{"type":"number","description":"Daily step goal."},
+                        "heartRate":{"type":"number","description":"[HEALTH.HEART_RATE]."},
+                        "calories":{"type":"number","description":"Daily calories."},
+                        "distance":{"type":"number","description":"Daily distance."},
+                        "floors":{"type":"number","description":"Daily floors climbed."},
+                        "configurations":{"type":"object","description":"Map of UserConfigurations id -> boolean, option index, or option string."},
+                        "themeColors":{"type":"object","additionalProperties":{"type":"string"},"description":"Map of ColorConfiguration id (or '<id>.<index>') -> #RRGGBB / #AARRGGBB."}
+                      }
                     }
                   }
                 },
@@ -2704,7 +2751,7 @@ class DaemonMcpServer(
               "type":"object",
               "properties":{
                 "uri":{"type":"string","description":"compose-preview://<workspace>/<module>/<fqn>?config=<qualifier>"},
-                "kind":{"type":"string","description":"Data-product kind, e.g. a11y/hierarchy, a11y/atf, layout/inspector, compose/semantics, test/failure."},
+                "kind":{"type":"string","description":"Data-product kind, e.g. a11y/hierarchy, a11y/atf, layout/inspector, compose/semantics, watchface/complications, test/failure."},
                 "params":{"type":"object","description":"Optional per-kind parameters (e.g. {nodeId} for layout/inspector). Forwarded verbatim to the daemon's data/fetch."},
                 "inline":{"type":"boolean","description":"Default true. When false, the daemon returns a `path` to a sibling JSON file instead of inlining the payload."},
                 "overrides":{
@@ -2720,7 +2767,9 @@ class DaemonMcpServer(
                     "orientation":{"type":"string","enum":["portrait","landscape"]},
                     "device":{"type":"string"},
                     "captureAdvanceMs":{"type":"integer"},
-                    "inspectionMode":{"type":"boolean"}
+                    "inspectionMode":{"type":"boolean"},
+                    "complications":{"type":"object"},
+                    "watchFace":{"type":"object"}
                   }
                 }
               },
@@ -2755,7 +2804,9 @@ class DaemonMcpServer(
           "With just `preview` (a @Preview function name), renders all of its @Preview variants " +
             "(the annotation's own devices, font scales, …; up to 12) with one labelled contact " +
             "sheet. " +
-            "Render one preview across a cross-product of display axes in a single call and return a token-frugal per-cell summary — for 'does this survive small screen + RTL + large font?' without looping render_preview and reading N PNGs (issue #1788). `axes` sets any of device / locale / uiMode / fontScale (each a non-empty array); the result has one cell per combination with its `overrides`, `label`, `sha256`, `widthPx`/`heightPx`, `changed` (sha differs from the first cell — the quick 'which configs render differently?' signal), and `changedSinceLastRender` (sha differs from this session's last render of that cell — use it to check an edit landed). No base64 by default; fetch a specific cell's pixels with render_preview + those overrides when you need to look, or set `contactSheet:true` to also get one stitched grid image of every cell. Bounded at 24 cells; narrow the axes if you exceed it. Pairs with diff_semantics for per-cell structural diffs.",
+            "Render one preview across a cross-product of display axes (`axes`) OR an explicit list " +
+            "of named override scenarios (`scenarios`, e.g. watch-face complication configurations, " +
+            "ambient states, or theme combinations) in a single call and return a token-frugal per-cell summary — for 'does this survive small screen + RTL + large font?' without looping render_preview and reading N PNGs (issue #1788). `axes` sets any of device / locale / uiMode / fontScale (each a non-empty array); `scenarios` supplies up to 24 `{label, overrides}` cells; the result has one cell per combination with its `overrides`, `label`, `sha256`, `widthPx`/`heightPx`, `changed` (sha differs from the first cell — the quick 'which configs render differently?' signal), and `changedSinceLastRender` (sha differs from this session's last render of that cell — use it to check an edit landed). No base64 by default; fetch a specific cell's pixels with render_preview + those overrides when you need to look, or set `contactSheet:true` to also get one stitched grid image of every cell. Bounded at 24 cells; narrow the axes if you exceed it. Pairs with diff_semantics for per-cell structural diffs.",
         inputSchema =
           parseSchema(
             """
@@ -2773,6 +2824,17 @@ class DaemonMcpServer(
                     "locale":{"type":"array","items":{"type":"string"},"description":"BCP-47 locale tags, e.g. ['en','ar','ja-JP']."},
                     "uiMode":{"type":"array","items":{"type":"string","enum":["light","dark"]}},
                     "fontScale":{"type":"array","items":{"type":"number"},"description":"Font-scale multipliers, e.g. [1.0, 2.0]."}
+                  }
+                },
+                "scenarios":{
+                  "type":"array",
+                  "description":"Optional explicit list of up to 24 named override scenarios (mutually exclusive with axes). Ideal for watch-face complication scenarios (changing complication types across slots and updating complication data), ambient vs interactive states, or custom Remote Compose knob sets.",
+                  "items":{
+                    "type":"object",
+                    "properties":{
+                      "label":{"type":"string","description":"Human-readable tile label in the cell summary and contact sheet."},
+                      "overrides":{"type":"object","description":"Per-scenario overrides, using the exact same shape as render_preview.overrides (including complications, watchFace, ambient, remoteCompose, device, etc.)."}
+                    }
                   }
                 },
                 "contactSheet":{"type":"boolean","description":"When true, also return a single stitched contact-sheet PNG (one labelled tile per cell) alongside the per-cell summary. Default false (token-frugal: hashes only)."},
@@ -5486,7 +5548,14 @@ class DaemonMcpServer(
         is PreviewNameResolution.Found -> listOf(resolved.uri) + resolved.others
       }
     val axes = (args["axes"] as? JsonObject)?.takeIf { it.isNotEmpty() }
+    val scenarios = (args["scenarios"] as? JsonArray)?.takeIf { it.isNotEmpty() }
     val choose = args["choose"]?.jsonPrimitive?.contentOrNull?.toBooleanStrictOrNull() ?: false
+    if (axes != null && scenarios != null) {
+      return errorCallToolResult("render_matrix: specify either 'axes' or 'scenarios', not both")
+    }
+    if (scenarios != null) {
+      return renderScenarioMatrix(session, variantUris, scenarios, args, choose)
+    }
     if (axes == null) return renderVariantMatrix(session, variantUris, args, choose)
     val uri = PreviewUri.parseOrNull(variantUris.first())!!
     val contactSheet =
@@ -5598,6 +5667,160 @@ class DaemonMcpServer(
               rendered.map {
                 ContactSheet.Cell(
                   it.cell.label,
+                  scaleToMaxEdge(it.bytes, CONTACT_SHEET_CELL_EDGE_PX),
+                )
+              },
+            )
+          if (sheet != null) {
+            add(
+              ContentBlock.Image(
+                data = Base64.getEncoder().encodeToString(sheet),
+                mimeType = "image/png",
+              ),
+            )
+          }
+        }
+        add(ContentBlock.Text(payload.toString()))
+      }
+      CallToolResult(content = blocks)
+    } catch (cancelled: CancellationException) {
+      throw cancelled
+    } catch (failure: Throwable) {
+      matrixFailure(uri, failure)
+    }
+  }
+
+  private data class ParsedScenarioCell(
+    val label: String,
+    val overridesJson: JsonObject,
+    val overrides: PreviewOverrides?,
+  )
+
+  private data class RenderedScenarioCell(
+    val scenario: ParsedScenarioCell,
+    val bytes: ByteArray,
+    val sha: String,
+    val dimensions: Pair<Int, Int>?,
+  )
+
+  private suspend fun renderScenarioMatrix(
+    session: Session,
+    variantUris: List<String>,
+    scenarios: JsonArray,
+    args: JsonObject,
+    choose: Boolean,
+  ): CallToolResult {
+    if (scenarios.size > MatrixAxes.CELL_CAP) {
+      return errorCallToolResult(
+        "render_matrix: ${scenarios.size} scenarios exceeds the cap of ${MatrixAxes.CELL_CAP}; narrow scenarios",
+      )
+    }
+    val uri = PreviewUri.parseOrNull(variantUris.first())!!
+    val contactSheet =
+      args["contactSheet"]?.jsonPrimitive?.contentOrNull?.toBooleanStrictOrNull() ?: false
+
+    val parsedScenarios = scenarios.mapIndexed { idx, elem ->
+      val obj =
+        (elem as? JsonObject)
+          ?: return errorCallToolResult("render_matrix: scenarios[$idx] must be a JSON object")
+      val label =
+        obj["label"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() }
+          ?: "scenario_${idx + 1}"
+      val overridesJson =
+        when (val raw = obj["overrides"]) {
+          null,
+          is kotlinx.serialization.json.JsonNull -> JsonObject(emptyMap())
+          is JsonObject -> raw
+          else ->
+            return errorCallToolResult(
+              "render_matrix: scenarios[$idx].overrides must be a JSON object",
+            )
+        }
+      val overrides =
+        if (overridesJson.isEmpty()) null
+        else
+          runCatching { decodePreviewOverrides(overridesJson) }
+            .getOrElse {
+              return errorCallToolResult(
+                "render_matrix: scenarios[$idx] invalid overrides: ${it.message}",
+              )
+            }
+      ParsedScenarioCell(label = label, overridesJson = overridesJson, overrides = overrides)
+    }
+
+    val daemon = runCatching {
+      supervisor.daemonFor(uri.workspaceId, uri.modulePath)
+    }
+      .getOrElse {
+        return errorCallToolResult("render_matrix: daemon spawn failed: ${it.message}")
+      }
+    val violations = parsedScenarios.flatMap { sc ->
+      sc.overrides?.let { validateOverrides(it, daemon) }.orEmpty()
+    }
+    if (violations.isNotEmpty()) {
+      return errorCallToolResult("render_matrix: ${violations.distinct().joinToString("; ")}")
+    }
+
+    return try {
+      var baselineSha: String? = null
+      val rendered = parsedScenarios.map { sc ->
+        val bytes = renderAndReadBytes(uri, overrides = sc.overrides)
+        val sha = sha256Hex(bytes)
+        if (baselineSha == null) baselineSha = sha
+        RenderedScenarioCell(sc, bytes, sha, pngDimensions(bytes))
+      }
+      val cells = rendered.map { rc ->
+        buildJsonObject {
+          put("overrides", rc.scenario.overridesJson)
+          put("label", rc.scenario.label)
+          put("sha256", rc.sha)
+          rc.dimensions?.let {
+            put("widthPx", it.first)
+            put("heightPx", it.second)
+          }
+          put("changed", rc.sha != baselineSha)
+          put(
+            "changedSinceLastRender",
+            changedSinceLastRender(session, uri, rc.scenario.overrides, rc.sha),
+          )
+        }
+      }
+      val payload = buildJsonObject {
+        put("schema", "compose-preview-matrix/v1")
+        put("mode", "scenarios")
+        put("uri", uri.toUri())
+        if (variantUris.size > 1) {
+          put("variant", variantLabel(uri))
+          putJsonArray("otherVariants") { variantUris.drop(1).forEach { add(JsonPrimitive(it)) } }
+        }
+        put("cellCount", cells.size)
+        if (contactSheet) put("contactSheet", true)
+        putJsonArray("cells") { cells.forEach { add(it) } }
+        if (choose) {
+          put(
+            "selection",
+            matrixSelection(session, cells) {
+              rendered.map { rc ->
+                val cellUri =
+                  if (rc.scenario.overridesJson.isEmpty()) uri.toUri()
+                  else uri.copy(overridesJson = rc.scenario.overridesJson.toString()).toUri()
+                PreviewPickers.option(
+                  cellUri,
+                  rc.scenario.label,
+                  thumbnailPngBase64 = pickerThumbnail(rc.bytes),
+                )
+              }
+            },
+          )
+        }
+      }
+      val blocks = buildList {
+        if (contactSheet) {
+          val sheet =
+            ContactSheet.stitch(
+              rendered.map {
+                ContactSheet.Cell(
+                  it.scenario.label,
                   scaleToMaxEdge(it.bytes, CONTACT_SHEET_CELL_EDGE_PX),
                 )
               },
@@ -6142,6 +6365,10 @@ class DaemonMcpServer(
       obj[name]
         ?.takeUnless { it is kotlinx.serialization.json.JsonNull }
         ?.let { json.decodeFromJsonElement(deserializer, it) }
+    val explicitAmbient = nested("ambient", AmbientOverride.serializer())
+    val explicitRemoteCompose = nested("remoteCompose", RemoteComposeOverride.serializer())
+    val mergedWatchFace =
+      WatchFaceOverrides.mergeIntoRemoteCompose(obj, explicitRemoteCompose, explicitAmbient)
     return PreviewOverrides(
       widthPx = int("widthPx"),
       heightPx = int("heightPx"),
@@ -6155,13 +6382,13 @@ class DaemonMcpServer(
       inspectionMode = bool("inspectionMode"),
       material3Theme = nested("material3Theme", Material3ThemeOverrides.serializer()),
       wallpaper = nested("wallpaper", WallpaperOverride.serializer()),
-      ambient = nested("ambient", AmbientOverride.serializer()),
+      ambient = mergedWatchFace.ambient,
       focus = nested("focus", FocusOverride.serializer()),
       keyboard = nested("keyboard", KeyboardOverride.serializer()),
       touchOverlay = bool("touchOverlay"),
       talkBack = bool("talkBack"),
       permissions = nested("permissions", PermissionsOverride.serializer()),
-      remoteCompose = nested("remoteCompose", RemoteComposeOverride.serializer()),
+      remoteCompose = mergedWatchFace.remoteCompose,
       launcherWidget = nested("launcherWidget", LauncherWidgetOverride.serializer()),
     )
   }

@@ -213,6 +213,7 @@ class DaemonMcpServerTest {
         SimulatorMcp.LAUNCH,
         SimulatorMcp.COMMAND,
         SimulatorMcp.SCREENSHOT,
+        SimulatorMcp.WATCHFACE_SNAPSHOT,
         SimulatorMcp.LOGS,
         SimulatorMcp.RESTART,
         SimulatorMcp.UPDATE,

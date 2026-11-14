@@ -40,13 +40,19 @@ module's `build/compose-previews/` copy unless `guidelines` names a file or URL)
 
 ## Apps in Robolectric's simulator: `simulator_*`
 
-Eight tools run an Android APK in Robolectric's simulator and let the agent drive it, over
+Ten tools run an Android APK in Robolectric's simulator and let the agent drive it, over
 compose-ai-tools' `compose-preview launch <apk> --control stdio` (its `docs/SIMULATOR.md` has the
 control protocol and the constraints). No emulator, device or `adb`.
 
-- **`simulator_launch`** `{apk, headless?, showAgent?, qualifiers?, fontScale?, sdk?, java?, pair?, project?, module?, variant?, live?, launcher?, widgets?, tiles?}` starts
+- **`simulator_launch`** `{apk?, headless?, showAgent?, qualifiers?, fontScale?, sdk?, java?, pair?, install?, watchface?, dwfRuntime?, themeFromWatchface?, project?, module?, variant?, live?, launcher?, widgets?, tiles?}` starts
   one and waits for its `ready` event: a simulator id, the package, display size and first
-  activity. The first launch of an APK converts its dex (tens of seconds); later ones come from the
+  activity. `install` adds extra APKs (such as a `ComplicationDataSourceService` or Watch Face Push
+  app) on the same simulated device bus; on Wear, `watchface` activates a `WatchFaceService` or
+  Declarative / Watch Face Format APK at launch (`apk` is optional when `watchface` or
+  `formFactor: "wear"` is set), `dwfRuntime` selects a `DeclarativeWatchFaceRuntime.apk` path or
+  `"auto"` (cached/pulled runtime with built-in WFF compilation fallback), and
+  `themeFromWatchface` (default `true` on Wear) applies the watch face's palette colors to dynamic
+  Material 3 `android.R.color.system_*` tokens. The first launch of an APK converts its dex (tens of seconds); later ones come from the
   CLI's cache. **The window stays up unless `headless`**, so the person watches the agent work: the
   CLI draws each tap and swipe the agent sends over it and names the command along the bottom.
   With no display (CI, a cloud sandbox) the CLI runs headless anyway.
@@ -55,23 +61,32 @@ control protocol and the constraints). No emulator, device or `adb`.
   `activities`, `startActivity`, `startService`, `stopService`, `bindService`, `unbindService`,
   `services`, `broadcast`, `notifications`, `query`, `components`, `qualifiers`, `permissions`
   (`policy: deny` or `deny: [names]` to refuse the app's runtime permission requests), `wait`,
-  `info`, and the screen's power: `screen` (`state: on | ambient | off`, `timeoutMs`, `alwaysOn`,
+  `info`, `battery`, `location`, `timezone`, and the screen's power: `screen` (`state: on | ambient | off`, `timeoutMs`, `alwaysOn`,
   `burnIn`, `lowBit`), `ambient`, `tilt` / `wake` and `palm` / `sleep`, which drive a Wear app's
   ambient callbacks, and `companion` (the app's `CompanionDeviceManager` associations and how
   `associate()` is answered: `policy: accept | reject | ask`, `answer`), and with `launcher` on the
   launch the home screen's `home`, `drawer`, `shortcuts`, `shortcut`, `widgets`, `widget`
   (`action: add | remove | resize | update | reconfigure | pin`, `provider`, `widgetId`,
-  `spanX`/`spanY`) and `picker`; on a Wear app the watch's system UI instead (`launcher` or
-  `tiles` on the launch): `home` (the watch face), `launcher`, `notifications` (`op: open |
+  `spanX`/`spanY`) and `picker`; on a Wear app the watch's system UI instead (`launcher`,
+  `tiles`, or `watchface` on the launch): `home` (the watch face), `launcher`, `notifications` (`op: open |
   close | clear`), `notification` (`key`, `op: tap | action | reply | dismiss | snooze`; any form
   factor), `ongoing`, `tiles` (`op: list | add | remove | show | next | prev | refresh`,
-  `component`), `watchface` (`op: status | set | unset | complication | uncomplication`,
-  `component`, `watchface`, `slot`, `type`: hosts the app's androidx watch face and binds its
-  complication data sources), `health` (`heartRate`, `steps`, … for tiles and widgets), `quickSettings`, and
+  `component`), `watchface` (`op: status | set | unset | render | config | complication |
+  uncomplication | tap | theme | push | pushed | removePush`, `component`, `watchface`, `slot`,
+  `type`, `config`, `flavor`, `apk`, `token`, `slotId`, `themeFromWatchface`: hosts androidx
+  `WatchFaceService` and Declarative / Watch Face Format faces, binds local or cross-APK
+  `ComplicationDataSourceService` providers and inline fake complications, drives style/flavor
+  configs, inspects and applies palette colors, and manages Watch Face Push slots), `clock`
+  (`time`, `timeMillis`, `timeZone`, `is24Hour`, `frozen`, `rate`, `dstMode`, `reset`), `health`
+  (`heartRate`, `steps`, `stepGoal`, … for watch faces, sensors, tiles and widgets), `weather`
+  (`condition`, `temperature`, `hours`, `days`, …), `accel` (`x`, `y`, `z`), `quickSettings`, and
   `rotary` for the crown — with its arguments beside `cmd`, and returns its result plus the `events` the app produced since
-  the last call (activities resumed or destroyed by its own navigation, services started, intents
-  nothing handled).
+  the last call (activities resumed or destroyed by its own navigation, services started,
+  `watchfaceColors`, intents nothing handled).
 - **`simulator_screenshot`** returns the display as an image block (never the window's overlay).
+- **`simulator_watchface_snapshot`** `{simulator?, path?, device?}` captures `watchface {op: status}`
+  (active watch face, palette colors, `themeFromWatchface`, configurations, complication slots, and
+  pushed slots) together with the current display PNG in one call.
 - **`simulator_logs`** `{simulator?, device?, contains?, lines?}` returns the latest lines the
   simulator logged (the app's logcat, Robolectric, stack traces), plus the events since the last
   call.

@@ -85,6 +85,7 @@ class SimulatorMcp(
       launchTool,
       commandTool,
       screenshotTool,
+      watchfaceSnapshotTool,
       logsTool,
       restartTool,
       updateTool,
@@ -98,6 +99,7 @@ class SimulatorMcp(
       LAUNCH -> launch(args)
       COMMAND -> withContext(Dispatchers.IO) { command(args) }
       SCREENSHOT -> withContext(Dispatchers.IO) { screenshot(args) }
+      WATCHFACE_SNAPSHOT -> withContext(Dispatchers.IO) { watchfaceSnapshot(args) }
       LOGS -> withContext(Dispatchers.IO) { logs(args) }
       RESTART -> withContext(Dispatchers.IO) { replace(RESTART, "restart", args) }
       UPDATE -> withContext(Dispatchers.IO) { replace(UPDATE, "update", args) }
@@ -126,10 +128,14 @@ class SimulatorMcp(
     }
     val apk = args.string("apk")
     val adbDevice = args.boolean("adb") == true
-    if (apk == null && project == null && !adbDevice) {
+    val formFactor = args.string("formFactor")
+    val rawWatchface = args.string("watchface")
+    if (
+      apk == null && project == null && !adbDevice && rawWatchface == null && formFactor == null
+    ) {
       return error(
-        "simulator_launch: `apk` (a path) or `project` (a Gradle build) is required, unless " +
-          "`adb` starts a device with nothing installed.",
+        "simulator_launch: `apk` (a path), `project` (a Gradle build), `watchface`, or " +
+          "`formFactor` is required, unless `adb` starts a device with nothing installed.",
       )
     }
     if (adbDevice && project != null) {
@@ -137,6 +143,33 @@ class SimulatorMcp(
     }
     val file = apk?.let { File(it).absoluteFile }
     if (file != null && !file.isFile) return error("simulator_launch: no such APK: $file")
+    val watchfaceFile =
+      rawWatchface?.takeIf { it.endsWith(".apk", ignoreCase = true) }?.let { File(it).absoluteFile }
+    if (watchfaceFile != null && !watchfaceFile.isFile) {
+      return error("simulator_launch: no such watchface APK: $watchfaceFile")
+    }
+    val watchfaceArg = watchfaceFile?.path ?: rawWatchface
+    val rawDwfRuntime = args.string("dwfRuntime")
+    val dwfRuntimeArg =
+      when {
+        rawDwfRuntime == null -> null
+        rawDwfRuntime.equals("auto", ignoreCase = true) -> "auto"
+        else -> {
+          val runtimeFile = File(rawDwfRuntime).absoluteFile
+          if (!runtimeFile.isFile) {
+            return error("simulator_launch: no such DWF runtime APK: $runtimeFile")
+          }
+          runtimeFile.path
+        }
+      }
+    val installs =
+      (args["install"] as? JsonArray)
+        ?.mapNotNull { (it as? JsonPrimitive)?.contentOrNull }
+        ?.map { File(it).absoluteFile }
+        .orEmpty()
+    for (extra in installs) {
+      if (!extra.isFile) return error("simulator_launch: no such APK to install: $extra")
+    }
     val pair = args.string("pair")?.let { File(it).absoluteFile }
     if (pair != null && !pair.isFile) return error("simulator_launch: no such APK to pair: $pair")
     val cliArgs = buildList {
@@ -155,7 +188,7 @@ class SimulatorMcp(
         (arg as? JsonPrimitive)?.contentOrNull?.let { addAll(listOf("--gradle-arg", it)) }
       }
       if (adbDevice) add("--adb")
-      args.string("formFactor")?.let { addAll(listOf("--form-factor", it)) }
+      formFactor?.let { addAll(listOf("--form-factor", it)) }
       add("--control")
       add("stdio")
       if (args.boolean("headless") == true) add("--headless")
@@ -169,6 +202,14 @@ class SimulatorMcp(
       args.string("fingerprint")?.let { addAll(listOf("--fingerprint", it)) }
       pair?.let { addAll(listOf("--pair", it.path)) }
       args.string("pairQualifiers")?.let { addAll(listOf("--pair-qualifiers", it)) }
+      installs.forEach { addAll(listOf("--install", it.path)) }
+      watchfaceArg?.let { addAll(listOf("--watchface", it)) }
+      dwfRuntimeArg?.let { addAll(listOf("--dwf-runtime", it)) }
+      when (args.boolean("themeFromWatchface")) {
+        true -> add("--theme-from-watchface")
+        false -> add("--no-theme-from-watchface")
+        null -> {}
+      }
       args.string("playServices")?.let { addAll(listOf("--play-services", it)) }
       if (args.boolean("launcher") == true) add("--launcher")
       (args["widgets"] as? JsonArray)?.forEach { widget ->
@@ -178,21 +219,27 @@ class SimulatorMcp(
         (tile as? JsonPrimitive)?.contentOrNull?.let { addAll(listOf("--tile", it)) }
       }
     }
+    val dirAnchor = file ?: watchfaceFile ?: installs.firstOrNull()
     val process =
       try {
-        withContext(Dispatchers.IO) { start(cliArgs, launchDirectory(project, file)) }
+        withContext(Dispatchers.IO) { start(cliArgs, launchDirectory(project, dirAnchor)) }
       } catch (e: CancellationException) {
         throw e
       } catch (e: Exception) {
         return error("simulator_launch: could not start compose-preview: ${e.message}")
       }
     val id = "sim-${nextId.getAndIncrement()}"
+    val expectedReadies = if (adbDevice) 1 else (if (pair != null) 2 else 1) + installs.size
     val simulator =
       Simulator(
         id,
-        file?.name ?: project?.name ?: if (adbDevice) "device" else "app",
+        file?.name
+          ?: watchfaceFile?.name
+          ?: project?.name
+          ?: if (adbDevice) "device" else (formFactor ?: "app"),
         process,
-        devices = if (pair != null) PAIRED else emptySet(),
+        devices = if (pair != null && installs.isEmpty()) PAIRED else emptySet(),
+        expectedReadies = expectedReadies,
       )
     val ready =
       try {
@@ -245,7 +292,10 @@ class SimulatorMcp(
       // The CLI's `conversion` event: whether the APK's classes came from its cache, and the cost.
       val conversions = events.filter { (it as? JsonObject)?.string("event") == "conversion" }
       if (conversions.isNotEmpty()) {
-        put("conversion", if (pair == null) conversions.first() else JsonArray(conversions))
+        put(
+          "conversion",
+          if (pair == null && installs.isEmpty()) conversions.first() else JsonArray(conversions),
+        )
       }
       put("events", events)
     }
@@ -295,6 +345,54 @@ class SimulatorMcp(
         val png = reply.result.string("png")
         val summary = buildJsonObject {
           for ((key, value) in reply.result) if (key != "png") put(key, value)
+          put("events", simulator.drainEvents())
+        }
+        CallToolResult(
+          content =
+            listOfNotNull(
+              png?.let { ContentBlock.Image(it, "image/png") },
+              ContentBlock.Text(summary.toString()),
+            ),
+          structuredContent = summary,
+        )
+      }
+    }
+  }
+
+  /**
+   * Combined watch face status + display PNG in one tool call so an agent inspects the active watch
+   * face, palette colors, configurations, complication slots, pushed slots, and rendered pixels
+   * together.
+   */
+  private fun watchfaceSnapshot(args: JsonObject): CallToolResult {
+    val simulator = simulator(args) ?: return noSimulator()
+    val device = args.string("device")
+    val statusPayload = buildJsonObject {
+      put("cmd", "watchface")
+      put("op", "status")
+      device?.let { put("device", it) }
+    }
+    val statusReply =
+      when (val reply = simulator.send(statusPayload, commandTimeoutMs)) {
+        is Reply.Failed ->
+          return error("watchface status: ${reply.message}", simulator.drainEvents())
+        is Reply.Ok -> reply.result
+      }
+    val shotPayload = buildJsonObject {
+      put("cmd", "screenshot")
+      args.string("path")?.let { put("path", it) }
+      device?.let { put("device", it) }
+    }
+    return when (val shotReply = simulator.send(shotPayload, commandTimeoutMs)) {
+      is Reply.Failed -> error("screenshot: ${shotReply.message}", simulator.drainEvents())
+      is Reply.Ok -> {
+        val png = shotReply.result.string("png")
+        val shotMeta = buildJsonObject {
+          for ((key, value) in shotReply.result) if (key != "png") put(key, value)
+        }
+        val summary = buildJsonObject {
+          put("watchface", statusReply)
+          put("screenshot", shotMeta)
           put("events", simulator.drainEvents())
         }
         CallToolResult(
@@ -525,6 +623,7 @@ class SimulatorMcp(
     val apk: String,
     private val process: Process,
     private val devices: Set<String> = emptySet(),
+    private val expectedReadies: Int = if (devices.isEmpty()) 1 else devices.size,
   ) {
     val ready = CompletableFuture<JsonObject>()
 
@@ -597,14 +696,18 @@ class SimulatorMcp(
 
     private fun onReady(message: JsonObject) {
       val info = JsonObject(message.filterKeys { it != "event" })
-      if (devices.isEmpty()) {
+      if (devices.isEmpty() && expectedReadies <= 1) {
         ready.complete(info)
         return
       }
       val device = message.string("device") ?: return
       readies[device] = JsonObject(info.filterKeys { it != "device" })
-      if (readies.keys.containsAll(devices)) {
-        ready.complete(JsonObject(devices.associateWith { readies.getValue(it) }))
+      if (devices.isNotEmpty()) {
+        if (readies.keys.containsAll(devices)) {
+          ready.complete(JsonObject(devices.associateWith { readies.getValue(it) }))
+        }
+      } else if (readies.size >= expectedReadies) {
+        ready.complete(JsonObject(readies.toSortedMap()))
       }
     }
 
@@ -700,19 +803,25 @@ class SimulatorMcp(
           "and its watch run paired over a simulated Data Layer under one simulator id: " +
           "`info` then holds each device's, `device: watch` sends a command or screenshot to " +
           "the watch, every event carries its `device`, and log lines start [phone] or [watch]. " +
+          "With `install` extra APKs (such as a ComplicationDataSourceService or Watch Face " +
+          "Push app) run beside the main APK on the same device bus. " +
           "With `launcher` a home screen sits under the app: HOME, icons, shortcuts and the " +
           "app's own widgets (simulator_command home, widget, …); `widgets` starts with some " +
-          "placed. On a Wear app `launcher` is the watch's system UI instead: watch face, " +
-          "launcher, notification stream, tiles and widgets carousel, quick settings; `tiles` " +
-          "starts with tiles or Wear Widgets in the carousel, and simulator_command watchface " +
-          "hosts the app's androidx watch face and complication data sources. " +
+          "placed. On a Wear app `launcher` is the watch's system UI instead: watch face " +
+          "(androidx WatchFaceService and Declarative / Watch Face Format faces, either via " +
+          "`dwfRuntime` or built-in WFF compilation, plus Watch Face Push), launcher, " +
+          "notification stream, tiles and widgets carousel, quick settings; `watchface` sets " +
+          "the initial watch face APK or component, `themeFromWatchface` applies watch face " +
+          "palette colors to dynamic Material 3 system colors, `tiles` starts with tiles or " +
+          "Wear Widgets in the carousel, and simulator_watchface_snapshot captures watch face " +
+          "status and pixels together. " +
           "With `adb` the simulator is a device adb and Android Studio see (emulator-5554 and " +
           "up), with or without an APK: drive it with simulator_adb as well.",
       inputSchema =
         schema(
           """
           {"type":"object","properties":{
-            "apk":{"type":"string","description":"Absolute path to the APK (a debug build works best). Optional with `project`: the CLI builds it."},
+            "apk":{"type":"string","description":"Absolute path to the APK (a debug build works best). Optional with `project`, `watchface`, `formFactor`, or `adb`."},
             "project":{"type":"string","description":"The app's Gradle build (absolute path), for simulator_reload: edit, then reload without packaging an APK."},
             "module":{"type":"string","description":"With project: the app module (default app)."},
             "variant":{"type":"string","description":"With project: the variant (default debug)."},
@@ -725,15 +834,19 @@ class SimulatorMcp(
             "fontScale":{"type":"string","description":"Font scale, e.g. 1.3."},
             "sdk":{"type":"integer","description":"Android API level to simulate (default 35)."},
             "network":{"type":"string","description":"Start on wifi (default), cellular, ethernet, vpn, captive (no internet) or offline; append ,airplane (or just airplane) for airplane mode."},
-                        "java":{"type":"string","description":"JDK 21+ home or java binary, when the default JDK is older."},
+            "java":{"type":"string","description":"JDK 21+ home or java binary, when the default JDK is older."},
             "dataLayer":{"type":"string","enum":["agent"],"description":"Simulate the Wearable Data Layer with you as the peer: what the app sends arrives as datalayer events of kind send; simulator_command dataLayer {action} connects a peer, puts data items, sends messages and replies."},
             "fingerprint":{"type":"string","description":"Build.FINGERPRINT in place of Robolectric's 'robolectric', which some apps check to skip real work under tests."},
             "pair":{"type":"string","description":"Absolute path to a Wear OS APK to run as this phone app's paired watch."},
             "pairQualifiers":{"type":"string","description":"The paired watch's display qualifiers (default a large round watch)."},
+            "install":{"type":"array","items":{"type":"string"},"description":"Additional APKs to install on the same simulated device (shared DeviceBus), e.g. a complication provider or Watch Face Push app."},
+            "watchface":{"type":"string","description":"Wear: initial watch face to activate on launch — an APK path, a package name, or a WatchFaceService component (pkg/.Cls). Implies launcher on Wear."},
+            "dwfRuntime":{"type":"string","description":"Wear Declarative Watch Face runtime APK path, or 'auto' to use a cached/pulled DeclarativeWatchFaceRuntime.apk and fall back to built-in WFF compilation."},
+            "themeFromWatchface":{"type":"boolean","description":"Wear: apply active watch face palette colors to Android dynamic Material 3 system colors (system_accent1..3, system_neutral1..2, system_primary_dark, etc.). Default true on Wear."},
             "adb":{"type":"boolean","description":"Serve the simulator to adb and Android Studio as an emulator (emulator-5554 and up): `apk` becomes optional (the device boots to its home screen or watch face), an `apk` given is installed rather than started, and simulator_adb runs adb commands against it. The result's `device` holds its serial and ports. Not with project or pair."},
-            "formFactor":{"type":"string","enum":["phone","wear","glimmer","xr"],"description":"The device's form factor; detected from the APK when there is one. With adb and no apk, wear boots a watch."},
+            "formFactor":{"type":"string","enum":["phone","wear","glimmer","xr"],"description":"The device's form factor; detected from the APK when there is one. With no apk, wear boots a watch."},
             "playServices":{"type":"string","enum":["installed","none","outdated","disabled","invalid"],"description":"Google Play services as the app's availability checks see it: installed (default, SUCCESS), or none / outdated / disabled / invalid to test the app's error paths. simulator_command playServices {state} changes it while the app runs."},
-            "launcher":{"type":"boolean","description":"A system UI under the app. On a phone, a home screen: HOME and Back from the app's root go there, its icons reopen the app, a long press shows the app's shortcuts, and the app's widgets are placed, sized, updated and tapped there (simulator_command home, drawer, shortcuts, shortcut, widgets, widget, picker). On a Wear app, the watch's: a watch face, launcher, notification stream, tiles and widgets carousel and quick settings (simulator_command home, launcher, notifications, notification, ongoing, tiles, watchface, health, quickSettings)."},
+            "launcher":{"type":"boolean","description":"A system UI under the app. On a phone, a home screen: HOME and Back from the app's root go there, its icons reopen the app, a long press shows the app's shortcuts, and the app's widgets are placed, sized, updated and tapped there (simulator_command home, drawer, shortcuts, shortcut, widgets, widget, picker). On a Wear app, the watch's: a watch face, launcher, notification stream, tiles and widgets carousel and quick settings (simulator_command home, launcher, notifications, notification, ongoing, tiles, watchface, health, clock, weather, accel, quickSettings)."},
             "widgets":{"type":"array","items":{"type":"string"},"description":"Widget providers (a receiver class or its short name) to place on the home screen at launch: the app starts once, then the home screen shows with them. Implies launcher."},
             "tiles":{"type":"array","items":{"type":"string"},"description":"Wear: tile or Wear Widget services (a class or its short name) in the carousel at launch. Implies launcher."}
           }}
@@ -748,7 +861,7 @@ class SimulatorMcp(
       description =
         "Send one command to a running simulator and get its result plus the events the app " +
           "produced since the last call (activity resumed/destroyed, service started, intents " +
-          "nothing handled). Arguments sit beside `cmd`. Commands: info; hierarchy {flat?} " +
+          "nothing handled, watchfaceColors). Arguments sit beside `cmd`. Commands: info; hierarchy {flat?} " +
           "(views and Compose semantics with text, desc, resourceId, bounds, flags); find " +
           "{selector}; tap {x,y | selector, index?}; longPress {… durationMs?}; swipe " +
           "{x1,y1,x2,y2,durationMs?}; key {key: BACK|ENTER|…}; back; text {text}; launch; " +
@@ -782,7 +895,9 @@ class SimulatorMcp(
           "{services: [{uuid, characteristics: [{uuid, properties, value?}]}]}, characteristic?, " +
           "value? (hex or {text}), answer?, policy?} (BLE peripherals for the app's scans, a GATT " +
           "server whose writes arrive as gatt events; ACTION_REQUEST_ENABLE is a " +
-          "bluetoothRequest event); display {size?: WxH|reset, density?: N|reset}; forceStop; " +
+          "bluetoothRequest event); display {size?: WxH|reset, density?: N|reset}; battery " +
+          "{level?: 0..100, charging?, plugged?: ac|usb|wireless|none, powerSave?}; location " +
+          "{lat, lon, accuracy?, altitude?, bearing?, speed?}; timezone {value}; forceStop; " +
           "clearData; kill (the app killed in the background, its state saved through a Parcel; the " +
           "next launch or startActivity re-creates the task from it); recreate (the top activity, as " +
           "Activity.recreate()); savedState (the top activity's state: bundle JSON and base64 " +
@@ -813,7 +928,7 @@ class SimulatorMcp(
           "{state: chooser, request {requestId, candidates}} waits for the answer. Screen power (Wear ambient): screen {state?: on|ambient|off, timeoutMs?, " +
           "alwaysOn?, burnIn?, lowBit?} (isInteractive, Display.getState, SCREEN_ON/OFF; an " +
           "ambient-aware app gets onEnterAmbient/onUpdateAmbient/onExitAmbient, any other app " +
-          "is stopped until wake); ambient {value?, op?: update}; tilt / wake (wrist-tilt " +
+          "is stopped until wake); ambient {value?, op?: update, burnIn?, lowBit?}; tilt / wake (wrist-tilt " +
           "gesture); palm / sleep; key POWER|SLEEP|WAKEUP. A touch on a sleeping screen only " +
           "wakes it. Home screen (launched with launcher): home (key HOME too; the app stops, " +
           "nothing is destroyed; returns the grid and what is on it); drawer {action?: " +
@@ -828,7 +943,7 @@ class SimulatorMcp(
           "own views are tappable by text. info adds surface: app|home|drawer|picker; events " +
           "home, widget {state: bound|configuring|configured|placed|updated|clicked|resized|" +
           "dataChanged|removed|pinRequested, widgetId, reason} and shortcut. Wear system UI " +
-          "(a Wear app launched with launcher or tiles): home (the watch face; key HOME too); " +
+          "(a Wear app launched with launcher, tiles, or watchface): home (the watch face; key HOME too); " +
           "launcher {index? | component? | label?} (opens the app list, or launches one; key " +
           "STEM_PRIMARY too); notifications {op?: open|close|clear} (without op, every active " +
           "notification with key, channel, extras, actions, ongoingActivity, and shown: false " +
@@ -837,14 +952,21 @@ class SimulatorMcp(
           "action's RemoteInput with text); ongoing {op?: list|tap, index?}; tiles {op: list|" +
           "add|remove|show|next|prev|refresh, component?, index?} (the carousel; tiles are " +
           "rendered by the protolayout renderer, widgets by the Remote Compose player); " +
-          "watchface {op?: status|set|unset|complication|uncomplication, component?, " +
-          "watchface?, slot?, type?} (set hosts the app's androidx watch face `component`, " +
-          "redrawn each second and in ambient; complication binds data source `component` to " +
-          "`slot` of `watchface`, the app's face or else the demo face, `type` the wire " +
-          "ComplicationType: 3 short text, 4 long text, 5 ranged value; status lists the face's " +
-          "slots, the bound sources and their text; Watch Face Format faces are not hosted); health " +
-          "{heartRate?, heartRateAccuracy?, steps?, distanceMeters?, calories?, floors?} (what " +
-          "tiles and widgets read); quickSettings {airplane?, wifi?}; rotary {delta? (-1), " +
+          "watchface {op?: status|set|unset|render|config|complication|uncomplication|tap|theme|" +
+          "push|pushed|removePush, component?, watchface?, slot?, type?, text?, title?, value?, " +
+          "min?, max?, config?, flavor?, apk?, token?, activate?, slotId?, themeFromWatchface?, " +
+          "timeMillis?, x?, y?} (hosts androidx WatchFaceService and Declarative / Watch Face " +
+          "Format faces, binds local or --install cross-app ComplicationDataSourceService " +
+          "providers or inline fake complications, drives user style/flavor configurations, " +
+          "inspects and applies watch face palette colors, and manages Watch Face Push slots); " +
+          "clock {time? (ISO-8601 or HH:mm[:ss]), timeMillis?, timeZone?, is24Hour?, frozen?, " +
+          "rate?, dstMode?, reset?} (pins or scales watch time); health {heartRate?, " +
+          "heartRateAccuracy?, steps?, stepGoal?, distanceMeters?, calories?, floors?} (feeds " +
+          "watch faces, SensorManager listeners, tiles and widgets); weather {available?, " +
+          "condition?, temperature?, temperatureHigh?, temperatureLow?, temperatureUnit?, " +
+          "chanceOfPrecipitation?, uvIndex?, hours?, days?} (feeds WFF [WEATHER.*] expressions); " +
+          "accel {x?, y?, z?} (feeds WFF gyro/tilt expressions and accelerometer listeners); " +
+          "quickSettings {airplane?, wifi?}; rotary {delta? (-1), " +
           "count? (1), intervalMs? (20)} turns the crown. System views carry sim:id/… ids " +
           "(notification_card, notification_action, notification_reply, launcher_item, " +
           "ongoing_chip, tile, widget, qs_airplane, …) with the item's identity as desc; info " +
@@ -861,12 +983,12 @@ class SimulatorMcp(
           """
           {"type":"object","required":["cmd"],"properties":{
             "simulator":{"type":"string","description":"Simulator id from simulator_launch; optional when only one runs."},
-            "device":{"type":"string","enum":["phone","watch"],"description":"With a paired launch: which device runs the command (default phone)."},
-            "cmd":{"type":"string","enum":["info","hierarchy","find","tap","longPress","swipe","key","back","text","launch","finish","activities","startActivity","startService","stopService","bindService","unbindService","services","broadcast","notifications","query","components","qualifiers","permissions","wait","ping","dataLayer","companion","shell","settings","logcat","files","content","network","wifi","bluetooth","display","forceStop","clearData","kill","recreate","savedState","getprop","package","packages","screen","ambient","tilt","wake","palm","sleep","playServices","home","drawer","shortcuts","shortcut","widgets","widget","picker","launcher","notification","ongoing","tiles","watchface","health","quickSettings","rotary","zoom"]},
+            "device":{"type":"string","description":"With a paired or multi-app (`install`) launch: which device or package runs the command (e.g. phone, watch, watch/<pkg>, or <pkg>)."},
+            "cmd":{"type":"string","enum":["info","hierarchy","find","tap","longPress","swipe","key","back","text","launch","finish","activities","startActivity","startService","stopService","bindService","unbindService","services","broadcast","notifications","query","components","qualifiers","permissions","wait","ping","dataLayer","companion","shell","settings","logcat","files","content","network","wifi","bluetooth","display","battery","location","timezone","forceStop","clearData","kill","recreate","savedState","getprop","package","packages","screen","ambient","tilt","wake","palm","sleep","playServices","home","drawer","shortcuts","shortcut","widgets","widget","picker","launcher","notification","ongoing","tiles","watchface","clock","health","weather","accel","quickSettings","rotary","zoom"]},
             "text":{"type":"string"},"textContains":{"type":"string"},"desc":{"type":"string"},"descContains":{"type":"string"},
             "resourceId":{"type":"string"},"cls":{"type":"string"},"clickable":{"type":"boolean"},"index":{"type":"integer"},
-            "x":{"type":"number"},"y":{"type":"number"},"x1":{"type":"number"},"y1":{"type":"number"},"x2":{"type":"number"},"y2":{"type":"number"},
-            "durationMs":{"type":"integer"},"steps":{"type":"integer","description":"swipe: its touch steps; health: steps today"},"ms":{"type":"integer"},"settleMs":{"type":"integer"},
+            "x":{"type":"number"},"y":{"type":"number"},"z":{"type":"number"},"x1":{"type":"number"},"y1":{"type":"number"},"x2":{"type":"number"},"y2":{"type":"number"},
+            "durationMs":{"type":"integer"},"steps":{"type":"integer","description":"swipe: its touch steps; health: steps today"},"stepGoal":{"type":"integer","description":"health: daily step goal (default 10000)"},"ms":{"type":"integer"},"settleMs":{"type":"integer"},
             "key":{"type":["string","integer","array"]},"flat":{"type":"boolean"},"value":{"type":["string","number","boolean","object","array"]},
             "intent":{"type":"object"},"savedState":{"type":"string","description":"launch / startActivity: base64 instance state from the savedState command; a new instance is created from it."},"uri":{"type":"string"},"projection":{"type":"array","items":{"type":"string"}},
             "selection":{"type":"string"},"args":{"type":"array","items":{"type":"string"}},"sort":{"type":"string"},"limit":{"type":"integer"},
@@ -889,7 +1011,11 @@ class SimulatorMcp(
             "provider":{"type":"string","description":"widget add: the widget provider, a receiver class or its short name"},"widgetId":{"type":"integer","description":"widget: which placed widget (id is the command's own)"},
             "cellX":{"type":"integer"},"cellY":{"type":"integer"},"spanX":{"type":"integer"},"spanY":{"type":"integer"},"configure":{"type":"boolean","description":"widget add: run the configure activity even when the provider makes it optional"},
             "shortcutId":{"type":"string","description":"shortcut: which app shortcut to open"},
-            "component":{"type":"string","description":"tiles / launcher / watchface: a tile, widget, activity, watch face or complication data source by class or short name"},"watchface":{"type":"string","description":"watchface complication: the watch face whose slot it fills (pkg/class); the app's own face is set if needed, any other means the demo face"},"slot":{"type":"integer","description":"watchface complication: the watch face's complication slot id"},"type":{"type":"integer","description":"watchface complication: the wire ComplicationType (3 short text, 4 long text, 5 ranged value, 6 monochromatic image, 7 small image)"},"label":{"type":"string","description":"launcher: an app by its label"},
+            "component":{"type":"string","description":"tiles / launcher / watchface: a tile, widget, activity, watch face or complication data source by class or short name"},"dataSource":{"type":"string","description":"watchface complication: alias for component"},"watchface":{"type":"string","description":"watchface complication: the watch face whose slot it fills (pkg/class); the app's own face is set if needed, any other means the demo face"},"slot":{"type":"integer","description":"watchface complication / tap: the watch face's complication slot id"},"type":{"type":["integer","string"],"description":"watchface complication: the wire ComplicationType (3 / SHORT_TEXT, 4 / LONG_TEXT, 5 / RANGED_VALUE, 6 / MONOCHROMATIC_IMAGE, 7 / SMALL_IMAGE, 13 / GOAL_PROGRESS)"},"title":{"type":"string"},"min":{"type":"number"},"max":{"type":"number"},"hasMonochromaticImage":{"type":"boolean"},"hasSmallImage":{"type":"boolean"},"config":{"type":"object","description":"watchface config: map of user style / configuration setting id to option id or boolean"},"flavor":{"type":"string","description":"watchface config: preset flavor id to apply"},"apk":{"type":"string","description":"watchface push: path to a WFF watch face APK to install into Watch Face Push"},"token":{"type":"string","description":"watchface push: validation token"},"activate":{"type":"boolean","description":"watchface push: set the pushed face active immediately"},"slotId":{"type":"string","description":"watchface push / removePush: pushed slot id"},"themeFromWatchface":{"type":"boolean","description":"watchface theme: enable or disable dynamic Material 3 system colors derived from the active watch face"},"label":{"type":"string","description":"launcher: an app by its label"},
+            "time":{"type":"string","description":"clock: ISO-8601 instant or HH:mm[:ss] wall clock"},"timeMillis":{"type":"integer","description":"clock / watchface render: epoch milliseconds"},"timeZone":{"type":"string","description":"clock: IANA time zone id, e.g. America/New_York"},"is24Hour":{"type":"boolean","description":"clock: 24-hour format toggle"},"frozen":{"type":"boolean","description":"clock: freeze simulated watch clock at pinned instant"},"rate":{"type":"number","description":"clock: time progression multiplier when not frozen (1.0 real-time, 60.0 one minute per second)"},"dstMode":{"type":"boolean"},
+            "available":{"type":"boolean","description":"weather: whether weather data is available"},"condition":{"type":["string","integer"],"description":"weather: CLEAR_DAY, CLOUDY, FOG, HEAVY_RAIN, PARTLY_CLOUDY, RAIN, SNOW, THUNDERSTORM, WINDY, etc. (or WFF condition code 0..15)"},"temperature":{"type":"number"},"temperatureHigh":{"type":"number"},"temperatureLow":{"type":"number"},"temperatureUnit":{"type":"string","enum":["CELSIUS","FAHRENHEIT","C","F"]},"chanceOfPrecipitation":{"type":"integer"},"uvIndex":{"type":"integer"},"hours":{"type":"array","items":{"type":"object"},"description":"weather: hourly forecast entries"},"days":{"type":"array","items":{"type":"object"},"description":"weather: daily forecast entries"},
+            "level":{"type":"integer","description":"battery: percentage 0..100"},"charging":{"type":"boolean","description":"battery: charging state"},"plugged":{"type":"string","enum":["ac","usb","wireless","none"]},"powerSave":{"type":"boolean"},
+            "lat":{"type":"number"},"lon":{"type":"number"},"accuracy":{"type":"number"},"altitude":{"type":"number"},"bearing":{"type":"number"},"speed":{"type":"number"},
             "heartRate":{"type":"number"},"heartRateAccuracy":{"type":"string","enum":["unknown","no_contact","unreliable","low","medium","high"]},"distanceMeters":{"type":"number"},"calories":{"type":"number"},"floors":{"type":"number"},
             "delta":{"type":"number","description":"rotary: AXIS_SCROLL per event; negative scrolls down"},"count":{"type":"integer"},"intervalMs":{"type":"integer"},"activity":{"type":"string","description":"shortcuts: the launcher activity whose shortcuts to list or show"},
             "node":{"type":"string","description":"dataLayer: the peer node id (connect names a new one)"},"nearby":{"type":"boolean"},"capabilities":{"type":"array","items":{"type":"string"}},
@@ -916,7 +1042,28 @@ class SimulatorMcp(
           {"type":"object","properties":{
             "simulator":{"type":"string","description":"Simulator id; optional when only one runs."},
             "path":{"type":"string","description":"Also write the PNG here; the image is then not inlined."},
-            "device":{"type":"string","enum":["phone","watch"],"description":"With a paired launch: which device's display (default phone)."}
+            "device":{"type":"string","description":"With a paired or multi-app launch: which device's display (default phone/primary)."}
+          }}
+          """,
+        ),
+      readOnlyHint = true,
+    )
+
+  private val watchfaceSnapshotTool =
+    ToolDef(
+      name = WATCHFACE_SNAPSHOT,
+      title = "Watch face status and screenshot",
+      description =
+        "Capture the active Wear watch face's structured status (active face, palette colors, " +
+          "themeFromWatchface, user configurations, complication slots with bounds and bound " +
+          "values, pushed Watch Face Push slots) together with the current display PNG in one call.",
+      inputSchema =
+        schema(
+          """
+          {"type":"object","properties":{
+            "simulator":{"type":"string","description":"Simulator id; optional when only one runs."},
+            "path":{"type":"string","description":"Also write the PNG here; the image is then not inlined."},
+            "device":{"type":"string","description":"With a paired or multi-app launch: which watch device (e.g. watch)."}
           }}
           """,
         ),
@@ -936,7 +1083,7 @@ class SimulatorMcp(
           """
           {"type":"object","properties":{
             "simulator":{"type":"string","description":"Simulator id; optional when only one runs."},
-            "device":{"type":"string","enum":["phone","watch"],"description":"Only this device's lines, in a paired launch."},
+            "device":{"type":"string","description":"Only this device's lines, in a paired or multi-app launch."},
             "contains":{"type":"string","description":"Only lines containing this text."},
             "lines":{"type":"integer","description":"How many of the latest lines (default 100)."}
           }}
@@ -961,7 +1108,7 @@ class SimulatorMcp(
           """
           {"type":"object","properties":{
             "simulator":{"type":"string","description":"Simulator id; optional when only one runs."},
-            "device":{"type":"string","enum":["phone","watch"],"description":"With a paired launch: which device restarts (default phone)."},
+            "device":{"type":"string","description":"With a paired or multi-app launch: which device restarts."},
             "keepData":{"type":"boolean","description":"Keep the app's data (default true); false starts from a clean install."}
           }}
           """,
@@ -984,7 +1131,7 @@ class SimulatorMcp(
           {"type":"object","required":["apk"],"properties":{
             "simulator":{"type":"string","description":"Simulator id; optional when only one runs."},
             "apk":{"type":"string","description":"Absolute path to the new APK. Keeping data needs the same package."},
-            "device":{"type":"string","enum":["phone","watch"],"description":"With a paired launch: which device updates (default phone)."},
+            "device":{"type":"string","description":"With a paired or multi-app launch: which device updates."},
             "keepData":{"type":"boolean","description":"Keep the app's data (default true)."}
           }}
           """,
@@ -1088,6 +1235,7 @@ class SimulatorMcp(
     const val LAUNCH = "simulator_launch"
     const val COMMAND = "simulator_command"
     const val SCREENSHOT = "simulator_screenshot"
+    const val WATCHFACE_SNAPSHOT = "simulator_watchface_snapshot"
     const val STOP = "simulator_stop"
     const val LOGS = "simulator_logs"
     const val RESTART = "simulator_restart"
@@ -1095,7 +1243,18 @@ class SimulatorMcp(
     const val RELOAD = "simulator_reload"
     const val ADB = "simulator_adb"
     val TOOL_NAMES: List<String> =
-      listOf(LAUNCH, COMMAND, SCREENSHOT, LOGS, RESTART, UPDATE, RELOAD, ADB, STOP)
+      listOf(
+        LAUNCH,
+        COMMAND,
+        SCREENSHOT,
+        WATCHFACE_SNAPSHOT,
+        LOGS,
+        RESTART,
+        UPDATE,
+        RELOAD,
+        ADB,
+        STOP,
+      )
 
     /** adb options that would point a command at another device or server. */
     private val DEVICE_OPTIONS = setOf("-s", "-t", "-d", "-e", "-H", "-P", "-L")

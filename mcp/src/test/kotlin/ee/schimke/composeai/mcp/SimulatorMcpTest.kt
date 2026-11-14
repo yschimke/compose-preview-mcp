@@ -923,6 +923,158 @@ class SimulatorMcpTest {
   }
 
   @Test
+  fun `watch face launch flags and multi-app install pass through to the launch`() {
+    val wfApk = tmp.newFile("wf.apk").apply { writeText("wff") }
+    val compApk = tmp.newFile("comp.apk").apply { writeText("comp") }
+    val pushApk = tmp.newFile("push.apk").apply { writeText("push") }
+    val multiArgs = mutableListOf<List<String>>()
+    val multiMcp =
+      SimulatorMcp(
+        start = { args, _ ->
+          multiArgs += args
+          ProcessBuilder(
+              "bash",
+              "-c",
+              """
+              echo '{"event":"ready","device":"watch","package":"ee.schimke.composeai.simulator.system"}'
+              echo '{"event":"ready","device":"watch/com.example.comp","package":"com.example.comp"}'
+              echo '{"event":"ready","device":"watch/com.example.push","package":"com.example.push"}'
+              while IFS= read -r line; do :; done
+              """
+                .trimIndent(),
+            )
+            .start()
+        },
+        readyTimeoutMs = 10_000,
+        commandTimeoutMs = 10_000,
+      )
+    try {
+      val result = runBlocking {
+        multiMcp.handle(
+          SimulatorMcp.LAUNCH,
+          buildJsonObject {
+            put("watchface", wfApk.path)
+            put("dwfRuntime", "auto")
+            put("themeFromWatchface", true)
+            put(
+              "install",
+              buildJsonArray {
+                add(compApk.path)
+                add(pushApk.path)
+              },
+            )
+          },
+        )!!
+      }
+      assertThat(result.isError).isNull()
+      assertThat(multiArgs.single())
+        .containsAtLeast(
+          "--install",
+          compApk.absolutePath,
+          "--install",
+          pushApk.absolutePath,
+          "--watchface",
+          wfApk.absolutePath,
+          "--dwf-runtime",
+          "auto",
+          "--theme-from-watchface",
+        )
+        .inOrder()
+      val info = result.structuredContent!!["info"]!!.jsonObject
+      assertThat(info.keys)
+        .containsExactly("watch", "watch/com.example.comp", "watch/com.example.push")
+    } finally {
+      multiMcp.shutdown()
+    }
+  }
+
+  @Test
+  fun `the command schema has the watch face scenario commands and arguments`() {
+    val command = mcp.toolDefs().single { it.name == SimulatorMcp.COMMAND }
+    val properties = command.inputSchema.jsonObject["properties"]!!.jsonObject
+    val cmds = properties["cmd"]!!.jsonObject["enum"]!!.jsonArray.map { it.jsonPrimitive.content }
+    assertThat(cmds)
+      .containsAtLeast("watchface", "clock", "health", "weather", "accel", "battery", "timezone")
+    assertThat(properties.keys)
+      .containsAtLeast(
+        "watchface",
+        "slot",
+        "config",
+        "flavor",
+        "token",
+        "slotId",
+        "themeFromWatchface",
+        "time",
+        "timeMillis",
+        "timeZone",
+        "is24Hour",
+        "frozen",
+        "rate",
+        "stepGoal",
+        "condition",
+        "temperature",
+        "hours",
+        "days",
+      )
+  }
+
+  @Test
+  fun `simulator_watchface_snapshot returns status and display png together`() {
+    val wfMcp =
+      SimulatorMcp(
+        start = { _, _ ->
+          ProcessBuilder(
+              "bash",
+              "-c",
+              """
+              echo '{"event":"ready","package":"com.example.wf","width":454,"height":454}'
+              while IFS= read -r line; do
+                id=$(printf '%s' "${'$'}line" | sed -n 's/.*"id":\([0-9]*\).*/\1/p')
+                cmd=$(printf '%s' "${'$'}line" | sed -n 's/.*"cmd":"\([^"]*\)".*/\1/p')
+                case "${'$'}cmd" in
+                  watchface)
+                    echo '{"event":"watchfaceColors","primary":"#FF34D399"}'
+                    echo "{\"id\":${'$'}id,\"ok\":true,\"result\":{\"active\":{\"id\":\"com.example.wf\"},\"colors\":{\"primary\":\"#FF34D399\"}}}" ;;
+                  screenshot)
+                    echo "{\"id\":${'$'}id,\"ok\":true,\"result\":{\"width\":454,\"height\":454,\"png\":\"iVBORw0KGgo=\"}}" ;;
+                esac
+              done
+              """
+                .trimIndent(),
+            )
+            .start()
+        },
+        readyTimeoutMs = 10_000,
+        commandTimeoutMs = 10_000,
+      )
+    try {
+      runBlocking {
+        wfMcp.handle(SimulatorMcp.LAUNCH, buildJsonObject { put("apk", apk().path) })!!
+      }
+      val snap = runBlocking {
+        wfMcp.handle(SimulatorMcp.WATCHFACE_SNAPSHOT, JsonObject(emptyMap()))!!
+      }
+      assertThat(snap.isError).isNull()
+      val image = snap.content.filterIsInstance<ContentBlock.Image>().single()
+      assertThat(image.data).isEqualTo("iVBORw0KGgo=")
+      val structured = snap.structuredContent!!
+      assertThat(
+          structured["watchface"]!!
+            .jsonObject["colors"]!!
+            .jsonObject["primary"]!!
+            .jsonPrimitive
+            .content,
+        )
+        .isEqualTo("#FF34D399")
+      assertThat(structured["screenshot"]!!.jsonObject["width"]!!.jsonPrimitive.content)
+        .isEqualTo("454")
+      assertThat(structured["events"]!!.jsonArray).hasSize(1)
+    } finally {
+      wfMcp.shutdown()
+    }
+  }
+
+  @Test
   fun `commands split as a shell splits words`() {
     assertThat(SimulatorMcp.splitCommand("""shell am start -n "com.x/.A b" 'it''s' a\ b"""))
       .containsExactly("shell", "am", "start", "-n", "com.x/.A b", "its", "a b")

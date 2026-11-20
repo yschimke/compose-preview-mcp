@@ -83,6 +83,12 @@ class SimulatorMcp(
    * `precompileSkipped`); the seam itself is null when the server has no preview build.
    */
   private val precompile: ((List<String>) -> String?)? = null,
+  /**
+   * Discovery file for the loopback HTTP sidebar bridge
+   * (`~/.cache/composeai/simulator-bridge.json`). Null disables the bridge server (e.g. in unit
+   * tests that do not need HTTP).
+   */
+  private val bridgeFile: File? = SimulatorBridgeServer.defaultBridgeFile(),
 ) {
 
   private val simulators = ConcurrentHashMap<String, Simulator>()
@@ -92,6 +98,43 @@ class SimulatorMcp(
         size > MAX_EXITED_SIMULATORS
     }
   private val nextId = AtomicLong(1)
+  private val bridgeLock = Any()
+  @Volatile private var bridgeServer: SimulatorBridgeServer? = null
+
+  internal val bridgePort: Int?
+    get() = bridgeServer?.port
+
+  internal val bridgeToken: String?
+    get() = bridgeServer?.authToken
+
+  internal fun readViewerHtml(): String = viewerHtml
+
+  internal fun activeSimulatorSummaries(): List<JsonObject> =
+    simulators.values
+      .sortedBy { it.id }
+      .map { sim ->
+        buildJsonObject {
+          put("id", sim.id)
+          put("apk", sim.apk)
+          put("running", true)
+          if (sim.devices.isNotEmpty()) {
+            putJsonArray("devices") { sim.devices.sorted().forEach { add(JsonPrimitive(it)) } }
+          }
+          sim.ready.getNow(null)?.let { put("info", it) }
+        }
+      }
+
+  private fun syncBridge() {
+    val file = bridgeFile ?: return
+    synchronized(bridgeLock) {
+      if (simulators.isNotEmpty()) {
+        val srv = bridgeServer ?: SimulatorBridgeServer(this, file).also { bridgeServer = it }
+        srv.writeDiscoveryFile()
+      } else {
+        bridgeServer?.writeDiscoveryFile()
+      }
+    }
+  }
 
   fun toolDefs(): List<ToolDef> =
     listOf(
@@ -153,6 +196,10 @@ class SimulatorMcp(
   fun shutdown() {
     simulators.values.forEach { it.close() }
     simulators.clear()
+    synchronized(bridgeLock) {
+      bridgeServer?.close()
+      bridgeServer = null
+    }
   }
 
   // -----------------------------------------------------------------------------------------------
@@ -293,6 +340,7 @@ class SimulatorMcp(
         onExit = { exited ->
           if (simulators.remove(id, exited)) {
             synchronized(exitedSimulators) { exitedSimulators[id] = exited }
+            syncBridge()
           }
         },
       )
@@ -338,6 +386,10 @@ class SimulatorMcp(
       return notStarted(simulator, "installing ${file?.name} failed: ${installed.string("error")}")
     }
     simulators[id] = simulator
+    if (simulator.exited && simulators.remove(id, simulator)) {
+      synchronized(exitedSimulators) { exitedSimulators[id] = simulator }
+    }
+    syncBridge()
     val events = simulator.drainEvents()
     val result = buildJsonObject {
       put("simulator", id)
@@ -686,6 +738,7 @@ class SimulatorMcp(
     val id = args.string("simulator") ?: simulators.keys.singleOrNull()
     val simulator = id?.let { simulators.remove(it) } ?: return noSimulator()
     simulator.close()
+    syncBridge()
     return ok(
       buildJsonObject { put("stopped", simulator.id) },
       simulatorResultMeta(simulator, action = "stop", running = false),
@@ -726,6 +779,7 @@ class SimulatorMcp(
     private val onExit: (Simulator) -> Unit = {},
   ) {
     val ready = CompletableFuture<JsonObject>()
+    @Volatile var exited = false
 
     /** With `adb`: the CLI's `device` event (serial, ports). */
     val deviceInfo = CompletableFuture<JsonObject>()
@@ -749,10 +803,13 @@ class SimulatorMcp(
         // Its stdout closes a moment before the process is reaped: wait, so the exit is reported
         // as its code rather than "still running".
         process.waitFor(EXIT_WAIT_MS, TimeUnit.MILLISECONDS)
-        val exited = IllegalStateException("the simulator exited (${exitCode()})")
-        ready.completeExceptionally(exited)
-        install.completeExceptionally(exited)
-        pending.values.forEach { it.complete(Reply.Failed("${exited.message}\n${stderrTail()}")) }
+        val exitedError = IllegalStateException("the simulator exited (${exitCode()})")
+        ready.completeExceptionally(exitedError)
+        install.completeExceptionally(exitedError)
+        pending.values.forEach {
+          it.complete(Reply.Failed("${exitedError.message}\n${stderrTail()}"))
+        }
+        exited = true
         onExit(this)
       }
       daemon("simulator-$id-stderr") {
@@ -906,12 +963,33 @@ class SimulatorMcp(
       buildJsonObject { putJsonObject("ui") { put("prefersBorder", true) } },
     )
 
-  private val appToolMeta: JsonObject by lazy {
+  /**
+   * Only `android_simulator_launch` links `ui.resourceUri` so MCP Apps hosts open one interactive
+   * simulator view per launch instead of spawning duplicate cards on every follow-up command,
+   * screenshot, or log call.
+   */
+  private val launchToolMeta: JsonObject by lazy {
     OpenAiUi.appToolMeta(
       VIEWER_URI,
       entrypoints = emptyList(),
       visibility = listOf("model", "app"),
     )
+  }
+
+  /**
+   * Follow-up simulator tools stay app-callable (`ui.visibility = ["model", "app"]`) so the open
+   * simulator UI can invoke them directly without causing hosts to mount a fresh inline card on
+   * every model call.
+   */
+  private val appCallableToolMeta: JsonObject by lazy {
+    buildJsonObject {
+      putJsonObject("ui") {
+        putJsonArray("visibility") {
+          add(JsonPrimitive("model"))
+          add(JsonPrimitive("app"))
+        }
+      }
+    }
   }
 
   private fun error(message: String, events: JsonArray? = null): CallToolResult {
@@ -925,7 +1003,7 @@ class SimulatorMcp(
       name = LAUNCH,
       title = "Android simulator: launch an APK",
       icons = listOf(OpenAiUi.svgIcon(SIMULATOR_ICON_SVG)),
-      meta = appToolMeta,
+      meta = launchToolMeta,
       description =
         "Run an Android APK in Robolectric's simulator (no emulator or device) and return a " +
           "simulator id plus the app's package, display size and first activity. The first " +
@@ -996,7 +1074,7 @@ class SimulatorMcp(
     ToolDef(
       name = COMMAND,
       title = "Android simulator: drive the app",
-      meta = appToolMeta,
+      meta = appCallableToolMeta,
       description =
         "Send one command to a running simulator and get its result plus the events the app " +
           "produced since the last call (activity resumed/destroyed, service started, intents " +
@@ -1177,7 +1255,7 @@ class SimulatorMcp(
     ToolDef(
       name = SCREENSHOT,
       title = "Android simulator: screenshot",
-      meta = appToolMeta,
+      meta = appCallableToolMeta,
       description =
         "The simulator's display as a PNG image (exactly what the app draws; the window's " +
           "agent overlay is never in it). Pass `path` to also write it to disk.",
@@ -1201,7 +1279,7 @@ class SimulatorMcp(
     ToolDef(
       name = WATCHFACE_SNAPSHOT,
       title = "Android simulator: watch face status and screenshot",
-      meta = appToolMeta,
+      meta = appCallableToolMeta,
       description =
         "Capture the active Wear watch face's structured status (active face, palette colors, " +
           "themeFromWatchface, user configurations, complication slots with bounds and bound " +
@@ -1223,7 +1301,7 @@ class SimulatorMcp(
     ToolDef(
       name = LOGS,
       title = "Android simulator: log",
-      meta = appToolMeta,
+      meta = appCallableToolMeta,
       description =
         "The latest lines the simulator logged: the app's logcat, Robolectric and stack traces. " +
           "In a paired launch each line starts [phone] or [watch]; `device` keeps one device's. " +
@@ -1246,7 +1324,7 @@ class SimulatorMcp(
     ToolDef(
       name = RESTART,
       title = "Android simulator: restart the app",
-      meta = appToolMeta,
+      meta = appCallableToolMeta,
       description =
         "Start the app again in a fresh simulator JVM (a new process: statics, singletons and " +
           "in-memory state reset), without ending the simulator session. Its data (files, " +
@@ -1272,7 +1350,7 @@ class SimulatorMcp(
     ToolDef(
       name = UPDATE,
       title = "Android simulator: update to a rebuilt APK",
-      meta = appToolMeta,
+      meta = appCallableToolMeta,
       description =
         "Replace the running app with another APK, usually a rebuild of it, as `adb install " +
           "-r` would: its data is kept (keepData false drops it) and the session continues. " +
@@ -1298,7 +1376,7 @@ class SimulatorMcp(
     ToolDef(
       name = RELOAD,
       title = "Android simulator: live reload the app",
-      meta = appToolMeta,
+      meta = appCallableToolMeta,
       description =
         "After editing the app's source: compile it (the module's Kotlin/Java compile, which " +
           "also relinks resources; no dexing or APK packaging) and put the changed classes in " +
@@ -1373,7 +1451,7 @@ class SimulatorMcp(
     ToolDef(
       name = STOP,
       title = "Android simulator: stop it",
-      meta = appToolMeta,
+      meta = appCallableToolMeta,
       description = "End a simulator started with android_simulator_launch, closing its window.",
       inputSchema =
         schema(

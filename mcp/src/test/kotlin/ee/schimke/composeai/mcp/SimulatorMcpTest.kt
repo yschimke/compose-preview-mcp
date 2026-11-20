@@ -72,6 +72,7 @@ class SimulatorMcpTest {
       },
       readyTimeoutMs = 10_000,
       commandTimeoutMs = 10_000,
+      bridgeFile = null,
     )
 
   @After fun tearDown() = mcp.shutdown()
@@ -1129,26 +1130,20 @@ class SimulatorMcpTest {
     assertThat(content.text).contains("android_simulator_command")
     assertThat(content.text).contains("android_simulator_screenshot")
     assertThat(content.text).contains("if (event.source !== window.parent) return;")
-    assertThat(content.text).contains("if (state.device) args.device = state.device;")
+    assertThat(content.text).contains("if (targetDevice) args.device = targetDevice;")
     assertThat(content.text).contains("content: [")
+    assertThat(content.text).contains("captureAllDevices")
+    assertThat(content.text).contains("callToolHttp")
+    // Passive onToolResult must not spam ui/update-model-context (prevents context chip buildup).
+    val onToolResultBody =
+      content.text.substringAfter("function onToolResult(").substringBefore("// Tool calls")
+    assertThat(onToolResultBody).doesNotContain("updateModelContext()")
   }
 
   @Test
-  fun `interactive simulator tools link to the simulator MCP App resource`() {
+  fun `only launch links simulator MCP App resource while follow-up tools stay app-callable`() {
     val byName = mcp.toolDefs().associateBy { it.name }
-    val appTools =
-      listOf(
-        SimulatorMcp.LAUNCH,
-        SimulatorMcp.COMMAND,
-        SimulatorMcp.SCREENSHOT,
-        SimulatorMcp.WATCHFACE_SNAPSHOT,
-        SimulatorMcp.LOGS,
-        SimulatorMcp.RELOAD,
-        SimulatorMcp.RESTART,
-        SimulatorMcp.UPDATE,
-        SimulatorMcp.STOP,
-      )
-    val expectedMeta =
+    val expectedLaunchMeta =
       Json.parseToJsonElement(
           """
           {
@@ -1161,11 +1156,106 @@ class SimulatorMcpTest {
           """,
         )
         .jsonObject
-    for (name in appTools) {
-      assertThat(byName.getValue(name).meta).isEqualTo(expectedMeta)
-    }
+    assertThat(byName.getValue(SimulatorMcp.LAUNCH).meta).isEqualTo(expectedLaunchMeta)
     assertThat(byName.getValue(SimulatorMcp.LAUNCH).icons!!.single().src)
       .startsWith("data:image/svg+xml;base64,")
+
+    val followUpTools =
+      listOf(
+        SimulatorMcp.COMMAND,
+        SimulatorMcp.SCREENSHOT,
+        SimulatorMcp.WATCHFACE_SNAPSHOT,
+        SimulatorMcp.LOGS,
+        SimulatorMcp.RELOAD,
+        SimulatorMcp.RESTART,
+        SimulatorMcp.UPDATE,
+        SimulatorMcp.STOP,
+      )
+    val expectedFollowUpMeta =
+      Json.parseToJsonElement(
+          """
+          {
+            "ui": {
+              "visibility": ["model", "app"]
+            }
+          }
+          """,
+        )
+        .jsonObject
+    for (name in followUpTools) {
+      assertThat(byName.getValue(name).meta).isEqualTo(expectedFollowUpMeta)
+    }
+  }
+
+  @Test
+  fun `loopback simulator bridge serves active sessions and enforces token auth`() {
+    val bridgeFile = File(tmp.root, "simulator-bridge.json")
+    val bridged =
+      SimulatorMcp(
+        start = { _, _ -> ProcessBuilder("bash", "-c", fake).start() },
+        readyTimeoutMs = 10_000,
+        commandTimeoutMs = 10_000,
+        bridgeFile = bridgeFile,
+      )
+    try {
+      assertThat(bridgeFile.exists()).isFalse()
+      assertThat(bridged.bridgePort).isNull()
+
+      runBlocking {
+        bridged.handle(SimulatorMcp.LAUNCH, buildJsonObject { put("apk", apk().path) })
+      }
+      assertThat(bridgeFile.isFile).isTrue()
+      val discovery = Json.parseToJsonElement(bridgeFile.readText()).jsonObject
+      val port = discovery["port"]!!.jsonPrimitive.content.toInt()
+      val token = discovery["token"]!!.jsonPrimitive.content
+      assertThat(port).isEqualTo(bridged.bridgePort)
+      assertThat(token).isEqualTo(bridged.bridgeToken)
+
+      // Unauthorized request is rejected with 401.
+      val unauthConn =
+        java.net.URI("http://127.0.0.1:$port/api/simulators").toURL().openConnection()
+          as java.net.HttpURLConnection
+      assertThat(unauthConn.responseCode).isEqualTo(401)
+      unauthConn.disconnect()
+
+      // Authorized listing returns the running simulator.
+      val listConn =
+        java.net.URI("http://127.0.0.1:$port/api/simulators").toURL().openConnection()
+          as java.net.HttpURLConnection
+      listConn.setRequestProperty("X-Simulator-Token", token)
+      assertThat(listConn.responseCode).isEqualTo(200)
+      val listJson =
+        Json.parseToJsonElement(listConn.inputStream.bufferedReader().readText()).jsonObject
+      listConn.disconnect()
+      assertThat(listJson["simulators"]!!.jsonArray).hasSize(1)
+      assertThat(
+          listJson["simulators"]!!.jsonArray.single().jsonObject["id"]!!.jsonPrimitive.content,
+        )
+        .isEqualTo("sim-1")
+
+      // Authorized screenshot returns the PNG base64 in _meta.
+      val shotConn =
+        java.net
+          .URI("http://127.0.0.1:$port/api/simulators/sim-1/screenshot")
+          .toURL()
+          .openConnection() as java.net.HttpURLConnection
+      shotConn.setRequestProperty("X-Simulator-Token", token)
+      assertThat(shotConn.responseCode).isEqualTo(200)
+      val shotJson =
+        Json.parseToJsonElement(shotConn.inputStream.bufferedReader().readText()).jsonObject
+      shotConn.disconnect()
+      assertThat(
+          shotJson["_meta"]!!
+            .jsonObject[SimulatorMcp.RESULT_META_KEY]!!
+            .jsonObject["pngBase64"]!!
+            .jsonPrimitive
+            .content,
+        )
+        .isEqualTo("iVBORw0KGgo=")
+    } finally {
+      bridged.shutdown()
+    }
+    assertThat(bridgeFile.exists()).isFalse()
   }
 
   @Test
@@ -1248,6 +1338,7 @@ class SimulatorMcpTest {
         },
         readyTimeoutMs = 10_000,
         commandTimeoutMs = 10_000,
+        bridgeFile = null,
       )
     try {
       val first = runBlocking {

@@ -4,12 +4,17 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Android Simulator</title>
 <!--
-  Interactive Android Simulator MCP App (ui://compose-preview/simulator).
+  Interactive Android Simulator MCP App (ui://compose-preview/simulator) and standalone sidebar UI.
 
-  Displays the live screen of an Android app running in Robolectric's simulator
-  (`android_simulator_*` tools in compose-preview-mcp) and lets the user tap,
-  long-press, swipe, type text, press Back/Home, reload edits, restart, stop,
-  and inspect logs/events directly inside any MCP Apps host.
+  Displays the live screen(s) of an Android app running in Robolectric's simulator
+  (`android_simulator_*` tools in compose-preview-mcp), including paired phone + watch sessions
+  side-by-side, and lets the user tap, long-press, swipe, type text, press Back/Home, reload
+  edits, restart, stop, and inspect logs/events.
+
+  Works over either:
+  - MCP Apps postMessage JSON-RPC 2.0 (inline host card), or
+  - Same-origin HTTP bridge (`/api/simulators` or `?transport=http&apiBase=/__sidecar/sim`) for
+    sidebar hosts such as Antigravity's Auxiliary Pane sidecar.
 -->
 <style>
   :root {
@@ -77,6 +82,26 @@
     display: grid; place-items: center; min-height: 180px; padding: 10px;
     overflow: auto; position: relative;
   }
+  .screens {
+    display: flex; flex-wrap: wrap; gap: 14px; align-items: flex-start;
+    justify-content: center; width: 100%;
+  }
+  .screens[hidden] { display: none; }
+  .device-card {
+    display: flex; flex-direction: column; align-items: center; gap: 6px;
+    max-width: 100%;
+  }
+  .device-label {
+    display: inline-flex; align-items: center; gap: 6px;
+    font-size: 11px; font-weight: 600; color: var(--fg-2);
+    padding: 2px 8px; border-radius: 999px;
+    border: 1px solid var(--border); background: var(--bg);
+    cursor: pointer; user-select: none;
+  }
+  .device-card.selected .device-label {
+    border-color: var(--accent); color: var(--accent);
+  }
+  .device-dims { font-weight: 400; opacity: 0.8; }
   .screen-wrap {
     position: relative; display: inline-block; line-height: 0;
     border-radius: 12px; overflow: hidden;
@@ -84,10 +109,22 @@
     border: 1px solid var(--border);
     user-select: none; touch-action: none;
   }
-  .screen-wrap[hidden] { display: none; }
+  .device-card.selected .screen-wrap {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 1px var(--accent), 0 2px 12px rgba(0, 0, 0, 0.18);
+  }
+  .device-card[data-device="watch"] .screen-wrap {
+    border-radius: 28px;
+  }
   .screen-wrap img {
-    display: block; max-width: 100%; max-height: 68vh; width: auto; height: auto;
+    display: block; max-width: 100%; max-height: 64vh; width: auto; height: auto;
     cursor: crosshair; -webkit-user-drag: none;
+  }
+  .screens.paired .device-card[data-device="phone"] .screen-wrap img {
+    max-height: 58vh;
+  }
+  .screens.paired .device-card[data-device="watch"] .screen-wrap img {
+    max-height: 220px;
   }
   .ripple {
     position: absolute; width: 22px; height: 22px; margin: -11px 0 0 -11px;
@@ -126,6 +163,7 @@
       <span class="title" id="title">Android Simulator</span>
       <span class="badge" id="sim-badge" hidden></span>
     </div>
+    <select id="sim-select" aria-label="Running simulator" hidden></select>
     <select id="device-select" aria-label="Target device" hidden></select>
     <span class="status" id="status" role="status" aria-live="polite">Waiting for simulator…</span>
   </div>
@@ -147,9 +185,7 @@
   </div>
 
   <div class="stage" id="stage">
-    <div class="screen-wrap" id="screen-wrap" hidden>
-      <img id="screen" alt="Android Simulator display" draggable="false">
-    </div>
+    <div class="screens" id="screens" hidden></div>
     <div class="empty" id="empty">
       Launch an app with <code>android_simulator_launch</code> or capture a frame with
       <code>android_simulator_screenshot</code>.
@@ -180,20 +216,33 @@
   const DRAG_THRESHOLD_PX = 12;
   const LONG_PRESS_MS = 550;
   const LIVE_POLL_MS = 2000;
+  const DISCOVERY_POLL_MS = 2500;
   const MAX_EVENT_LINES = 40;
+  const DEFAULT_DEVICE_KEY = '__default__';
+
+  const queryParams = new URLSearchParams(window.location.search);
+  const rawApiBase =
+    (typeof window.__SIMULATOR_API_BASE__ === 'string' && window.__SIMULATOR_API_BASE__) ||
+    queryParams.get('apiBase') ||
+    '/api/simulators';
+  const apiBase = rawApiBase.startsWith('/') ? rawApiBase.replace(/\/+$/, '') : '/api/simulators';
+  const isHttpTransport =
+    queryParams.get('transport') === 'http' ||
+    typeof window.__SIMULATOR_API_BASE__ === 'string' ||
+    (window.parent === window && window.location.protocol.startsWith('http'));
 
   const $ = id => document.getElementById(id);
   const root = document.documentElement;
   const dot = $('dot');
   const titleEl = $('title');
   const simBadge = $('sim-badge');
+  const simSelect = $('sim-select');
   const deviceSelect = $('device-select');
   const statusEl = $('status');
   const noticeEl = $('notice');
   const noticeTitle = $('notice-title');
   const noticeBody = $('notice-body');
-  const screenWrap = $('screen-wrap');
-  const screenImg = $('screen');
+  const screensEl = $('screens');
   const emptyEl = $('empty');
   const hintEl = $('hint');
   const textForm = $('text-form');
@@ -213,14 +262,19 @@
   const metaInfo = $('meta-info');
 
   const pending = new Map();
+  const screenCards = new Map(); // deviceKey -> { card, wrap, img, dims }
   let nextId = 1;
   let initialized = false;
   let busy = false;
   let liveTimer = null;
+  let discoveryTimer = null;
   let lastHeight = 0;
+  let lastContextSummary = '';
+  let dragStart = null;
 
   const state = {
     simulatorId: null,
+    simulators: [],
     appName: null,
     device: null,
     devices: [],
@@ -231,6 +285,10 @@
     events: [],
     logs: [],
   };
+
+  if (isHttpTransport) {
+    btnAsk.hidden = true;
+  }
 
   // ---------------------------------------------------------------------------------------------
   // MCP Apps bridge (postMessage JSON-RPC 2.0)
@@ -248,6 +306,7 @@
   }
 
   function notify(method, params) {
+    if (isHttpTransport) return;
     window.parent.postMessage({ jsonrpc: '2.0', method, params }, '*');
   }
 
@@ -280,6 +339,15 @@
   });
 
   async function initializeBridge() {
+    if (isHttpTransport) {
+      initialized = true;
+      syncControls();
+      await pollHttpSimulators();
+      discoveryTimer = setInterval(() => {
+        void pollHttpSimulators();
+      }, DISCOVERY_POLL_MS);
+      return;
+    }
     try {
       const result = await request('ui/initialize', {
         appInfo: { name: 'compose-preview-simulator', version: '1' },
@@ -312,7 +380,7 @@
   }
 
   function reportSize() {
-    if (!initialized) return;
+    if (!initialized || isHttpTransport) return;
     const height = Math.ceil(document.documentElement.scrollHeight);
     if (height > 0 && Math.abs(height - lastHeight) >= 2) {
       lastHeight = height;
@@ -322,6 +390,113 @@
 
   if (typeof ResizeObserver !== 'undefined') {
     new ResizeObserver(() => reportSize()).observe(document.body);
+  }
+
+  // ---------------------------------------------------------------------------------------------
+  // Screen cards (single or paired side-by-side)
+  // ---------------------------------------------------------------------------------------------
+
+  function activeDeviceKeys() {
+    if (Array.isArray(state.devices) && state.devices.length > 0) {
+      return state.devices;
+    }
+    return [DEFAULT_DEVICE_KEY];
+  }
+
+  function isPaired() {
+    return Array.isArray(state.devices) && state.devices.length > 1;
+  }
+
+  function ensureScreenCard(deviceKey) {
+    let entry = screenCards.get(deviceKey);
+    if (entry) return entry;
+
+    const card = document.createElement('div');
+    card.className = 'device-card';
+    card.dataset.device = deviceKey;
+
+    const label = document.createElement('div');
+    label.className = 'device-label';
+    const labelName = document.createElement('span');
+    labelName.textContent = deviceKey === DEFAULT_DEVICE_KEY ? 'device' : deviceKey;
+    const dims = document.createElement('span');
+    dims.className = 'device-dims';
+    label.append(labelName, dims);
+    label.hidden = !isPaired();
+    label.addEventListener('click', () => {
+      if (deviceKey !== DEFAULT_DEVICE_KEY) {
+        selectActiveDevice(deviceKey);
+      }
+    });
+
+    const wrap = document.createElement('div');
+    wrap.className = 'screen-wrap';
+
+    const img = document.createElement('img');
+    img.alt = deviceKey === DEFAULT_DEVICE_KEY
+      ? 'Android Simulator display'
+      : `Android Simulator ${deviceKey} display`;
+    img.draggable = false;
+    img.dataset.device = deviceKey;
+
+    attachPointerHandlers(img, wrap, deviceKey);
+    img.addEventListener('load', () => {
+      if (img.naturalWidth && img.naturalHeight) {
+        dims.textContent = `${img.naturalWidth}×${img.naturalHeight}`;
+      }
+      renderDrawer();
+      reportSize();
+    });
+
+    wrap.appendChild(img);
+    card.append(label, wrap);
+    screensEl.appendChild(card);
+
+    entry = { card, label, dims, wrap, img };
+    screenCards.set(deviceKey, entry);
+    return entry;
+  }
+
+  function syncScreenCards() {
+    const keys = activeDeviceKeys();
+    const keySet = new Set(keys);
+    for (const [k, entry] of screenCards.entries()) {
+      if (!keySet.has(k)) {
+        entry.card.remove();
+        screenCards.delete(k);
+      }
+    }
+    screensEl.classList.toggle('paired', keys.length > 1);
+    for (const k of keys) {
+      const entry = ensureScreenCard(k);
+      entry.label.hidden = keys.length <= 1;
+      entry.card.classList.toggle(
+        'selected',
+        keys.length > 1 && state.device === k,
+      );
+    }
+  }
+
+  function selectActiveDevice(device) {
+    if (!device || state.device === device) return;
+    state.device = device;
+    if (deviceSelect.options.length > 0) {
+      deviceSelect.value = device;
+    }
+    syncScreenCards();
+  }
+
+  function setImageBase64(b64, device) {
+    if (!b64 || typeof b64 !== 'string') return;
+    syncScreenCards();
+    const key = (device && isPaired())
+      ? device
+      : (isPaired() ? (state.device || state.devices[0]) : DEFAULT_DEVICE_KEY);
+    const entry = ensureScreenCard(key);
+    entry.img.src = `data:image/png;base64,${b64}`;
+    screensEl.hidden = false;
+    emptyEl.hidden = true;
+    reportSize();
   }
 
   // ---------------------------------------------------------------------------------------------
@@ -344,6 +519,11 @@
     noticeEl.hidden = true;
   }
 
+  function isPermissionOrDisabledError(err) {
+    const msg = String(err?.message || err || '').toLowerCase();
+    return msg.includes('permission_denied') || msg.includes('is disabled');
+  }
+
   function syncControls() {
     const active = state.running && !busy;
     root.dataset.simulatorState = state.running ? (busy ? 'busy' : 'running') : 'idle';
@@ -358,13 +538,34 @@
     for (const btn of [btnBack, btnHome, btnLive, btnReload, btnRestart, btnStop, btnSendText, btnEnter, btnLogs]) {
       btn.disabled = !active;
     }
-    btnRefresh.disabled = !initialized || busy;
+    btnRefresh.disabled = !initialized || busy || (isHttpTransport && !state.simulatorId);
     textInput.disabled = !active;
     btnAsk.disabled = !state.running || busy;
     if (!state.running && liveTimer) {
       stopLive();
     }
     syncDevicePicker();
+    syncScreenCards();
+  }
+
+  function syncSimPicker() {
+    if (!isHttpTransport || state.simulators.length <= 1) {
+      simSelect.hidden = true;
+      return;
+    }
+    const ids = state.simulators.map(s => s.id);
+    const existing = Array.from(simSelect.options).map(o => o.value);
+    if (existing.join(',') !== ids.join(',')) {
+      simSelect.textContent = '';
+      for (const sim of state.simulators) {
+        const opt = document.createElement('option');
+        opt.value = sim.id;
+        opt.textContent = sim.apk ? `${sim.id} (${sim.apk})` : sim.id;
+        simSelect.appendChild(opt);
+      }
+    }
+    if (state.simulatorId) simSelect.value = state.simulatorId;
+    simSelect.hidden = false;
   }
 
   function syncDevicePicker() {
@@ -373,7 +574,7 @@
       deviceSelect.hidden = true;
       return;
     }
-    const current = state.device || list[0];
+    const current = state.device && list.includes(state.device) ? state.device : list[0];
     const existing = Array.from(deviceSelect.options).map(o => o.value);
     if (existing.join(',') !== list.join(',')) {
       deviceSelect.textContent = '';
@@ -387,14 +588,6 @@
     deviceSelect.value = current;
     state.device = current;
     deviceSelect.hidden = false;
-  }
-
-  function setImageBase64(b64) {
-    if (!b64 || typeof b64 !== 'string') return;
-    screenImg.src = `data:image/png;base64,${b64}`;
-    screenWrap.hidden = false;
-    emptyEl.hidden = true;
-    reportSize();
   }
 
   function appendEvents(events) {
@@ -421,14 +614,21 @@
     const details = [];
     if (state.lastPackage) details.push(state.lastPackage);
     if (state.lastActivity) details.push(state.lastActivity);
-    if (screenImg.naturalWidth && screenImg.naturalHeight) {
-      details.push(`${screenImg.naturalWidth}×${screenImg.naturalHeight}`);
+    const activeEntry = screenCards.get(
+      isPaired() ? (state.device || state.devices[0]) : DEFAULT_DEVICE_KEY,
+    );
+    if (activeEntry?.img?.naturalWidth && activeEntry?.img?.naturalHeight) {
+      details.push(`${activeEntry.img.naturalWidth}×${activeEntry.img.naturalHeight}`);
     }
     metaInfo.textContent = details.join(' · ');
   }
 
+  /**
+   * Report only explicit user-initiated interactions back to the host model context,
+   * deduplicated so repeated refreshes or passive tool results never accumulate context chips.
+   */
   function updateModelContext() {
-    if (!initialized || !state.simulatorId) return;
+    if (isHttpTransport || !initialized || !state.simulatorId) return;
     const summary = [
       `Android Simulator ${state.simulatorId} (${state.running ? 'running' : 'stopped'})`,
       state.lastPackage ? `package=${state.lastPackage}` : null,
@@ -436,6 +636,8 @@
       state.device ? `device=${state.device}` : null,
       state.lastAction ? `lastAction=${state.lastAction}` : null,
     ].filter(Boolean).join(', ');
+    if (summary === lastContextSummary) return;
+    lastContextSummary = summary;
     request('ui/update-model-context', {
       content: [{ type: 'text', text: summary }],
     }).catch(() => {});
@@ -483,7 +685,7 @@
     if (typeof target.activity === 'string') state.lastActivity = target.activity;
   }
 
-  function onToolResult(result, { fromSelf = false } = {}) {
+  function onToolResult(result, { fromSelf = false, deviceOverride = null } = {}) {
     if (!result || typeof result !== 'object') return;
     if (result.isError) {
       const text = Array.isArray(result.content)
@@ -502,7 +704,9 @@
       if (typeof meta.simulator === 'string') state.simulatorId = meta.simulator;
       if (typeof meta.apk === 'string' && meta.apk) state.appName = meta.apk;
       if (Array.isArray(meta.devices) && meta.devices.length) state.devices = meta.devices;
-      if (typeof meta.device === 'string' && meta.device) state.device = meta.device;
+      if (!deviceOverride && typeof meta.device === 'string' && meta.device) {
+        state.device = meta.device;
+      }
       if (typeof meta.running === 'boolean') state.running = meta.running;
       if (typeof meta.action === 'string') state.lastAction = meta.action;
     }
@@ -528,36 +732,137 @@
       renderDrawer();
     }
 
+    const imgDevice = deviceOverride || meta?.device || state.device;
     const png = extractPngFromResult(result);
     if (png) {
-      setImageBase64(png);
+      setImageBase64(png, imgDevice);
       setStatus(state.lastActivity ? state.lastActivity.split('.').pop() : 'Ready');
     } else if (state.running && !fromSelf && meta?.action !== 'logs') {
-      // Automatically pull a fresh screenshot after launch/command/reload/restart/update.
-      void refreshScreenshot();
+      // Quietly pull fresh screenshot(s) after launch without showing an error banner
+      // if the host disabled app-initiated screenshot calls.
+      void refreshScreenshot({ quiet: true });
     } else if (!state.running && typeof structured.stopped === 'string') {
       setStatus(`Stopped ${structured.stopped}`);
     }
 
     syncControls();
     renderDrawer();
-    updateModelContext();
   }
 
   // ---------------------------------------------------------------------------------------------
-  // Tool calls from the app back to compose-preview-mcp
+  // Tool calls (MCP Apps postMessage OR HTTP sidebar bridge)
   // ---------------------------------------------------------------------------------------------
 
-  function simArgs(extra = {}) {
+  function simArgs(extra = {}, deviceOverride = undefined) {
     const args = { ...extra };
     if (state.simulatorId) args.simulator = state.simulatorId;
-    if (state.device) args.device = state.device;
+    const targetDevice = deviceOverride !== undefined ? deviceOverride : state.device;
+    if (targetDevice) args.device = targetDevice;
     return args;
+  }
+
+  async function callToolHttp(name, args) {
+    const simId = args.simulator || state.simulatorId;
+    if (!simId) throw new Error('No simulator selected');
+    const encodedId = encodeURIComponent(simId);
+    let url = '';
+    let options = { cache: 'no-store' };
+
+    if (name === 'android_simulator_screenshot') {
+      const qs = new URLSearchParams();
+      if (args.device) qs.set('device', args.device);
+      url = `${apiBase}/${encodedId}/screenshot${qs.toString() ? `?${qs}` : ''}`;
+      options.method = 'GET';
+    } else if (name === 'android_simulator_logs') {
+      const qs = new URLSearchParams();
+      if (args.device) qs.set('device', args.device);
+      if (args.lines) qs.set('lines', String(args.lines));
+      url = `${apiBase}/${encodedId}/logs${qs.toString() ? `?${qs}` : ''}`;
+      options.method = 'GET';
+    } else {
+      const actionMap = {
+        android_simulator_command: 'command',
+        android_simulator_reload: 'reload',
+        android_simulator_restart: 'restart',
+        android_simulator_stop: 'stop',
+      };
+      const action = actionMap[name];
+      if (!action) throw new Error(`Unsupported HTTP bridge tool: ${name}`);
+      url = `${apiBase}/${encodedId}/${action}`;
+      options.method = 'POST';
+      options.headers = { 'Content-Type': 'application/json' };
+      options.body = JSON.stringify(args);
+    }
+
+    const res = await fetch(url, options);
+    const data = await res.json().catch(() => null);
+    if (!data) throw new Error(`HTTP ${res.status}`);
+    if (!res.ok && !data.isError) {
+      throw new Error(data.error || `HTTP ${res.status}`);
+    }
+    return data;
   }
 
   async function callTool(name, args) {
     if (!initialized) throw new Error('Host bridge is not initialized');
+    if (isHttpTransport) return callToolHttp(name, args);
     return request('tools/call', { name, arguments: args });
+  }
+
+  async function pollHttpSimulators() {
+    if (!isHttpTransport) return;
+    try {
+      const res = await fetch(apiBase, { cache: 'no-store' });
+      if (!res.ok) return;
+      const data = await res.json();
+      const list = Array.isArray(data?.simulators) ? data.simulators : [];
+      state.simulators = list;
+      syncSimPicker();
+
+      if (!list.length) {
+        if (state.running) {
+          state.running = false;
+          state.simulatorId = null;
+          state.devices = [];
+          state.device = null;
+          setStatus('No running simulator');
+          syncControls();
+        } else {
+          setStatus('Waiting for simulator…');
+        }
+        return;
+      }
+
+      const current = list.find(s => s.id === state.simulatorId) || list[0];
+      const changed = current.id !== state.simulatorId || !state.running;
+      state.simulatorId = current.id;
+      state.appName = current.apk || current.id;
+      state.devices = Array.isArray(current.devices) ? current.devices : [];
+      if (state.devices.length && !state.devices.includes(state.device)) {
+        state.device = state.devices[0];
+      }
+      state.running = Boolean(current.running);
+      if (current.info) extractInfoFields(current.info);
+      syncControls();
+
+      if (changed && !busy) {
+        await refreshScreenshot({ quiet: true });
+        if (!liveTimer && state.running) {
+          startLive();
+        }
+      }
+    } catch {
+      // bridge may be restarting
+    }
+  }
+
+  async function captureAllDevices() {
+    const targets = isPaired() ? state.devices : [state.device || null];
+    for (const dev of targets) {
+      const res = await callTool('android_simulator_screenshot', simArgs({}, dev));
+      if (res && !res.isError) state.running = true;
+      onToolResult(res, { fromSelf: true, deviceOverride: dev });
+    }
   }
 
   async function refreshScreenshot({ quiet = false } = {}) {
@@ -566,30 +871,35 @@
     if (!quiet) setStatus('Capturing…');
     syncControls();
     try {
-      const res = await callTool('android_simulator_screenshot', simArgs());
-      if (res && !res.isError) state.running = true;
-      onToolResult(res, { fromSelf: true });
+      await captureAllDevices();
     } catch (err) {
-      if (!quiet) showNotice('Screenshot failed', err.message);
-      setStatus('Error');
+      if (quiet && isPermissionOrDisabledError(err)) {
+        setStatus('Live view available in Simulator sidebar');
+      } else {
+        if (!quiet) showNotice('Screenshot failed', err.message);
+        setStatus('Error');
+      }
     } finally {
       busy = false;
       syncControls();
     }
   }
 
-  async function sendCommand(cmd, extra = {}, label = cmd) {
+  async function sendCommand(cmd, extra = {}, label = cmd, targetDevice = undefined) {
     if (!state.running || busy) return;
+    if (targetDevice && isPaired()) {
+      selectActiveDevice(targetDevice);
+    }
     busy = true;
     setStatus(`${label}…`);
     syncControls();
     try {
-      const res = await callTool('android_simulator_command', simArgs({ cmd, ...extra }));
-      state.lastAction = label;
-      onToolResult(res, { fromSelf: true });
+      const res = await callTool('android_simulator_command', simArgs({ cmd, ...extra }, targetDevice));
+      state.lastAction = targetDevice ? `${targetDevice}: ${label}` : label;
+      onToolResult(res, { fromSelf: true, deviceOverride: targetDevice || null });
+      updateModelContext();
       if (!res?.isError && state.running) {
-        const shot = await callTool('android_simulator_screenshot', simArgs());
-        onToolResult(shot, { fromSelf: true });
+        await captureAllDevices();
       }
     } catch (err) {
       showNotice(`${label} failed`, err.message);
@@ -609,9 +919,9 @@
       const res = await callTool(toolName, simArgs());
       state.lastAction = label;
       onToolResult(res, { fromSelf: true });
+      updateModelContext();
       if (toolName !== 'android_simulator_stop' && !res?.isError && state.running) {
-        const shot = await callTool('android_simulator_screenshot', simArgs());
-        onToolResult(shot, { fromSelf: true });
+        await captureAllDevices();
       }
     } catch (err) {
       showNotice(`${label} failed`, err.message);
@@ -641,78 +951,94 @@
   }
 
   // ---------------------------------------------------------------------------------------------
-  // Pointer gesture handling on the device screen
+  // Pointer gesture handling on each device screen
   // ---------------------------------------------------------------------------------------------
 
-  function toDevicePoint(clientX, clientY) {
-    const rect = screenImg.getBoundingClientRect();
-    if (!rect.width || !rect.height || !screenImg.naturalWidth || !screenImg.naturalHeight) {
+  function toDevicePoint(img, clientX, clientY) {
+    const rect = img.getBoundingClientRect();
+    if (!rect.width || !rect.height || !img.naturalWidth || !img.naturalHeight) {
       return null;
     }
     const relX = Math.max(0, Math.min(rect.width, clientX - rect.left));
     const relY = Math.max(0, Math.min(rect.height, clientY - rect.top));
     return {
-      x: Math.round((relX / rect.width) * screenImg.naturalWidth),
-      y: Math.round((relY / rect.height) * screenImg.naturalHeight),
+      x: Math.round((relX / rect.width) * img.naturalWidth),
+      y: Math.round((relY / rect.height) * img.naturalHeight),
       cssX: relX,
       cssY: relY,
     };
   }
 
-  function showRipple(cssX, cssY) {
+  function showRipple(wrap, cssX, cssY) {
     const el = document.createElement('div');
     el.className = 'ripple';
     el.style.left = `${cssX}px`;
     el.style.top = `${cssY}px`;
-    screenWrap.appendChild(el);
+    wrap.appendChild(el);
     setTimeout(() => el.remove(), 480);
   }
 
-  let dragStart = null;
+  function attachPointerHandlers(img, wrap, deviceKey) {
+    const targetDevice = deviceKey === DEFAULT_DEVICE_KEY ? undefined : deviceKey;
 
-  screenImg.addEventListener('pointerdown', event => {
-    if (event.button !== 0 || !state.running || busy) return;
-    const pt = toDevicePoint(event.clientX, event.clientY);
-    if (!pt) return;
-    dragStart = {
-      ...pt,
-      clientX: event.clientX,
-      clientY: event.clientY,
-      time: Date.now(),
-      shiftKey: event.shiftKey,
-      pointerId: event.pointerId,
-    };
-    screenImg.setPointerCapture(event.pointerId);
-  });
+    img.addEventListener('pointerdown', event => {
+      if (event.button !== 0 || !state.running || busy) return;
+      const pt = toDevicePoint(img, event.clientX, event.clientY);
+      if (!pt) return;
+      if (targetDevice) selectActiveDevice(targetDevice);
+      dragStart = {
+        ...pt,
+        clientX: event.clientX,
+        clientY: event.clientY,
+        time: Date.now(),
+        shiftKey: event.shiftKey,
+        pointerId: event.pointerId,
+        deviceKey,
+      };
+      img.setPointerCapture(event.pointerId);
+    });
 
-  screenImg.addEventListener('pointerup', event => {
-    if (!dragStart || event.pointerId !== dragStart.pointerId) return;
-    const start = dragStart;
-    dragStart = null;
-    const end = toDevicePoint(event.clientX, event.clientY);
-    if (!end) return;
-    const dist = Math.hypot(event.clientX - start.clientX, event.clientY - start.clientY);
-    const heldMs = Date.now() - start.time;
-    showRipple(end.cssX, end.cssY);
-    if (dist >= DRAG_THRESHOLD_PX) {
-      hintEl.textContent = `Swiped (${start.x}, ${start.y}) → (${end.x}, ${end.y})`;
-      void sendCommand(
-        'swipe',
-        { x1: start.x, y1: start.y, x2: end.x, y2: end.y, durationMs: 250 },
-        `swipe (${start.x},${start.y})→(${end.x},${end.y})`,
-      );
-    } else if (start.shiftKey || heldMs >= LONG_PRESS_MS) {
-      hintEl.textContent = `Long-pressed (${end.x}, ${end.y})`;
-      void sendCommand('longPress', { x: end.x, y: end.y }, `longPress (${end.x},${end.y})`);
-    } else {
-      hintEl.textContent = `Tapped (${end.x}, ${end.y})`;
-      void sendCommand('tap', { x: end.x, y: end.y }, `tap (${end.x},${end.y})`);
-    }
-  });
+    img.addEventListener('pointerup', event => {
+      if (!dragStart || event.pointerId !== dragStart.pointerId || dragStart.deviceKey !== deviceKey) return;
+      const start = dragStart;
+      dragStart = null;
+      const end = toDevicePoint(img, event.clientX, event.clientY);
+      if (!end) return;
+      const dist = Math.hypot(event.clientX - start.clientX, event.clientY - start.clientY);
+      const heldMs = Date.now() - start.time;
+      showRipple(wrap, end.cssX, end.cssY);
+      const prefix = targetDevice ? `[${targetDevice}] ` : '';
+      if (dist >= DRAG_THRESHOLD_PX) {
+        hintEl.textContent = `${prefix}Swiped (${start.x}, ${start.y}) → (${end.x}, ${end.y})`;
+        void sendCommand(
+          'swipe',
+          { x1: start.x, y1: start.y, x2: end.x, y2: end.y, durationMs: 250 },
+          `swipe (${start.x},${start.y})→(${end.x},${end.y})`,
+          targetDevice,
+        );
+      } else if (start.shiftKey || heldMs >= LONG_PRESS_MS) {
+        hintEl.textContent = `${prefix}Long-pressed (${end.x}, ${end.y})`;
+        void sendCommand(
+          'longPress',
+          { x: end.x, y: end.y },
+          `longPress (${end.x},${end.y})`,
+          targetDevice,
+        );
+      } else {
+        hintEl.textContent = `${prefix}Tapped (${end.x}, ${end.y})`;
+        void sendCommand(
+          'tap',
+          { x: end.x, y: end.y },
+          `tap (${end.x},${end.y})`,
+          targetDevice,
+        );
+      }
+    });
 
-  screenImg.addEventListener('pointercancel', () => {
-    dragStart = null;
-  });
+    img.addEventListener('pointercancel', () => {
+      dragStart = null;
+    });
+  }
 
   // ---------------------------------------------------------------------------------------------
   // Button handlers
@@ -757,7 +1083,7 @@
   });
 
   btnAsk.addEventListener('click', () => {
-    if (!initialized || !state.simulatorId) return;
+    if (!initialized || !state.simulatorId || isHttpTransport) return;
     const target = state.device ? ` (${state.device})` : '';
     request('ui/message', {
       role: 'user',
@@ -770,14 +1096,23 @@
     }).catch(err => showNotice('Message failed', err.message));
   });
 
-  deviceSelect.addEventListener('change', () => {
-    state.device = deviceSelect.value;
+  simSelect.addEventListener('change', () => {
+    const picked = state.simulators.find(s => s.id === simSelect.value);
+    if (!picked) return;
+    state.simulatorId = picked.id;
+    state.appName = picked.apk || picked.id;
+    state.devices = Array.isArray(picked.devices) ? picked.devices : [];
+    state.device = state.devices[0] || null;
+    state.running = Boolean(picked.running);
+    syncControls();
     void refreshScreenshot();
   });
 
-  screenImg.addEventListener('load', () => {
-    renderDrawer();
-    reportSize();
+  deviceSelect.addEventListener('change', () => {
+    selectActiveDevice(deviceSelect.value);
+    if (!isPaired()) {
+      void refreshScreenshot();
+    }
   });
 
   syncControls();

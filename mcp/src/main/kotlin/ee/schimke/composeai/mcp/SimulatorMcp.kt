@@ -86,6 +86,11 @@ class SimulatorMcp(
 ) {
 
   private val simulators = ConcurrentHashMap<String, Simulator>()
+  private val exitedSimulators =
+    object : LinkedHashMap<String, Simulator>(16, 0.75f, false) {
+      override fun removeEldestEntry(eldest: Map.Entry<String, Simulator>): Boolean =
+        size > MAX_EXITED_SIMULATORS
+    }
   private val nextId = AtomicLong(1)
 
   fun toolDefs(): List<ToolDef> =
@@ -260,6 +265,9 @@ class SimulatorMcp(
       (args["tiles"] as? JsonArray)?.forEach { tile ->
         (tile as? JsonPrimitive)?.contentOrNull?.let { addAll(listOf("--tile", it)) }
       }
+      (args["displays"] as? JsonArray)?.forEach { display ->
+        (display as? JsonPrimitive)?.contentOrNull?.let { addAll(listOf("--display", it)) }
+      }
     }
     val dirAnchor = file ?: watchfaceFile ?: installs.firstOrNull()
     val process =
@@ -282,6 +290,11 @@ class SimulatorMcp(
         process,
         devices = if (pair != null && installs.isEmpty()) PAIRED else emptySet(),
         expectedReadies = expectedReadies,
+        onExit = { exited ->
+          if (simulators.remove(id, exited)) {
+            synchronized(exitedSimulators) { exitedSimulators[id] = exited }
+          }
+        },
       )
     val ready =
       try {
@@ -389,6 +402,9 @@ class SimulatorMcp(
       put("cmd", "screenshot")
       args.string("path")?.let { put("path", it) }
       device?.let { put("device", it) }
+      args["display"]?.let { put("display", it) }
+      args.boolean("square")?.let { put("square", it) }
+      args.boolean("app")?.let { put("app", it) }
     }
     return when (val reply = simulator.send(payload, commandTimeoutMs)) {
       is Reply.Failed -> error("screenshot: ${reply.message}", simulator.drainEvents())
@@ -641,7 +657,12 @@ class SimulatorMcp(
   }
 
   private fun logs(args: JsonObject): CallToolResult {
-    val simulator = simulator(args) ?: return noSimulator()
+    val simulator =
+      simulator(args)
+        ?: args.string("simulator")?.let { id ->
+          synchronized(exitedSimulators) { exitedSimulators[id] }
+        }
+        ?: return noSimulator()
     val device = args.string("device")
     val filter = args.string("contains")
     val lines =
@@ -702,6 +723,7 @@ class SimulatorMcp(
     private val process: Process,
     val devices: Set<String> = emptySet(),
     private val expectedReadies: Int = if (devices.isEmpty()) 1 else devices.size,
+    private val onExit: (Simulator) -> Unit = {},
   ) {
     val ready = CompletableFuture<JsonObject>()
 
@@ -731,6 +753,7 @@ class SimulatorMcp(
         ready.completeExceptionally(exited)
         install.completeExceptionally(exited)
         pending.values.forEach { it.complete(Reply.Failed("${exited.message}\n${stderrTail()}")) }
+        onExit(this)
       }
       daemon("simulator-$id-stderr") {
         process.errorStream.bufferedReader().useLines { lines ->
@@ -962,7 +985,8 @@ class SimulatorMcp(
             "playServices":{"type":"string","enum":["installed","none","outdated","disabled","invalid"],"description":"Google Play services as the app's availability checks see it: installed (default, SUCCESS), or none / outdated / disabled / invalid to test the app's error paths. android_simulator_command playServices {state} changes it while the app runs."},
             "launcher":{"type":"boolean","description":"A system UI under the app. On a phone, a home screen: HOME and Back from the app's root go there, its icons reopen the app, a long press shows the app's shortcuts, and the app's widgets are placed, sized, updated and tapped there (android_simulator_command home, drawer, shortcuts, shortcut, widgets, widget, picker). On a Wear app, the watch's: a watch face, launcher, notification stream, tiles and widgets carousel and quick settings (android_simulator_command home, launcher, notifications, notification, ongoing, tiles, watchface, health, clock, weather, accel, quickSettings)."},
             "widgets":{"type":"array","items":{"type":"string"},"description":"Widget providers (a receiver class or its short name) to place on the home screen at launch: the app starts once, then the home screen shows with them. Implies launcher."},
-            "tiles":{"type":"array","items":{"type":"string"},"description":"Wear: tile or Wear Widget services (a class or its short name) in the carousel at launch. Implies launcher."}
+            "tiles":{"type":"array","items":{"type":"string"},"description":"Wear: tile or Wear Widget services (a class or its short name) in the carousel at launch. Implies launcher."},
+            "displays":{"type":"array","items":{"type":"string"},"description":"Secondary displays to attach at launch, e.g. '1280x720,name=TV'."}
           }}
           """,
         ),
@@ -1012,7 +1036,7 @@ class SimulatorMcp(
           "server whose writes arrive as gatt events; ACTION_REQUEST_ENABLE is a " +
           "bluetoothRequest event); display {size?: WxH|reset, density?: N|reset}; battery " +
           "{level?: 0..100, charging?, plugged?: ac|usb|wireless|none, powerSave?}; location " +
-          "{lat, lon, accuracy?, altitude?, bearing?, speed?}; timezone {value}; forceStop; " +
+          "{lat, lng, accuracy?, altitude?, bearing?, speed?}; timezone {value}; forceStop; " +
           "clearData; kill (the app killed in the background, its state saved through a Parcel; the " +
           "next launch or startActivity re-creates the task from it); recreate (the top activity, as " +
           "Activity.recreate()); savedState (the top activity's state: bundle JSON and base64 " +
@@ -1099,15 +1123,15 @@ class SimulatorMcp(
           {"type":"object","required":["cmd"],"properties":{
             "simulator":{"type":"string","description":"Simulator id from android_simulator_launch; optional when only one runs."},
             "device":{"type":"string","description":"With a paired or multi-app (`install`) launch: which device or package runs the command (e.g. phone, watch, watch/<pkg>, or <pkg>)."},
-            "cmd":{"type":"string","enum":["info","hierarchy","find","tap","longPress","swipe","key","back","text","launch","finish","activities","startActivity","startService","stopService","bindService","unbindService","services","broadcast","notifications","query","components","qualifiers","permissions","wait","ping","dataLayer","companion","shell","settings","logcat","files","content","network","wifi","bluetooth","display","battery","location","timezone","forceStop","clearData","kill","recreate","savedState","getprop","package","packages","screen","ambient","tilt","wake","palm","sleep","playServices","home","drawer","shortcuts","shortcut","widgets","widget","picker","launcher","notification","ongoing","tiles","watchface","clock","health","weather","accel","quickSettings","rotary","zoom"]},
+            "cmd":{"type":"string","enum":["info","hierarchy","find","tap","longPress","swipe","touch","key","back","text","launch","finish","activities","startActivity","startService","stopService","bindService","unbindService","services","broadcast","notifications","query","components","qualifiers","permissions","biometric","speech","credentials","clipboard","alarms","jobs","downloads","pick","assistant","appfunctions","wait","ping","dataLayer","companion","shell","settings","logcat","files","content","network","wifi","bluetooth","display","displays","resize","device","rotate","posture","fontScale","split","foreground","battery","location","timezone","forceStop","clearData","kill","recreate","savedState","snapshotData","getprop","package","packages","screen","ambient","tilt","wake","palm","sleep","playServices","home","drawer","shortcuts","shortcut","widgets","widget","picker","launcher","notification","ongoing","tiles","watchface","clock","health","weather","accel","quickSettings","rotary","zoom"]},
             "text":{"type":"string"},"textContains":{"type":"string"},"desc":{"type":"string"},"descContains":{"type":"string"},
             "resourceId":{"type":"string"},"cls":{"type":"string"},"clickable":{"type":"boolean"},"index":{"type":"integer"},
             "x":{"type":"number"},"y":{"type":"number"},"z":{"type":"number"},"x1":{"type":"number"},"y1":{"type":"number"},"x2":{"type":"number"},"y2":{"type":"number"},
-            "durationMs":{"type":"integer"},"steps":{"type":"integer","description":"swipe: its touch steps; health: steps today"},"stepGoal":{"type":"integer","description":"health: daily step goal (default 10000)"},"ms":{"type":"integer"},"settleMs":{"type":"integer"},
+            "durationMs":{"type":"integer"},"steps":{"type":"integer","description":"swipe: its touch steps; health: steps today"},"stepGoal":{"type":"integer","description":"health: daily step goal (default 10000)"},"ms":{"type":"integer"},"settleMs":{"type":"integer"},"until":{"type":"string","enum":["still"],"description":"wait: wait until the screen stops changing"},"quietMs":{"type":"integer","description":"wait until still: quiet window in ms (default 400)"},
             "key":{"type":["string","integer","array"]},"flat":{"type":"boolean"},"value":{"type":["string","number","boolean","object","array"]},
             "intent":{"type":"object"},"savedState":{"type":"string","description":"launch / startActivity: base64 instance state from the savedState command; a new instance is created from it."},"uri":{"type":"string"},"projection":{"type":"array","items":{"type":"string"}},
             "selection":{"type":"string"},"args":{"type":"array","items":{"type":"string"}},"sort":{"type":"string"},"limit":{"type":"integer"},
-            "policy":{"type":"string","enum":["grant","deny","accept","reject","ask"],"description":"permissions: grant|deny|ask; wifi/bluetooth request and companion: accept|reject|ask"},"grant":{"type":"array","items":{"type":"string"}},"deny":{"type":"array","items":{"type":"string"}},"reset":{"type":"boolean"},
+            "policy":{"type":"string","enum":["grant","deny","accept","reject","ask","succeed","cancel","auto"],"description":"permissions: grant|deny|ask; wifi/bluetooth/companion: accept|reject|ask; biometric: ask|succeed|cancel; speech/pick: ask|cancel; credentials: auto|ask|cancel"},"grant":{"type":"array","items":{"type":"string"}},"deny":{"type":"array","items":{"type":"string"}},"reset":{"type":"boolean"},
             "command":{"type":"string","description":"shell: an adb shell command line"},
             "op":{"type":"string"},"namespace":{"type":"string","enum":["system","secure","global"]},
             "path":{"type":"string"},"to":{"type":"string"},"from":{"type":"string"},"recursive":{"type":"boolean"},
@@ -1117,20 +1141,25 @@ class SimulatorMcp(
             "cellular":{"type":"string","enum":["5g","lte","3g","2g"]},"downKbps":{"type":"integer"},"upKbps":{"type":"integer"},
             "latencyMs":{"type":"integer"},"kbps":{"type":"integer"},"block":{"type":"array","items":{"type":"string"}},"dataSaver":{"type":"boolean"},
             "networks":{"type":"array","items":{"type":"object"}},"ssid":{"type":"string"},"bssid":{"type":"string"},"rssi":{"type":"integer"},
-            "answer":{"anyOf":[{"type":"string","enum":["accept","reject","grant","deny","dismiss","approximate","selected"]},{"type":"object","additionalProperties":{"type":"string","enum":["grant","deny","dismiss"]}}],"description":"wifi/bluetooth/companion request: accept|reject; permissions: grant|deny|dismiss|approximate|selected, or {permission: grant|deny|dismiss}"},"requestId":{"type":"integer","description":"wifi/bluetooth/permissions/companion request: which waiting request to answer (default the oldest); dataLayer reply: the app request it answers"},
+            "answer":{"anyOf":[{"type":"string","enum":["accept","reject","grant","deny","dismiss","approximate","selected","succeed","fail","cancel","negative","lockout","save","none"]},{"type":"integer"},{"type":"object"}]},"requestId":{"type":"integer","description":"wifi/bluetooth/permissions/companion/biometric/speech/credentials/pick request: which waiting request to answer (default the oldest); dataLayer reply: the app request it answers"},
+            "enrolled":{"type":"boolean","description":"biometric: whether biometrics are enrolled"},"secure":{"type":"boolean","description":"biometric: whether device has a screen lock"},
+            "cancel":{"type":"boolean","description":"speech / pick: cancel the waiting request"},"save":{"type":"object","description":"credentials: save {id, password}"},"forget":{"type":"string","description":"credentials: forget saved id"},"clear":{"type":"boolean","description":"clipboard: clear primary clip"},
+            "fire":{"type":["integer","string"],"description":"alarms: index or 'next' to fire now"},"exact":{"type":"boolean","description":"alarms: grant or revoke exact alarm permission"},"run":{"type":"integer","description":"jobs: job id to start now"},
+            "files":{"type":"array","items":{"type":"string"},"description":"pick: device or host file paths"},"invoke":{"type":"string","description":"assistant: App Actions capability to invoke"},"params":{"type":"object","description":"assistant / appfunctions: parameters JSON"},"execute":{"type":"string","description":"appfunctions: function id to execute"},"service":{"type":"string","description":"appfunctions: service class name"},
+            "display":{"type":["integer","string"],"description":"Target display id (or 'all' for screenshot)"},"widthDp":{"type":"integer"},"heightDp":{"type":"integer"},"posture":{"type":"string"},"orientation":{"type":"string","enum":["vertical","horizontal"]},"hingeDp":{"type":"integer"},"qualifiers":{"type":"string"},
             "address":{"type":"string","description":"bluetooth: a device address, AA:BB:CC:DD:EE:FF"},
             "serviceUuids":{"type":"array","items":{"type":"string"}},"serviceData":{"type":"object"},"manufacturerData":{"type":"object"},
             "txPower":{"type":"integer"},"connectable":{"type":"boolean"},"gatt":{"type":"object"},"characteristic":{"type":"string"},"size":{"type":"string"},"density":{"type":["string","integer"]},
             "name":{"type":"string"},"package":{"type":"string"},"holdMs":{"type":"integer"},"longPress":{"type":"boolean"},
-            "action":{"type":"string","enum":["connect","disconnect","capabilities","put","delete","message","request","reply","config","channelOpen","channelWrite","channelEof","channelClose","add","remove","resize","update","reconfigure","pin","open","close","list"],"description":"dataLayer: what the peer you play does. widget: add|remove|resize|update|reconfigure|pin. drawer / picker: open|close. shortcuts: list|open."},
+            "action":{"type":"string","enum":["connect","disconnect","capabilities","put","delete","message","request","reply","config","channelOpen","channelWrite","channelEof","channelClose","add","remove","resize","update","reconfigure","pin","open","close","list","change","off","down","move","up"],"description":"dataLayer, widget, drawer, picker, shortcuts, displays, split, touch action"},
             "provider":{"type":"string","description":"widget add: the widget provider, a receiver class or its short name"},"widgetId":{"type":"integer","description":"widget: which placed widget (id is the command's own)"},
             "cellX":{"type":"integer"},"cellY":{"type":"integer"},"spanX":{"type":"integer"},"spanY":{"type":"integer"},"configure":{"type":"boolean","description":"widget add: run the configure activity even when the provider makes it optional"},
             "shortcutId":{"type":"string","description":"shortcut: which app shortcut to open"},
-            "component":{"type":"string","description":"tiles / launcher / watchface: a tile, widget, activity, watch face or complication data source by class or short name"},"dataSource":{"type":"string","description":"watchface complication: alias for component"},"watchface":{"type":"string","description":"watchface complication: the watch face whose slot it fills (pkg/class); the app's own face is set if needed, any other means the demo face"},"slot":{"type":"integer","description":"watchface complication / tap: the watch face's complication slot id"},"type":{"type":["integer","string"],"description":"watchface complication: the wire ComplicationType (3 / SHORT_TEXT, 4 / LONG_TEXT, 5 / RANGED_VALUE, 6 / MONOCHROMATIC_IMAGE, 7 / SMALL_IMAGE, 13 / GOAL_PROGRESS)"},"title":{"type":"string"},"min":{"type":"number"},"max":{"type":"number"},"hasMonochromaticImage":{"type":"boolean"},"hasSmallImage":{"type":"boolean"},"config":{"type":"object","description":"watchface config: map of user style / configuration setting id to option id or boolean"},"flavor":{"type":"string","description":"watchface config: preset flavor id to apply"},"apk":{"type":"string","description":"watchface push: path to a WFF watch face APK to install into Watch Face Push"},"token":{"type":"string","description":"watchface push: validation token"},"activate":{"type":"boolean","description":"watchface push: set the pushed face active immediately"},"slotId":{"type":"string","description":"watchface push / removePush: pushed slot id"},"themeFromWatchface":{"type":"boolean","description":"watchface theme: enable or disable dynamic Material 3 system colors derived from the active watch face"},"label":{"type":"string","description":"launcher: an app by its label"},
+            "component":{"type":"string","description":"tiles / launcher / watchface: a tile, widget, activity, watch face or complication data source by class or short name"},"dataSource":{"type":"string","description":"watchface complication: alias for component"},"watchface":{"type":"string","description":"watchface complication: the watch face whose slot it fills (pkg/class); the app's own face is set if needed, any other means the demo face"},"slot":{"type":"integer","description":"watchface complication / tap: the watch face's complication slot id"},"type":{"type":["integer","string"],"description":"watchface complication / displays: ComplicationType or display type (external|virtual|rear)"},"title":{"type":"string"},"min":{"type":"number"},"max":{"type":"number"},"hasMonochromaticImage":{"type":"boolean"},"hasSmallImage":{"type":"boolean"},"config":{"type":"object","description":"watchface config: map of user style / configuration setting id to option id or boolean"},"flavor":{"type":"string","description":"watchface config: preset flavor id to apply"},"apk":{"type":"string","description":"watchface push: path to a WFF watch face APK to install into Watch Face Push"},"token":{"type":"string","description":"watchface push: validation token"},"activate":{"type":"boolean","description":"watchface push: set the pushed face active immediately"},"slotId":{"type":"string","description":"watchface push / removePush: pushed slot id"},"themeFromWatchface":{"type":"boolean","description":"watchface theme: enable or disable dynamic Material 3 system colors derived from the active watch face"},"label":{"type":"string","description":"launcher / clipboard: an app label or clip label"},
             "time":{"type":"string","description":"clock: ISO-8601 instant or HH:mm[:ss] wall clock"},"timeMillis":{"type":"integer","description":"clock / watchface render: epoch milliseconds"},"timeZone":{"type":"string","description":"clock: IANA time zone id, e.g. America/New_York"},"is24Hour":{"type":"boolean","description":"clock: 24-hour format toggle"},"frozen":{"type":"boolean","description":"clock: freeze simulated watch clock at pinned instant"},"rate":{"type":"number","description":"clock: time progression multiplier when not frozen (1.0 real-time, 60.0 one minute per second)"},"dstMode":{"type":"boolean"},
             "available":{"type":"boolean","description":"weather: whether weather data is available"},"condition":{"type":["string","integer"],"description":"weather: CLEAR_DAY, CLOUDY, FOG, HEAVY_RAIN, PARTLY_CLOUDY, RAIN, SNOW, THUNDERSTORM, WINDY, etc. (or WFF condition code 0..15)"},"temperature":{"type":"number"},"temperatureHigh":{"type":"number"},"temperatureLow":{"type":"number"},"temperatureUnit":{"type":"string","enum":["CELSIUS","FAHRENHEIT","C","F"]},"chanceOfPrecipitation":{"type":"integer"},"uvIndex":{"type":"integer"},"hours":{"type":"array","items":{"type":"object"},"description":"weather: hourly forecast entries"},"days":{"type":"array","items":{"type":"object"},"description":"weather: daily forecast entries"},
             "level":{"type":"integer","description":"battery: percentage 0..100"},"charging":{"type":"boolean","description":"battery: charging state"},"plugged":{"type":"string","enum":["ac","usb","wireless","none"]},"powerSave":{"type":"boolean"},
-            "lat":{"type":"number"},"lon":{"type":"number"},"accuracy":{"type":"number"},"altitude":{"type":"number"},"bearing":{"type":"number"},"speed":{"type":"number"},
+            "lat":{"type":"number"},"lng":{"type":"number"},"lon":{"type":"number","description":"Alias for lng"},"accuracy":{"type":"number"},"altitude":{"type":"number"},"bearing":{"type":"number"},"speed":{"type":"number"},
             "heartRate":{"type":"number"},"heartRateAccuracy":{"type":"string","enum":["unknown","no_contact","unreliable","low","medium","high"]},"distanceMeters":{"type":"number"},"calories":{"type":"number"},"floors":{"type":"number"},
             "delta":{"type":"number","description":"rotary: AXIS_SCROLL per event; negative scrolls down"},"count":{"type":"integer"},"intervalMs":{"type":"integer"},"activity":{"type":"string","description":"shortcuts: the launcher activity whose shortcuts to list or show"},
             "node":{"type":"string","description":"dataLayer: the peer node id (connect names a new one)"},"nearby":{"type":"boolean"},"capabilities":{"type":"array","items":{"type":"string"}},
@@ -1158,7 +1187,10 @@ class SimulatorMcp(
           {"type":"object","properties":{
             "simulator":{"type":"string","description":"Simulator id; optional when only one runs."},
             "path":{"type":"string","description":"Also write the PNG here; the image is then not inlined."},
-            "device":{"type":"string","description":"With a paired or multi-app launch: which device's display (default phone/primary)."}
+            "device":{"type":"string","description":"With a paired or multi-app launch: which device's display (default phone/primary)."},
+            "display":{"type":["integer","string"],"description":"Target display id, or 'all' to write one per display."},
+            "square":{"type":"boolean","description":"On a round Wear display, keep the square corners instead of cropping to the circle."},
+            "app":{"type":"boolean","description":"On split screen, capture only this app's half."}
           }}
           """,
         ),
@@ -1454,8 +1486,8 @@ class SimulatorMcp(
       if (!finished) process.destroyForcibly()
       AdbRun(
         exitCode = if (finished) process.exitValue() else -1,
-        stdout = stdout.get(5, TimeUnit.SECONDS),
-        stderr = stderr.get(5, TimeUnit.SECONDS),
+        stdout = runCatching { stdout.get(5, TimeUnit.SECONDS) }.getOrElse { ByteArray(0) },
+        stderr = runCatching { stderr.get(5, TimeUnit.SECONDS) }.getOrElse { "" },
         timedOut = !finished,
       )
     }
@@ -1504,6 +1536,7 @@ class SimulatorMcp(
     private const val DEFAULT_LOG_LINES = 100
     private const val STDERR_REPORTED = 40
     private const val MAX_EVENTS = 200
+    private const val MAX_EXITED_SIMULATORS = 8
     private const val EXIT_WAIT_MS = 5_000L
 
     /**

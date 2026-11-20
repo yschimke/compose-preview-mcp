@@ -1192,4 +1192,100 @@ class SimulatorMcpTest {
     assertThat(stopMeta["action"]!!.jsonPrimitive.content).isEqualTo("stop")
     assertThat(stopMeta["running"]!!.jsonPrimitive.boolean).isFalse()
   }
+
+  @Test
+  fun `command schema includes synced commands, lng, and screenshot options`() {
+    val command = mcp.toolDefs().single { it.name == SimulatorMcp.COMMAND }
+    val properties = command.inputSchema.jsonObject["properties"]!!.jsonObject
+    val cmds = properties["cmd"]!!.jsonObject["enum"]!!.jsonArray.map { it.jsonPrimitive.content }
+    assertThat(cmds)
+      .containsAtLeast(
+        "biometric",
+        "speech",
+        "credentials",
+        "clipboard",
+        "alarms",
+        "jobs",
+        "downloads",
+        "pick",
+        "assistant",
+        "appfunctions",
+        "resize",
+        "device",
+        "rotate",
+        "posture",
+        "fontScale",
+        "displays",
+        "split",
+        "foreground",
+        "touch",
+        "snapshotData",
+      )
+    assertThat(properties.keys).containsAtLeast("lng", "until", "quietMs", "display")
+
+    val screenshot = mcp.toolDefs().single { it.name == SimulatorMcp.SCREENSHOT }
+    val shotProps = screenshot.inputSchema.jsonObject["properties"]!!.jsonObject
+    assertThat(shotProps.keys).containsAtLeast("display", "square", "app")
+  }
+
+  @Test
+  fun `launch forwards displays, evicts exited simulators, and preserves crash logs by id`() {
+    val crashing =
+      SimulatorMcp(
+        start = { args, _ ->
+          started += args
+          ProcessBuilder(
+              "bash",
+              "-c",
+              """
+              echo "fatal crash stacktrace" >&2
+              echo '{"event":"ready","package":"com.example","width":540,"height":960}'
+              exit 1
+              """
+                .trimIndent(),
+            )
+            .start()
+        },
+        readyTimeoutMs = 10_000,
+        commandTimeoutMs = 10_000,
+      )
+    try {
+      val first = runBlocking {
+        crashing.handle(
+          SimulatorMcp.LAUNCH,
+          buildJsonObject {
+            put("apk", apk().path)
+            put("displays", buildJsonArray { add("1280x720,name=TV") })
+          },
+        )!!
+      }
+      assertThat(first.isError).isNull()
+      val simId = first.structuredContent!!["simulator"]!!.jsonPrimitive.content
+      assertThat(started.last()).containsAtLeast("--display", "1280x720,name=TV").inOrder()
+
+      // Wait briefly for the exited child's stdout reader to evict it from active auto-selection.
+      val deadline = System.currentTimeMillis() + 5_000
+      while (true) {
+        val second = runBlocking {
+          crashing.handle(SimulatorMcp.COMMAND, buildJsonObject { put("cmd", "ping") })!!
+        }
+        val text = (second.content.first() as ContentBlock.Text).text
+        if (text.contains("No simulator is running") || System.currentTimeMillis() > deadline) {
+          assertThat(text).contains("No simulator is running")
+          break
+        }
+        Thread.sleep(50)
+      }
+
+      // Explicit-ID log retrieval still surfaces the crash diagnostics.
+      val logs = runBlocking {
+        crashing.handle(SimulatorMcp.LOGS, buildJsonObject { put("simulator", simId) })!!
+      }
+      assertThat(logs.isError).isNull()
+      assertThat((logs.content.first() as ContentBlock.Text).text)
+        .contains("fatal crash stacktrace")
+    } finally {
+      crashing.shutdown()
+    }
+  }
 }

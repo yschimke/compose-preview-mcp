@@ -1,0 +1,786 @@
+<!doctype html>
+<html lang="en" data-simulator-state="idle">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Android Simulator</title>
+<!--
+  Interactive Android Simulator MCP App (ui://compose-preview/simulator).
+
+  Displays the live screen of an Android app running in Robolectric's simulator
+  (`android_simulator_*` tools in compose-preview-mcp) and lets the user tap,
+  long-press, swipe, type text, press Back/Home, reload edits, restart, stop,
+  and inspect logs/events directly inside any MCP Apps host.
+-->
+<style>
+  :root {
+    color-scheme: light dark;
+    font: 13px/1.4 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    --fg: var(--color-text-primary, #1b1b1f);
+    --fg-2: var(--color-text-secondary, #5f6168);
+    --bg: var(--color-background-primary, #ffffff);
+    --bg-2: var(--color-background-secondary, #f4f4f7);
+    --border: var(--color-border, #d8d8dd);
+    --danger: var(--color-text-danger, #c5221f);
+    --danger-bg: var(--color-background-danger, #fce8e6);
+    --accent: #2e7d32;
+    --accent-fg: #ffffff;
+    color: var(--fg);
+    background: var(--bg);
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --fg: var(--color-text-primary, #e6e6ea);
+    --fg-2: var(--color-text-secondary, #a4a6ad);
+    --bg: var(--color-background-primary, #17181b);
+    --bg-2: var(--color-background-secondary, #222328);
+    --border: var(--color-border, #3a3c42);
+    --danger: var(--color-text-danger, #f28b82);
+    --danger-bg: var(--color-background-danger, #3c1f1d);
+    --accent: #3ddc84;
+    --accent-fg: #0b1f13;
+  }
+  :root[data-theme="light"] { color-scheme: light; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg); }
+  .app { padding: 8px; display: grid; gap: 8px; }
+  .bar { display: flex; flex-wrap: wrap; gap: 6px 8px; align-items: center; min-width: 0; }
+  .title-group { display: flex; align-items: center; gap: 6px; min-width: 0; flex: 1 1 10em; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--fg-2); flex: none; }
+  .dot.running { background: var(--accent); }
+  .dot.error { background: var(--danger); }
+  .title { font-weight: 650; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .badge {
+    font-size: 11px; padding: 1px 6px; border-radius: 999px;
+    border: 1px solid var(--border); background: var(--bg-2); color: var(--fg-2);
+    white-space: nowrap;
+  }
+  .status { color: var(--fg-2); font-size: 12px; white-space: nowrap; }
+  button, select, input { font: inherit; color: inherit; }
+  button, select {
+    font-size: 12px; padding: 4px 9px; border-radius: 6px;
+    border: 1px solid var(--border); background: var(--bg-2); cursor: pointer;
+  }
+  button:hover:not(:disabled) { filter: brightness(0.96); }
+  :root[data-theme="dark"] button:hover:not(:disabled) { filter: brightness(1.12); }
+  button:disabled { opacity: 0.48; cursor: default; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-fg); font-weight: 600; }
+  button.active { border-color: var(--accent); color: var(--accent); }
+  button.danger { color: var(--danger); }
+  .controls { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+  .text-row { display: flex; gap: 6px; align-items: center; }
+  .text-row input[type="text"] {
+    flex: 1 1 auto; min-width: 0; padding: 4px 8px; border-radius: 6px;
+    border: 1px solid var(--border); background: var(--bg);
+  }
+  .stage {
+    border: 1px solid var(--border); border-radius: 10px; background: var(--bg-2);
+    display: grid; place-items: center; min-height: 180px; padding: 10px;
+    overflow: auto; position: relative;
+  }
+  .screen-wrap {
+    position: relative; display: inline-block; line-height: 0;
+    border-radius: 12px; overflow: hidden;
+    box-shadow: 0 2px 12px rgba(0, 0, 0, 0.18);
+    border: 1px solid var(--border);
+    user-select: none; touch-action: none;
+  }
+  .screen-wrap[hidden] { display: none; }
+  .screen-wrap img {
+    display: block; max-width: 100%; max-height: 68vh; width: auto; height: auto;
+    cursor: crosshair; -webkit-user-drag: none;
+  }
+  .ripple {
+    position: absolute; width: 22px; height: 22px; margin: -11px 0 0 -11px;
+    border-radius: 50%; border: 2px solid var(--accent);
+    background: rgba(61, 220, 132, 0.25); pointer-events: none;
+    animation: sim-ripple 0.45s ease-out forwards;
+  }
+  @keyframes sim-ripple {
+    from { transform: scale(0.4); opacity: 1; }
+    to { transform: scale(1.8); opacity: 0; }
+  }
+  .notice {
+    width: 100%; padding: 8px 10px; border-radius: 0 8px 8px 0;
+    border-left: 4px solid var(--danger); background: var(--danger-bg);
+  }
+  .notice[hidden] { display: none; }
+  .notice strong { color: var(--danger); display: block; }
+  .notice p { margin: 3px 0 0; overflow-wrap: anywhere; }
+  .empty { color: var(--fg-2); text-align: center; padding: 20px 12px; }
+  .empty code { font-size: 12px; }
+  .hint { color: var(--fg-2); font-size: 11px; }
+  details.drawer { border: 1px solid var(--border); border-radius: 8px; padding: 6px 10px; }
+  details.drawer summary { cursor: pointer; font-weight: 600; font-size: 12px; }
+  .drawer-bar { display: flex; gap: 6px; align-items: center; margin: 6px 0; }
+  pre.log-view {
+    margin: 0; padding: 8px; border-radius: 6px; border: 1px solid var(--border);
+    background: var(--bg-2); font: 11px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
+    max-height: 200px; overflow: auto; white-space: pre-wrap; word-break: break-word;
+  }
+</style>
+<body>
+<div class="app">
+  <div class="bar">
+    <div class="title-group">
+      <span class="dot" id="dot" aria-hidden="true"></span>
+      <span class="title" id="title">Android Simulator</span>
+      <span class="badge" id="sim-badge" hidden></span>
+    </div>
+    <select id="device-select" aria-label="Target device" hidden></select>
+    <span class="status" id="status" role="status" aria-live="polite">Waiting for simulator…</span>
+  </div>
+
+  <div class="controls">
+    <button type="button" id="btn-back" disabled>Back</button>
+    <button type="button" id="btn-home" disabled>Home</button>
+    <button type="button" id="btn-refresh" disabled>Refresh</button>
+    <button type="button" id="btn-live" disabled aria-pressed="false">Live</button>
+    <button type="button" id="btn-reload" disabled>Reload</button>
+    <button type="button" id="btn-restart" disabled>Restart</button>
+    <button type="button" id="btn-stop" class="danger" disabled>Stop</button>
+    <button type="button" id="btn-ask" class="primary" disabled>Ask agent</button>
+  </div>
+
+  <div class="notice" id="notice" hidden>
+    <strong id="notice-title">Simulator error</strong>
+    <p id="notice-body"></p>
+  </div>
+
+  <div class="stage" id="stage">
+    <div class="screen-wrap" id="screen-wrap" hidden>
+      <img id="screen" alt="Android Simulator display" draggable="false">
+    </div>
+    <div class="empty" id="empty">
+      Launch an app with <code>android_simulator_launch</code> or capture a frame with
+      <code>android_simulator_screenshot</code>.
+    </div>
+  </div>
+
+  <form class="text-row" id="text-form">
+    <input type="text" id="text-input" placeholder="Type text into focused field…" disabled aria-label="Text to send to simulator">
+    <button type="submit" id="btn-send-text" disabled>Send</button>
+    <button type="button" id="btn-enter" disabled>Enter</button>
+  </form>
+  <div class="hint" id="hint">Click to tap · Drag to swipe · Shift+click or hold to long-press</div>
+
+  <details class="drawer" id="drawer">
+    <summary id="drawer-summary">Events &amp; logs</summary>
+    <div class="drawer-bar">
+      <button type="button" id="btn-logs" disabled>Load logs</button>
+      <span class="status" id="meta-info"></span>
+    </div>
+    <pre class="log-view" id="log-view">No events yet.</pre>
+  </details>
+</div>
+<script>
+(() => {
+  'use strict';
+  const REQUEST_TIMEOUT_MS = 60000;
+  const RESULT_META = 'compose-preview/simulator';
+  const DRAG_THRESHOLD_PX = 12;
+  const LONG_PRESS_MS = 550;
+  const LIVE_POLL_MS = 2000;
+  const MAX_EVENT_LINES = 40;
+
+  const $ = id => document.getElementById(id);
+  const root = document.documentElement;
+  const dot = $('dot');
+  const titleEl = $('title');
+  const simBadge = $('sim-badge');
+  const deviceSelect = $('device-select');
+  const statusEl = $('status');
+  const noticeEl = $('notice');
+  const noticeTitle = $('notice-title');
+  const noticeBody = $('notice-body');
+  const screenWrap = $('screen-wrap');
+  const screenImg = $('screen');
+  const emptyEl = $('empty');
+  const hintEl = $('hint');
+  const textForm = $('text-form');
+  const textInput = $('text-input');
+  const btnBack = $('btn-back');
+  const btnHome = $('btn-home');
+  const btnRefresh = $('btn-refresh');
+  const btnLive = $('btn-live');
+  const btnReload = $('btn-reload');
+  const btnRestart = $('btn-restart');
+  const btnStop = $('btn-stop');
+  const btnAsk = $('btn-ask');
+  const btnSendText = $('btn-send-text');
+  const btnEnter = $('btn-enter');
+  const btnLogs = $('btn-logs');
+  const logView = $('log-view');
+  const metaInfo = $('meta-info');
+
+  const pending = new Map();
+  let nextId = 1;
+  let initialized = false;
+  let busy = false;
+  let liveTimer = null;
+  let lastHeight = 0;
+
+  const state = {
+    simulatorId: null,
+    appName: null,
+    device: null,
+    devices: [],
+    running: false,
+    lastPackage: null,
+    lastActivity: null,
+    lastAction: null,
+    events: [],
+    logs: [],
+  };
+
+  // ---------------------------------------------------------------------------------------------
+  // MCP Apps bridge (postMessage JSON-RPC 2.0)
+  // ---------------------------------------------------------------------------------------------
+
+  function request(method, params, timeoutMs = REQUEST_TIMEOUT_MS) {
+    const id = nextId++;
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        if (pending.delete(id)) reject(new Error(`${method} timed out after ${timeoutMs} ms`));
+      }, timeoutMs);
+      pending.set(id, { resolve, reject, timer });
+      window.parent.postMessage({ jsonrpc: '2.0', id, method, params }, '*');
+    });
+  }
+
+  function notify(method, params) {
+    window.parent.postMessage({ jsonrpc: '2.0', method, params }, '*');
+  }
+
+  window.addEventListener('message', event => {
+    if (event.source !== window.parent) return;
+    const message = event.data;
+    if (!message || message.jsonrpc !== '2.0') return;
+    if (message.id != null && !message.method) {
+      const waiter = pending.get(message.id);
+      if (!waiter) return;
+      pending.delete(message.id);
+      clearTimeout(waiter.timer);
+      if (message.error) waiter.reject(new Error(message.error.message || 'request failed'));
+      else waiter.resolve(message.result);
+      return;
+    }
+    switch (message.method) {
+      case 'ui/notifications/tool-input':
+        onToolInput(message.params?.arguments || {});
+        break;
+      case 'ui/notifications/tool-result':
+        onToolResult(message.params?.result || message.params || {});
+        break;
+      case 'ui/notifications/host-context-changed':
+        applyHostContext(message.params || {});
+        break;
+      default:
+        break;
+    }
+  });
+
+  async function initializeBridge() {
+    try {
+      const result = await request('ui/initialize', {
+        appInfo: { name: 'compose-preview-simulator', version: '1' },
+        appCapabilities: {},
+        protocolVersion: '2026-01-26',
+      });
+      initialized = true;
+      applyHostContext(result?.hostContext || {});
+      notify('ui/notifications/initialized', {});
+      syncControls();
+      reportSize();
+    } catch (err) {
+      setStatus(`Bridge unavailable: ${err.message}`);
+    }
+  }
+
+  function applyHostContext(context) {
+    const theme = context?.theme;
+    if (theme === 'dark' || theme === 'light') {
+      root.dataset.theme = theme;
+    }
+    const vars = context?.styles?.variables;
+    if (vars && typeof vars === 'object') {
+      for (const [k, v] of Object.entries(vars)) {
+        if (typeof k === 'string' && k.startsWith('--') && typeof v === 'string') {
+          root.style.setProperty(k, v);
+        }
+      }
+    }
+  }
+
+  function reportSize() {
+    if (!initialized) return;
+    const height = Math.ceil(document.documentElement.scrollHeight);
+    if (height > 0 && Math.abs(height - lastHeight) >= 2) {
+      lastHeight = height;
+      notify('ui/notifications/size-changed', { height });
+    }
+  }
+
+  if (typeof ResizeObserver !== 'undefined') {
+    new ResizeObserver(() => reportSize()).observe(document.body);
+  }
+
+  // ---------------------------------------------------------------------------------------------
+  // UI state helpers
+  // ---------------------------------------------------------------------------------------------
+
+  function setStatus(text) {
+    statusEl.textContent = text;
+  }
+
+  function showNotice(title, body) {
+    noticeTitle.textContent = title;
+    noticeBody.textContent = body;
+    noticeEl.hidden = false;
+    dot.className = 'dot error';
+    reportSize();
+  }
+
+  function clearNotice() {
+    noticeEl.hidden = true;
+  }
+
+  function syncControls() {
+    const active = state.running && !busy;
+    root.dataset.simulatorState = state.running ? (busy ? 'busy' : 'running') : 'idle';
+    dot.className = state.running ? 'dot running' : 'dot';
+    titleEl.textContent = state.appName || state.lastPackage || 'Android Simulator';
+    if (state.simulatorId) {
+      simBadge.textContent = state.simulatorId;
+      simBadge.hidden = false;
+    } else {
+      simBadge.hidden = true;
+    }
+    for (const btn of [btnBack, btnHome, btnLive, btnReload, btnRestart, btnStop, btnSendText, btnEnter, btnLogs]) {
+      btn.disabled = !active;
+    }
+    btnRefresh.disabled = !initialized || busy;
+    textInput.disabled = !active;
+    btnAsk.disabled = !state.running || busy;
+    if (!state.running && liveTimer) {
+      stopLive();
+    }
+    syncDevicePicker();
+  }
+
+  function syncDevicePicker() {
+    const list = state.devices;
+    if (!Array.isArray(list) || list.length <= 1) {
+      deviceSelect.hidden = true;
+      return;
+    }
+    const current = state.device || list[0];
+    const existing = Array.from(deviceSelect.options).map(o => o.value);
+    if (existing.join(',') !== list.join(',')) {
+      deviceSelect.textContent = '';
+      for (const dev of list) {
+        const opt = document.createElement('option');
+        opt.value = dev;
+        opt.textContent = dev;
+        deviceSelect.appendChild(opt);
+      }
+    }
+    deviceSelect.value = current;
+    state.device = current;
+    deviceSelect.hidden = false;
+  }
+
+  function setImageBase64(b64) {
+    if (!b64 || typeof b64 !== 'string') return;
+    screenImg.src = `data:image/png;base64,${b64}`;
+    screenWrap.hidden = false;
+    emptyEl.hidden = true;
+    reportSize();
+  }
+
+  function appendEvents(events) {
+    if (!Array.isArray(events) || !events.length) return;
+    for (const evt of events) {
+      const text = typeof evt === 'string' ? evt : JSON.stringify(evt);
+      state.events.push(text);
+    }
+    if (state.events.length > MAX_EVENT_LINES) {
+      state.events = state.events.slice(-MAX_EVENT_LINES);
+    }
+    renderDrawer();
+  }
+
+  function renderDrawer() {
+    const parts = [];
+    if (state.events.length) {
+      parts.push('--- Events ---', ...state.events);
+    }
+    if (state.logs.length) {
+      parts.push('--- Logs ---', ...state.logs);
+    }
+    logView.textContent = parts.length ? parts.join('\n') : 'No events yet.';
+    const details = [];
+    if (state.lastPackage) details.push(state.lastPackage);
+    if (state.lastActivity) details.push(state.lastActivity);
+    if (screenImg.naturalWidth && screenImg.naturalHeight) {
+      details.push(`${screenImg.naturalWidth}×${screenImg.naturalHeight}`);
+    }
+    metaInfo.textContent = details.join(' · ');
+  }
+
+  function updateModelContext() {
+    if (!initialized || !state.simulatorId) return;
+    const summary = [
+      `Android Simulator ${state.simulatorId} (${state.running ? 'running' : 'stopped'})`,
+      state.lastPackage ? `package=${state.lastPackage}` : null,
+      state.lastActivity ? `activity=${state.lastActivity}` : null,
+      state.device ? `device=${state.device}` : null,
+      state.lastAction ? `lastAction=${state.lastAction}` : null,
+    ].filter(Boolean).join(', ');
+    request('ui/update-model-context', {
+      content: [{ type: 'text', text: summary }],
+    }).catch(() => {});
+  }
+
+  // ---------------------------------------------------------------------------------------------
+  // Tool input & result handling
+  // ---------------------------------------------------------------------------------------------
+
+  function onToolInput(args) {
+    if (!args || typeof args !== 'object') return;
+    if (typeof args.simulator === 'string' && args.simulator) {
+      state.simulatorId = args.simulator;
+    }
+    if (typeof args.device === 'string' && args.device) {
+      state.device = args.device;
+    }
+    if (typeof args.cmd === 'string') {
+      setStatus(`Running ${args.cmd}…`);
+    }
+  }
+
+  function extractPngFromResult(result) {
+    const meta = result?._meta?.[RESULT_META];
+    if (meta && typeof meta.pngBase64 === 'string' && meta.pngBase64) {
+      return meta.pngBase64;
+    }
+    const content = result?.content;
+    if (Array.isArray(content)) {
+      for (const block of content) {
+        if (block && block.type === 'image' && typeof block.data === 'string' && block.data) {
+          return block.data;
+        }
+      }
+    }
+    return null;
+  }
+
+  function extractInfoFields(info) {
+    if (!info || typeof info !== 'object') return;
+    const target = state.device && info[state.device] && typeof info[state.device] === 'object'
+      ? info[state.device]
+      : info;
+    if (typeof target.package === 'string') state.lastPackage = target.package;
+    if (typeof target.activity === 'string') state.lastActivity = target.activity;
+  }
+
+  function onToolResult(result, { fromSelf = false } = {}) {
+    if (!result || typeof result !== 'object') return;
+    if (result.isError) {
+      const text = Array.isArray(result.content)
+        ? result.content.filter(b => b?.type === 'text').map(b => b.text).join('\n')
+        : 'Command failed.';
+      showNotice('Simulator error', text || 'Command failed.');
+      setStatus('Error');
+      syncControls();
+      return;
+    }
+    clearNotice();
+    const meta = result._meta?.[RESULT_META];
+    const structured = result.structuredContent || {};
+
+    if (meta && typeof meta === 'object') {
+      if (typeof meta.simulator === 'string') state.simulatorId = meta.simulator;
+      if (typeof meta.apk === 'string' && meta.apk) state.appName = meta.apk;
+      if (Array.isArray(meta.devices) && meta.devices.length) state.devices = meta.devices;
+      if (typeof meta.device === 'string' && meta.device) state.device = meta.device;
+      if (typeof meta.running === 'boolean') state.running = meta.running;
+      if (typeof meta.action === 'string') state.lastAction = meta.action;
+    }
+    if (typeof structured.simulator === 'string') {
+      state.simulatorId = structured.simulator;
+      state.running = true;
+    }
+    if (typeof structured.stopped === 'string') {
+      state.running = false;
+      setStatus(`Stopped ${structured.stopped}`);
+    }
+    if (structured.info) {
+      extractInfoFields(structured.info);
+    }
+    if (structured.result && typeof structured.result === 'object') {
+      extractInfoFields(structured.result);
+    }
+    if (Array.isArray(structured.events)) {
+      appendEvents(structured.events);
+    }
+    if (Array.isArray(structured.lines)) {
+      state.logs = structured.lines;
+      renderDrawer();
+    }
+
+    const png = extractPngFromResult(result);
+    if (png) {
+      setImageBase64(png);
+      setStatus(state.lastActivity ? state.lastActivity.split('.').pop() : 'Ready');
+    } else if (state.running && !fromSelf && meta?.action !== 'logs') {
+      // Automatically pull a fresh screenshot after launch/command/reload/restart/update.
+      void refreshScreenshot();
+    } else if (!state.running && typeof structured.stopped === 'string') {
+      setStatus(`Stopped ${structured.stopped}`);
+    }
+
+    syncControls();
+    renderDrawer();
+    updateModelContext();
+  }
+
+  // ---------------------------------------------------------------------------------------------
+  // Tool calls from the app back to compose-preview-mcp
+  // ---------------------------------------------------------------------------------------------
+
+  function simArgs(extra = {}) {
+    const args = { ...extra };
+    if (state.simulatorId) args.simulator = state.simulatorId;
+    if (state.device && state.devices.length > 1) args.device = state.device;
+    return args;
+  }
+
+  async function callTool(name, args) {
+    if (!initialized) throw new Error('Host bridge is not initialized');
+    return request('tools/call', { name, arguments: args });
+  }
+
+  async function refreshScreenshot({ quiet = false } = {}) {
+    if ((!state.running && quiet) || busy || !initialized) return;
+    busy = true;
+    if (!quiet) setStatus('Capturing…');
+    syncControls();
+    try {
+      const res = await callTool('android_simulator_screenshot', simArgs());
+      if (res && !res.isError) state.running = true;
+      onToolResult(res, { fromSelf: true });
+    } catch (err) {
+      if (!quiet) showNotice('Screenshot failed', err.message);
+      setStatus('Error');
+    } finally {
+      busy = false;
+      syncControls();
+    }
+  }
+
+  async function sendCommand(cmd, extra = {}, label = cmd) {
+    if (!state.running || busy) return;
+    busy = true;
+    setStatus(`${label}…`);
+    syncControls();
+    try {
+      const res = await callTool('android_simulator_command', simArgs({ cmd, ...extra }));
+      state.lastAction = label;
+      onToolResult(res, { fromSelf: true });
+      if (!res?.isError && state.running) {
+        const shot = await callTool('android_simulator_screenshot', simArgs());
+        onToolResult(shot, { fromSelf: true });
+      }
+    } catch (err) {
+      showNotice(`${label} failed`, err.message);
+      setStatus('Error');
+    } finally {
+      busy = false;
+      syncControls();
+    }
+  }
+
+  async function runLifecycle(toolName, label) {
+    if (!state.running || busy) return;
+    busy = true;
+    setStatus(`${label}…`);
+    syncControls();
+    try {
+      const res = await callTool(toolName, simArgs());
+      state.lastAction = label;
+      onToolResult(res, { fromSelf: true });
+      if (toolName !== 'android_simulator_stop' && !res?.isError && state.running) {
+        const shot = await callTool('android_simulator_screenshot', simArgs());
+        onToolResult(shot, { fromSelf: true });
+      }
+    } catch (err) {
+      showNotice(`${label} failed`, err.message);
+      setStatus('Error');
+    } finally {
+      busy = false;
+      syncControls();
+    }
+  }
+
+  function startLive() {
+    if (liveTimer) return;
+    btnLive.classList.add('active');
+    btnLive.setAttribute('aria-pressed', 'true');
+    liveTimer = setInterval(() => {
+      if (state.running && !busy) void refreshScreenshot({ quiet: true });
+    }, LIVE_POLL_MS);
+  }
+
+  function stopLive() {
+    if (liveTimer) {
+      clearInterval(liveTimer);
+      liveTimer = null;
+    }
+    btnLive.classList.remove('active');
+    btnLive.setAttribute('aria-pressed', 'false');
+  }
+
+  // ---------------------------------------------------------------------------------------------
+  // Pointer gesture handling on the device screen
+  // ---------------------------------------------------------------------------------------------
+
+  function toDevicePoint(clientX, clientY) {
+    const rect = screenImg.getBoundingClientRect();
+    if (!rect.width || !rect.height || !screenImg.naturalWidth || !screenImg.naturalHeight) {
+      return null;
+    }
+    const relX = Math.max(0, Math.min(rect.width, clientX - rect.left));
+    const relY = Math.max(0, Math.min(rect.height, clientY - rect.top));
+    return {
+      x: Math.round((relX / rect.width) * screenImg.naturalWidth),
+      y: Math.round((relY / rect.height) * screenImg.naturalHeight),
+      cssX: relX,
+      cssY: relY,
+    };
+  }
+
+  function showRipple(cssX, cssY) {
+    const el = document.createElement('div');
+    el.className = 'ripple';
+    el.style.left = `${cssX}px`;
+    el.style.top = `${cssY}px`;
+    screenWrap.appendChild(el);
+    setTimeout(() => el.remove(), 480);
+  }
+
+  let dragStart = null;
+
+  screenImg.addEventListener('pointerdown', event => {
+    if (event.button !== 0 || !state.running || busy) return;
+    const pt = toDevicePoint(event.clientX, event.clientY);
+    if (!pt) return;
+    dragStart = {
+      ...pt,
+      clientX: event.clientX,
+      clientY: event.clientY,
+      time: Date.now(),
+      shiftKey: event.shiftKey,
+      pointerId: event.pointerId,
+    };
+    screenImg.setPointerCapture(event.pointerId);
+  });
+
+  screenImg.addEventListener('pointerup', event => {
+    if (!dragStart || event.pointerId !== dragStart.pointerId) return;
+    const start = dragStart;
+    dragStart = null;
+    const end = toDevicePoint(event.clientX, event.clientY);
+    if (!end) return;
+    const dist = Math.hypot(event.clientX - start.clientX, event.clientY - start.clientY);
+    const heldMs = Date.now() - start.time;
+    showRipple(end.cssX, end.cssY);
+    if (dist >= DRAG_THRESHOLD_PX) {
+      hintEl.textContent = `Swiped (${start.x}, ${start.y}) → (${end.x}, ${end.y})`;
+      void sendCommand(
+        'swipe',
+        { x1: start.x, y1: start.y, x2: end.x, y2: end.y, durationMs: 250 },
+        `swipe (${start.x},${start.y})→(${end.x},${end.y})`,
+      );
+    } else if (start.shiftKey || heldMs >= LONG_PRESS_MS) {
+      hintEl.textContent = `Long-pressed (${end.x}, ${end.y})`;
+      void sendCommand('longPress', { x: end.x, y: end.y }, `longPress (${end.x},${end.y})`);
+    } else {
+      hintEl.textContent = `Tapped (${end.x}, ${end.y})`;
+      void sendCommand('tap', { x: end.x, y: end.y }, `tap (${end.x},${end.y})`);
+    }
+  });
+
+  screenImg.addEventListener('pointercancel', () => {
+    dragStart = null;
+  });
+
+  // ---------------------------------------------------------------------------------------------
+  // Button handlers
+  // ---------------------------------------------------------------------------------------------
+
+  btnBack.addEventListener('click', () => void sendCommand('back', {}, 'Back'));
+  btnHome.addEventListener('click', () => void sendCommand('home', {}, 'Home'));
+  btnRefresh.addEventListener('click', () => void refreshScreenshot());
+  btnLive.addEventListener('click', () => {
+    if (liveTimer) stopLive();
+    else startLive();
+  });
+  btnReload.addEventListener('click', () => void runLifecycle('android_simulator_reload', 'Reloading'));
+  btnRestart.addEventListener('click', () => void runLifecycle('android_simulator_restart', 'Restarting'));
+  btnStop.addEventListener('click', () => void runLifecycle('android_simulator_stop', 'Stopping'));
+
+  btnEnter.addEventListener('click', () => void sendCommand('key', { key: 'ENTER' }, 'Enter'));
+  textForm.addEventListener('submit', event => {
+    event.preventDefault();
+    const value = textInput.value;
+    if (!value) return;
+    textInput.value = '';
+    void sendCommand('text', { text: value }, `text`);
+  });
+
+  btnLogs.addEventListener('click', async () => {
+    if (!state.running || busy) return;
+    busy = true;
+    setStatus('Loading logs…');
+    syncControls();
+    try {
+      const res = await callTool('android_simulator_logs', simArgs({ lines: 80 }));
+      onToolResult(res, { fromSelf: true });
+      setStatus('Logs loaded');
+    } catch (err) {
+      showNotice('Logs failed', err.message);
+      setStatus('Error');
+    } finally {
+      busy = false;
+      syncControls();
+    }
+  });
+
+  btnAsk.addEventListener('click', () => {
+    if (!initialized || !state.simulatorId) return;
+    const target = state.device ? ` (${state.device})` : '';
+    request('ui/message', {
+      role: 'user',
+      content: {
+        type: 'text',
+        text: `Inspect the current Android Simulator screen for ${state.simulatorId}${target} and describe what you see.`,
+      },
+    }).catch(err => showNotice('Message failed', err.message));
+  });
+
+  deviceSelect.addEventListener('change', () => {
+    state.device = deviceSelect.value;
+    void refreshScreenshot();
+  });
+
+  screenImg.addEventListener('load', () => {
+    renderDrawer();
+    reportSize();
+  });
+
+  syncControls();
+  void initializeBridge();
+})();
+</script>
+</body>
+</html>

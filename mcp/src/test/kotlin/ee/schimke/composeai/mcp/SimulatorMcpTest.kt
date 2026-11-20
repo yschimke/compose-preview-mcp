@@ -3,16 +3,19 @@ package ee.schimke.composeai.mcp
 import com.google.common.truth.Truth.assertThat
 import ee.schimke.composeai.mcp.protocol.CallToolResult
 import ee.schimke.composeai.mcp.protocol.ContentBlock
+import ee.schimke.composeai.mcp.protocol.ResourceContents
 import java.io.File
 import java.util.concurrent.atomic.AtomicReference
 import kotlinx.coroutines.async
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
+import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.add
+import kotlinx.serialization.json.boolean
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonArray
@@ -1097,5 +1100,94 @@ class SimulatorMcpTest {
     assertThat(SimulatorMcp.splitCommand("""shell am start -n "com.x/.A b" 'it''s' a\ b"""))
       .containsExactly("shell", "am", "start", "-n", "com.x/.A b", "its", "a b")
       .inOrder()
+  }
+
+  @Test
+  fun `simulator resource is an MCP App with display modes and interactive bridge`() {
+    val descriptor = mcp.resourceDescriptors().single()
+    assertThat(descriptor.uri).isEqualTo(SimulatorMcp.VIEWER_URI)
+    assertThat(descriptor.mimeType).isEqualTo(SimulatorMcp.MCP_APP_MIME_TYPE)
+    assertThat(descriptor.meta)
+      .isEqualTo(
+        Json.parseToJsonElement(
+            """
+            {
+              "ui": {"prefersBorder": true},
+              "openai/ui": {"availableDisplayModes": ["inline", "fullscreen"]}
+            }
+            """,
+          )
+          .jsonObject,
+      )
+
+    assertThat(mcp.readResource("ui://compose-preview/other")).isNull()
+    val content = mcp.readResource(SimulatorMcp.VIEWER_URI)!!.contents.single()
+    content as ResourceContents.Text
+    assertThat(content.mimeType).isEqualTo(SimulatorMcp.MCP_APP_MIME_TYPE)
+    assertThat(content.meta).isEqualTo(descriptor.meta)
+    assertThat(content.text).contains("request('ui/initialize'")
+    assertThat(content.text).contains("android_simulator_command")
+    assertThat(content.text).contains("android_simulator_screenshot")
+    assertThat(content.text).contains("if (event.source !== window.parent) return;")
+  }
+
+  @Test
+  fun `interactive simulator tools link to the simulator MCP App resource`() {
+    val byName = mcp.toolDefs().associateBy { it.name }
+    val appTools =
+      listOf(
+        SimulatorMcp.LAUNCH,
+        SimulatorMcp.COMMAND,
+        SimulatorMcp.SCREENSHOT,
+        SimulatorMcp.WATCHFACE_SNAPSHOT,
+        SimulatorMcp.LOGS,
+        SimulatorMcp.RELOAD,
+        SimulatorMcp.RESTART,
+        SimulatorMcp.UPDATE,
+        SimulatorMcp.STOP,
+      )
+    val expectedMeta =
+      Json.parseToJsonElement(
+          """
+          {
+            "ui": {
+              "resourceUri": "ui://compose-preview/simulator",
+              "visibility": ["model", "app"]
+            },
+            "ui/resourceUri": "ui://compose-preview/simulator"
+          }
+          """,
+        )
+        .jsonObject
+    for (name in appTools) {
+      assertThat(byName.getValue(name).meta).isEqualTo(expectedMeta)
+    }
+    assertThat(byName.getValue(SimulatorMcp.LAUNCH).icons!!.single().src)
+      .startsWith("data:image/svg+xml;base64,")
+  }
+
+  @Test
+  fun `launch screenshot command and stop carry app metadata without changing structuredContent`() {
+    val launched = call(SimulatorMcp.LAUNCH, buildJsonObject { put("apk", apk().path) })
+    val launchMeta = launched.meta!![SimulatorMcp.RESULT_META_KEY]!!.jsonObject
+    assertThat(launchMeta["simulator"]!!.jsonPrimitive.content).isEqualTo("sim-1")
+    assertThat(launchMeta["action"]!!.jsonPrimitive.content).isEqualTo("launch")
+    assertThat(launchMeta["running"]!!.jsonPrimitive.boolean).isTrue()
+
+    val shot = call(SimulatorMcp.SCREENSHOT, JsonObject(emptyMap()))
+    val shotMeta = shot.meta!![SimulatorMcp.RESULT_META_KEY]!!.jsonObject
+    assertThat(shotMeta["simulator"]!!.jsonPrimitive.content).isEqualTo("sim-1")
+    assertThat(shotMeta["action"]!!.jsonPrimitive.content).isEqualTo("screenshot")
+    assertThat(shotMeta["pngBase64"]!!.jsonPrimitive.content).isEqualTo("iVBORw0KGgo=")
+
+    val tapped = call(SimulatorMcp.COMMAND, buildJsonObject { put("cmd", "tap") })
+    val tapMeta = tapped.meta!![SimulatorMcp.RESULT_META_KEY]!!.jsonObject
+    assertThat(tapMeta["action"]!!.jsonPrimitive.content).isEqualTo("tap")
+    assertThat(tapMeta["running"]!!.jsonPrimitive.boolean).isTrue()
+
+    val stopped = call(SimulatorMcp.STOP, JsonObject(emptyMap()))
+    val stopMeta = stopped.meta!![SimulatorMcp.RESULT_META_KEY]!!.jsonObject
+    assertThat(stopMeta["action"]!!.jsonPrimitive.content).isEqualTo("stop")
+    assertThat(stopMeta["running"]!!.jsonPrimitive.boolean).isFalse()
   }
 }

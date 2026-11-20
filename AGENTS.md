@@ -2,8 +2,8 @@
 
 This repository owns `compose-preview-mcp`, the local Model Context Protocol server for Compose
 previews (`:mcp`), and the MCP App pages only it serves (`mcp-app/rc-viewer.html`,
-`mcp-app/openai-probe.html`). Read `README.md` first; why this is its own repository, and what it
-may depend on, is [`docs/design/MCP_REPOSITORY.md`](docs/design/MCP_REPOSITORY.md).
+`mcp-app/simulator.html`, `mcp-app/openai-probe.html`). Read `README.md` first; why this is its
+own repository, and what it may depend on, is [`docs/design/MCP_REPOSITORY.md`](docs/design/MCP_REPOSITORY.md).
 
 ## Enforced rules
 

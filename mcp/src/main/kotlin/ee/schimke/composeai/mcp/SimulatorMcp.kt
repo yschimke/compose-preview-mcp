@@ -2,6 +2,9 @@ package ee.schimke.composeai.mcp
 
 import ee.schimke.composeai.mcp.protocol.CallToolResult
 import ee.schimke.composeai.mcp.protocol.ContentBlock
+import ee.schimke.composeai.mcp.protocol.ReadResourceResult
+import ee.schimke.composeai.mcp.protocol.ResourceContents
+import ee.schimke.composeai.mcp.protocol.ResourceDescriptor
 import ee.schimke.composeai.mcp.protocol.ToolDef
 import java.io.BufferedWriter
 import java.io.File
@@ -31,6 +34,8 @@ import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.put
+import kotlinx.serialization.json.putJsonArray
+import kotlinx.serialization.json.putJsonObject
 
 /**
  * An Android app running in Robolectric's simulator, driven by the agent: the `android_simulator_*`
@@ -96,6 +101,34 @@ class SimulatorMcp(
       adbTool,
       stopTool,
     )
+
+  fun resourceDescriptors(): List<ResourceDescriptor> =
+    listOf(
+      ResourceDescriptor(
+        uri = VIEWER_URI,
+        name = "Android Simulator",
+        description =
+          "Interactive Android Simulator display for tapping, swiping, typing, reloading, and " +
+            "inspecting a running app.",
+        mimeType = MCP_APP_MIME_TYPE,
+        meta = resourceMeta(),
+      ),
+    )
+
+  fun readResource(uri: String): ReadResourceResult? {
+    if (uri != VIEWER_URI) return null
+    return ReadResourceResult(
+      contents =
+        listOf(
+          ResourceContents.Text(
+            uri = uri,
+            mimeType = MCP_APP_MIME_TYPE,
+            text = viewerHtml,
+            meta = resourceMeta(),
+          ),
+        ),
+    )
+  }
 
   suspend fun handle(name: String, args: JsonObject): CallToolResult? =
     when (LEGACY_NAMES[name] ?: name) {
@@ -308,7 +341,7 @@ class SimulatorMcp(
       }
       put("events", events)
     }
-    return ok(result)
+    return ok(result, simulatorResultMeta(simulator, action = "launch", running = true))
   }
 
   /**
@@ -338,6 +371,12 @@ class SimulatorMcp(
             put("result", reply.result)
             put("events", simulator.drainEvents())
           },
+          simulatorResultMeta(
+            simulator,
+            action = cmd,
+            running = true,
+            device = args.string("device"),
+          ),
         )
       is Reply.Failed -> error("$cmd: ${reply.message}", simulator.drainEvents())
     }
@@ -345,10 +384,11 @@ class SimulatorMcp(
 
   private fun screenshot(args: JsonObject): CallToolResult {
     val simulator = simulator(args) ?: return noSimulator()
+    val device = args.string("device")
     val payload = buildJsonObject {
       put("cmd", "screenshot")
       args.string("path")?.let { put("path", it) }
-      args.string("device")?.let { put("device", it) }
+      device?.let { put("device", it) }
     }
     return when (val reply = simulator.send(payload, commandTimeoutMs)) {
       is Reply.Failed -> error("screenshot: ${reply.message}", simulator.drainEvents())
@@ -365,6 +405,14 @@ class SimulatorMcp(
               ContentBlock.Text(summary.toString()),
             ),
           structuredContent = summary,
+          meta =
+            simulatorResultMeta(
+              simulator,
+              action = "screenshot",
+              running = true,
+              device = device,
+              pngBase64 = png,
+            ),
         )
       }
     }
@@ -413,6 +461,14 @@ class SimulatorMcp(
               ContentBlock.Text(summary.toString()),
             ),
           structuredContent = summary,
+          meta =
+            simulatorResultMeta(
+              simulator,
+              action = "watchface_snapshot",
+              running = true,
+              device = device,
+              pngBase64 = png,
+            ),
         )
       }
     }
@@ -502,6 +558,12 @@ class SimulatorMcp(
             for ((key, value) in reply.result) put(key, value)
             put("events", simulator.drainEvents())
           },
+          simulatorResultMeta(
+            simulator,
+            action = cmd,
+            running = true,
+            device = args.string("device"),
+          ),
         )
       is Reply.Failed -> error("$tool: ${reply.message}", simulator.drainEvents())
     }
@@ -595,6 +657,7 @@ class SimulatorMcp(
           put("lines", JsonArray(lines.map(::JsonPrimitive)))
           put("events", simulator.drainEvents())
         },
+      meta = simulatorResultMeta(simulator, action = "logs", running = true, device = device),
     )
   }
 
@@ -602,7 +665,10 @@ class SimulatorMcp(
     val id = args.string("simulator") ?: simulators.keys.singleOrNull()
     val simulator = id?.let { simulators.remove(it) } ?: return noSimulator()
     simulator.close()
-    return ok(buildJsonObject { put("stopped", simulator.id) })
+    return ok(
+      buildJsonObject { put("stopped", simulator.id) },
+      simulatorResultMeta(simulator, action = "stop", running = false),
+    )
   }
 
   /** The named simulator, or the only one running. */
@@ -634,7 +700,7 @@ class SimulatorMcp(
     val id: String,
     val apk: String,
     private val process: Process,
-    private val devices: Set<String> = emptySet(),
+    val devices: Set<String> = emptySet(),
     private val expectedReadies: Int = if (devices.isEmpty()) 1 else devices.size,
   ) {
     val ready = CompletableFuture<JsonObject>()
@@ -785,11 +851,45 @@ class SimulatorMcp(
 
   // -----------------------------------------------------------------------------------------------
 
-  private fun ok(result: JsonObject) =
+  private fun ok(result: JsonObject, meta: JsonObject? = null) =
     CallToolResult(
       content = listOf(ContentBlock.Text(result.toString())),
       structuredContent = result,
+      meta = meta,
     )
+
+  private fun simulatorResultMeta(
+    simulator: Simulator,
+    action: String,
+    running: Boolean,
+    device: String? = null,
+    pngBase64: String? = null,
+  ): JsonObject = buildJsonObject {
+    putJsonObject(RESULT_META_KEY) {
+      put("simulator", simulator.id)
+      put("apk", simulator.apk)
+      put("action", action)
+      put("running", running)
+      if (simulator.devices.isNotEmpty()) {
+        putJsonArray("devices") { simulator.devices.sorted().forEach { add(JsonPrimitive(it)) } }
+      }
+      device?.let { put("device", it) }
+      pngBase64?.let { put("pngBase64", it) }
+    }
+  }
+
+  private fun resourceMeta(): JsonObject =
+    OpenAiUi.withDisplayModes(
+      buildJsonObject { putJsonObject("ui") { put("prefersBorder", true) } },
+    )
+
+  private val appToolMeta: JsonObject by lazy {
+    OpenAiUi.appToolMeta(
+      VIEWER_URI,
+      entrypoints = emptyList(),
+      visibility = listOf("model", "app"),
+    )
+  }
 
   private fun error(message: String, events: JsonArray? = null): CallToolResult {
     val structured =
@@ -801,6 +901,8 @@ class SimulatorMcp(
     ToolDef(
       name = LAUNCH,
       title = "Android simulator: launch an APK",
+      icons = listOf(OpenAiUi.svgIcon(SIMULATOR_ICON_SVG)),
+      meta = appToolMeta,
       description =
         "Run an Android APK in Robolectric's simulator (no emulator or device) and return a " +
           "simulator id plus the app's package, display size and first activity. The first " +
@@ -870,6 +972,7 @@ class SimulatorMcp(
     ToolDef(
       name = COMMAND,
       title = "Android simulator: drive the app",
+      meta = appToolMeta,
       description =
         "Send one command to a running simulator and get its result plus the events the app " +
           "produced since the last call (activity resumed/destroyed, service started, intents " +
@@ -1045,6 +1148,7 @@ class SimulatorMcp(
     ToolDef(
       name = SCREENSHOT,
       title = "Android simulator: screenshot",
+      meta = appToolMeta,
       description =
         "The simulator's display as a PNG image (exactly what the app draws; the window's " +
           "agent overlay is never in it). Pass `path` to also write it to disk.",
@@ -1065,6 +1169,7 @@ class SimulatorMcp(
     ToolDef(
       name = WATCHFACE_SNAPSHOT,
       title = "Android simulator: watch face status and screenshot",
+      meta = appToolMeta,
       description =
         "Capture the active Wear watch face's structured status (active face, palette colors, " +
           "themeFromWatchface, user configurations, complication slots with bounds and bound " +
@@ -1086,6 +1191,7 @@ class SimulatorMcp(
     ToolDef(
       name = LOGS,
       title = "Android simulator: log",
+      meta = appToolMeta,
       description =
         "The latest lines the simulator logged: the app's logcat, Robolectric and stack traces. " +
           "In a paired launch each line starts [phone] or [watch]; `device` keeps one device's. " +
@@ -1108,6 +1214,7 @@ class SimulatorMcp(
     ToolDef(
       name = RESTART,
       title = "Android simulator: restart the app",
+      meta = appToolMeta,
       description =
         "Start the app again in a fresh simulator JVM (a new process: statics, singletons and " +
           "in-memory state reset), without ending the simulator session. Its data (files, " +
@@ -1131,6 +1238,7 @@ class SimulatorMcp(
     ToolDef(
       name = UPDATE,
       title = "Android simulator: update to a rebuilt APK",
+      meta = appToolMeta,
       description =
         "Replace the running app with another APK, usually a rebuild of it, as `adb install " +
           "-r` would: its data is kept (keepData false drops it) and the session continues. " +
@@ -1154,6 +1262,7 @@ class SimulatorMcp(
     ToolDef(
       name = RELOAD,
       title = "Android simulator: live reload the app",
+      meta = appToolMeta,
       description =
         "After editing the app's source: compile it (the module's Kotlin/Java compile, which " +
           "also relinks resources; no dexing or APK packaging) and put the changed classes in " +
@@ -1224,6 +1333,7 @@ class SimulatorMcp(
     ToolDef(
       name = STOP,
       title = "Android simulator: stop it",
+      meta = appToolMeta,
       description = "End a simulator started with android_simulator_launch, closing its window.",
       inputSchema =
         schema(
@@ -1244,6 +1354,23 @@ class SimulatorMcp(
   }
 
   companion object {
+    const val VIEWER_URI: String = "ui://compose-preview/simulator"
+    const val MCP_APP_MIME_TYPE: String = "text/html;profile=mcp-app"
+    const val RESULT_META_KEY: String = "compose-preview/simulator"
+    internal const val VIEWER_ASSET: String = "simulator.html"
+
+    /** A phone frame with a play indicator; monochrome 20x20 stroke icon. */
+    private const val SIMULATOR_ICON_SVG: String =
+      """<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.33" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="2.5" width="10" height="15" rx="2"/><path d="M8.5 15h3"/><path d="M8.75 7.5v4l3.5-2z"/></svg>"""
+
+    internal val viewerHtml: String by lazy {
+      checkNotNull(SimulatorMcp::class.java.classLoader.getResourceAsStream(VIEWER_ASSET)) {
+          "missing bundled Android Simulator MCP App asset: $VIEWER_ASSET"
+        }
+        .bufferedReader()
+        .use { it.readText() }
+    }
+
     const val LAUNCH = "android_simulator_launch"
     const val COMMAND = "android_simulator_command"
     const val SCREENSHOT = "android_simulator_screenshot"

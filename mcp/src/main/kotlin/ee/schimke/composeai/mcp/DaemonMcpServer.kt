@@ -717,6 +717,7 @@ class DaemonMcpServer(
         ),
       )
     out += rcViewer.resourceDescriptors()
+    out += simulators.resourceDescriptors()
     uiBuilderDesign?.resourceDescriptors()?.let(out::addAll)
     openAiProbe?.resources()?.let(out::addAll)
     if (profile == McpToolProfile.NATIVE) out.addAll(previewLibrary.resources())
@@ -778,6 +779,9 @@ class DaemonMcpServer(
       )
     }
     rcViewer.readResource(uri)?.let {
+      return it
+    }
+    simulators.readResource(uri)?.let {
       return it
     }
     uiBuilderDesign

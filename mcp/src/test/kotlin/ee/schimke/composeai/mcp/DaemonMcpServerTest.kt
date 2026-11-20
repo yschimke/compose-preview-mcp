@@ -8265,6 +8265,64 @@ class DaemonMcpServerTest {
     assertThat(daemon.previewRowsRequests.toList()).containsExactly(base)
   }
 
+  @Test
+  fun `core tools declare MCP annotations, outputSchemas, and structuredContent`() {
+    client.initialize()
+    client.awaitToolsContaining("android_simulator_stop")
+    val toolsByName =
+      client.request("tools/list").jsonObject["tools"]!!.jsonArray.associateBy {
+        it.jsonObject["name"]!!.jsonPrimitive.content
+      }
+
+    fun annotation(toolName: String, key: String): String {
+      val tool =
+        requireNotNull(toolsByName[toolName]) { "Missing tool $toolName in ${toolsByName.keys}" }
+      val annotations =
+        requireNotNull(tool.jsonObject["annotations"]?.jsonObject) {
+          "Missing annotations on $toolName: $tool"
+        }
+      return requireNotNull(annotations[key]?.jsonPrimitive?.content) {
+        "Missing annotations.$key on $toolName: $annotations"
+      }
+    }
+
+    assertThat(annotation("status", "readOnlyHint")).isEqualTo("true")
+    assertThat(annotation("find_previews_for_file", "readOnlyHint")).isEqualTo("true")
+    assertThat(annotation("register_project", "idempotentHint")).isEqualTo("true")
+    assertThat(annotation("unregister_project", "destructiveHint")).isEqualTo("true")
+    assertThat(annotation("android_simulator_stop", "destructiveHint")).isEqualTo("true")
+
+    val expectedProperties =
+      mapOf(
+        "status" to setOf("schema", "ready", "projects"),
+        "list_projects" to setOf("projects"),
+        "list_devices" to setOf("devices"),
+        "find_previews_for_file" to setOf("previews"),
+        "list_watches" to setOf("watches"),
+        "history_list" to setOf("totalCount", "entries"),
+        "history_diff" to setOf("pngHashChanged", "fromMetadata", "toMetadata"),
+        "list_data_products" to setOf("daemons"),
+        "list_extension_commands" to setOf("schema", "extensions", "commandCount"),
+        "get_preview_data" to setOf("kind", "schemaVersion"),
+        "diff_semantics" to setOf("schema", "baseUri", "headUri", "summary", "delta"),
+      )
+    for ((name, keys) in expectedProperties) {
+      val tool = requireNotNull(toolsByName[name]) { "Missing tool $name" }
+      val props =
+        requireNotNull(tool.jsonObject["outputSchema"]?.jsonObject?.get("properties")?.jsonObject) {
+          "Missing outputSchema.properties on $name: $tool"
+        }
+      assertThat(props.keys).containsAtLeastElementsIn(keys)
+    }
+
+    val statusStructured = client.callTool("status").raw["structuredContent"]!!.jsonObject
+    assertThat(statusStructured["ready"]!!.jsonPrimitive.content).isEqualTo("true")
+    val devicesStructured = client.callTool("list_devices").raw["structuredContent"]!!.jsonObject
+    assertThat(devicesStructured["devices"]!!.jsonArray).isNotEmpty()
+    val projectsStructured = client.callTool("list_projects").raw["structuredContent"]!!.jsonObject
+    assertThat(projectsStructured["projects"]!!.jsonArray).isEmpty()
+  }
+
   private fun registerWorkspace(projectDir: java.io.File, rootName: String): WorkspaceId {
     val resp =
       client.callTool(

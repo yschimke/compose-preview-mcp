@@ -47,6 +47,16 @@ data class ToolDef(
   val outputSchema: JsonObject? = null,
   /** MCP `annotations.readOnlyHint`: true for a tool that never changes anything. */
   val readOnlyHint: Boolean? = null,
+  /**
+   * MCP `annotations.destructiveHint`: true when a non-read-only tool may perform destructive
+   * updates.
+   */
+  val destructiveHint: Boolean? = null,
+  /**
+   * MCP `annotations.idempotentHint`: true when repeated calls with the same arguments have no
+   * extra effect.
+   */
+  val idempotentHint: Boolean? = null,
 )
 
 /** One MCP `Icon`: a `src` URI (a `data:` URI for inline SVG), its type and sizes. */

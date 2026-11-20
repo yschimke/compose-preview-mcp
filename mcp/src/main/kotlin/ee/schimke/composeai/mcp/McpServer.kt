@@ -480,7 +480,16 @@ internal fun ToolDef.toSdkTool(): Tool {
             },
         )
       },
-    annotations = readOnlyHint?.let { ToolAnnotations(readOnlyHint = it) },
+    annotations =
+      if (readOnlyHint != null || destructiveHint != null || idempotentHint != null) {
+        ToolAnnotations(
+          readOnlyHint = readOnlyHint,
+          destructiveHint = destructiveHint,
+          idempotentHint = idempotentHint,
+        )
+      } else {
+        null
+      },
   )
 }
 

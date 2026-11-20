@@ -150,6 +150,260 @@ private val RENDER_MATRIX_OUTPUT_SCHEMA: JsonObject = buildJsonObject {
   }
 }
 
+private val STATUS_OUTPUT_SCHEMA: JsonObject = buildJsonObject {
+  put("type", "object")
+  putJsonObject("properties") {
+    putJsonObject("schema") { put("type", "string") }
+    putJsonObject("ready") { put("type", "boolean") }
+    putJsonObject("serverVersion") { put("type", "string") }
+    putJsonObject("toolCatalog") { put("type", "object") }
+    putJsonObject("projects") {
+      put("type", "array")
+      putJsonObject("items") { put("type", "object") }
+    }
+    putJsonObject("projectHint") { put("type", "object") }
+    putJsonObject("freshness") { put("type", "object") }
+  }
+}
+
+private val LIST_PROJECTS_OUTPUT_SCHEMA: JsonObject = buildJsonObject {
+  put("type", "object")
+  putJsonObject("properties") {
+    putJsonObject("projects") {
+      put("type", "array")
+      putJsonObject("items") {
+        put("type", "object")
+        putJsonObject("properties") {
+          putJsonObject("workspaceId") { put("type", "string") }
+          putJsonObject("rootProjectName") { put("type", "string") }
+          putJsonObject("path") { put("type", "string") }
+          putJsonObject("modules") {
+            put("type", "array")
+            putJsonObject("items") { put("type", "string") }
+          }
+          putJsonObject("branch") { put("type", "string") }
+        }
+      }
+    }
+  }
+}
+
+private val LIST_DEVICES_OUTPUT_SCHEMA: JsonObject = buildJsonObject {
+  put("type", "object")
+  putJsonObject("properties") {
+    putJsonObject("devices") {
+      put("type", "array")
+      putJsonObject("items") {
+        put("type", "object")
+        putJsonObject("properties") {
+          putJsonObject("id") { put("type", "string") }
+          putJsonObject("widthDp") { put("type", "integer") }
+          putJsonObject("heightDp") { put("type", "integer") }
+          putJsonObject("density") { put("type", "number") }
+        }
+      }
+    }
+  }
+}
+
+private val FIND_PREVIEWS_FOR_FILE_OUTPUT_SCHEMA: JsonObject = buildJsonObject {
+  put("type", "object")
+  putJsonObject("properties") {
+    putJsonObject("previews") {
+      put("type", "array")
+      putJsonObject("items") {
+        put("type", "object")
+        putJsonObject("properties") {
+          putJsonObject("uri") { put("type", "string") }
+          putJsonObject("fqn") { put("type", "string") }
+          putJsonObject("displayName") { put("type", "string") }
+          putJsonObject("bodyLine") { put("type", "integer") }
+          putJsonObject("parameterRow") { put("type", "object") }
+        }
+      }
+    }
+  }
+}
+
+private val LIST_WATCHES_OUTPUT_SCHEMA: JsonObject = buildJsonObject {
+  put("type", "object")
+  putJsonObject("properties") {
+    putJsonObject("watches") {
+      put("type", "array")
+      putJsonObject("items") {
+        put("type", "object")
+        putJsonObject("properties") {
+          putJsonObject("workspaceId") { put("type", "string") }
+          putJsonObject("module") { put("type", "string") }
+          putJsonObject("fqnGlob") { put("type", "string") }
+        }
+      }
+    }
+  }
+}
+
+private val HISTORY_LIST_OUTPUT_SCHEMA: JsonObject = buildJsonObject {
+  put("type", "object")
+  putJsonObject("properties") {
+    putJsonObject("totalCount") { put("type", "integer") }
+    putJsonObject("nextCursor") { put("type", "string") }
+    putJsonObject("entries") {
+      put("type", "array")
+      putJsonObject("items") { put("type", "object") }
+    }
+  }
+}
+
+private val HISTORY_DIFF_OUTPUT_SCHEMA: JsonObject = buildJsonObject {
+  put("type", "object")
+  putJsonObject("properties") {
+    putJsonObject("pngHashChanged") { put("type", "boolean") }
+    putJsonObject("fromMetadata") { put("type", "object") }
+    putJsonObject("toMetadata") { put("type", "object") }
+    putJsonObject("diffPx") { put("type", "integer") }
+    putJsonObject("ssim") { put("type", "number") }
+    putJsonObject("diffPngPath") { put("type", "string") }
+  }
+}
+
+private val LIST_DATA_PRODUCTS_OUTPUT_SCHEMA: JsonObject = buildJsonObject {
+  put("type", "object")
+  putJsonObject("properties") {
+    putJsonObject("daemons") {
+      put("type", "array")
+      putJsonObject("items") {
+        put("type", "object")
+        putJsonObject("properties") {
+          putJsonObject("workspaceId") { put("type", "string") }
+          putJsonObject("module") { put("type", "string") }
+          putJsonObject("kinds") {
+            put("type", "array")
+            putJsonObject("items") { put("type", "object") }
+          }
+          putJsonObject("dataExtensions") {
+            put("type", "array")
+            putJsonObject("items") { put("type", "object") }
+          }
+        }
+      }
+    }
+  }
+}
+
+private val LIST_EXTENSION_COMMANDS_OUTPUT_SCHEMA: JsonObject = buildJsonObject {
+  put("type", "object")
+  putJsonObject("properties") {
+    putJsonObject("schema") { put("type", "string") }
+    putJsonObject("extensions") {
+      put("type", "array")
+      putJsonObject("items") { put("type", "object") }
+    }
+    putJsonObject("commandCount") { put("type", "integer") }
+  }
+}
+
+private val GET_PREVIEW_DATA_OUTPUT_SCHEMA: JsonObject = buildJsonObject {
+  put("type", "object")
+  putJsonObject("properties") {
+    putJsonObject("kind") { put("type", "string") }
+    putJsonObject("schemaVersion") { put("type", "integer") }
+    putJsonObject("cached") { put("type", "boolean") }
+    putJsonObject("payload") {}
+    putJsonObject("path") { put("type", "string") }
+    putJsonObject("bytes") { put("type", "string") }
+    putJsonObject("extras") {}
+  }
+}
+
+private val DIFF_SEMANTICS_OUTPUT_SCHEMA: JsonObject = buildJsonObject {
+  put("type", "object")
+  putJsonObject("properties") {
+    putJsonObject("schema") { put("type", "string") }
+    putJsonObject("baseUri") { put("type", "string") }
+    putJsonObject("headUri") { put("type", "string") }
+    putJsonObject("summary") { put("type", "string") }
+    putJsonObject("delta") { put("type", "object") }
+  }
+}
+
+private val CORE_TOOL_OUTPUT_SCHEMAS: Map<String, JsonObject> =
+  mapOf(
+    "status" to STATUS_OUTPUT_SCHEMA,
+    "list_projects" to LIST_PROJECTS_OUTPUT_SCHEMA,
+    "list_devices" to LIST_DEVICES_OUTPUT_SCHEMA,
+    "find_previews_for_file" to FIND_PREVIEWS_FOR_FILE_OUTPUT_SCHEMA,
+    "list_watches" to LIST_WATCHES_OUTPUT_SCHEMA,
+    "history_list" to HISTORY_LIST_OUTPUT_SCHEMA,
+    "history_diff" to HISTORY_DIFF_OUTPUT_SCHEMA,
+    "list_data_products" to LIST_DATA_PRODUCTS_OUTPUT_SCHEMA,
+    "list_extension_commands" to LIST_EXTENSION_COMMANDS_OUTPUT_SCHEMA,
+    "get_preview_data" to GET_PREVIEW_DATA_OUTPUT_SCHEMA,
+    "diff_semantics" to DIFF_SEMANTICS_OUTPUT_SCHEMA,
+    "render_preview" to RENDER_PREVIEW_OUTPUT_SCHEMA,
+    "render_matrix" to RENDER_MATRIX_OUTPUT_SCHEMA,
+  )
+
+private data class ToolAnnotationHints(
+  val readOnlyHint: Boolean,
+  val destructiveHint: Boolean? = null,
+  val idempotentHint: Boolean? = null,
+)
+
+private val READ_ONLY_HINT = ToolAnnotationHints(readOnlyHint = true)
+private val IDEMPOTENT_WRITE_HINT =
+  ToolAnnotationHints(readOnlyHint = false, destructiveHint = false, idempotentHint = true)
+private val DESTRUCTIVE_WRITE_HINT =
+  ToolAnnotationHints(readOnlyHint = false, destructiveHint = true, idempotentHint = false)
+
+private val CORE_TOOL_ANNOTATIONS: Map<String, ToolAnnotationHints> =
+  mapOf(
+    "status" to READ_ONLY_HINT,
+    "list_projects" to READ_ONLY_HINT,
+    "list_devices" to READ_ONLY_HINT,
+    "find_previews_for_file" to READ_ONLY_HINT,
+    "render_preview" to READ_ONLY_HINT,
+    "render_matrix" to READ_ONLY_HINT,
+    "list_watches" to READ_ONLY_HINT,
+    "history_list" to READ_ONLY_HINT,
+    "history_diff" to READ_ONLY_HINT,
+    "list_data_products" to READ_ONLY_HINT,
+    "list_extension_commands" to READ_ONLY_HINT,
+    "get_preview_data" to READ_ONLY_HINT,
+    "diff_semantics" to READ_ONLY_HINT,
+    "render_preview_overlay" to READ_ONLY_HINT,
+    "get_preview_extras" to READ_ONLY_HINT,
+    "record_preview" to READ_ONLY_HINT,
+    "list-all-documentation" to READ_ONLY_HINT,
+    "get-documentation-for-story" to READ_ONLY_HINT,
+    "preview-stories" to READ_ONLY_HINT,
+    "run-story-tests" to READ_ONLY_HINT,
+    PreviewGuidelinesMcp.PROMPT_TOOL to READ_ONLY_HINT,
+    PreviewGuidelinesMcp.CHECK_TOOL to READ_ONLY_HINT,
+    "register_project" to IDEMPOTENT_WRITE_HINT,
+    "watch" to IDEMPOTENT_WRITE_HINT,
+    "unwatch" to IDEMPOTENT_WRITE_HINT,
+    "source_watch" to IDEMPOTENT_WRITE_HINT,
+    "notify_file_changed" to IDEMPOTENT_WRITE_HINT,
+    "set_visible" to IDEMPOTENT_WRITE_HINT,
+    "set_focus" to IDEMPOTENT_WRITE_HINT,
+    "enable_extensions" to IDEMPOTENT_WRITE_HINT,
+    "subscribe_preview_data" to IDEMPOTENT_WRITE_HINT,
+    "unsubscribe_preview_data" to IDEMPOTENT_WRITE_HINT,
+    "unregister_project" to DESTRUCTIVE_WRITE_HINT,
+    "run_extension_command" to DESTRUCTIVE_WRITE_HINT,
+  )
+
+private fun ToolDef.withCoreMetadata(): ToolDef {
+  val schema = outputSchema ?: CORE_TOOL_OUTPUT_SCHEMAS[name]
+  val hints = CORE_TOOL_ANNOTATIONS[name]
+  return copy(
+    outputSchema = schema,
+    readOnlyHint = readOnlyHint ?: hints?.readOnlyHint,
+    destructiveHint = destructiveHint ?: hints?.destructiveHint,
+    idempotentHint = idempotentHint ?: hints?.idempotentHint,
+  )
+}
+
 /**
  * The wiring layer. Owns:
  * - The per-(workspace, module) preview catalog populated from daemon `discoveryUpdated`.
@@ -2017,14 +2271,14 @@ class DaemonMcpServer(
     when (profile) {
       McpToolProfile.NATIVE -> buildFullToolDefs().filterNot { it.name in STORYBOOK_ALIAS_NAMES }
       McpToolProfile.STORYBOOK -> storybookToolDefs()
-    }
+    }.map { it.withCoreMetadata() }
 
   /** Bootstrap tools served before the full catalog loads, for the active [profile]. */
   private val bootstrapToolDefs: List<ToolDef> by lazy {
     when (profile) {
       McpToolProfile.NATIVE -> nativeBootstrapToolDefs
       McpToolProfile.STORYBOOK -> storybookToolDefs()
-    }
+    }.map { it.withCoreMetadata() }
   }
 
   private val nativeBootstrapToolDefs: List<ToolDef> by lazy {
@@ -3151,72 +3405,71 @@ class DaemonMcpServer(
     }
     if (profile == McpToolProfile.NATIVE) sessionRoots(session)
     val progress = progressReporter(session, progressToken)
-    return when (name) {
-      "status" -> toolStatus(session)
-      "register_project" -> toolRegisterProject(args)
-      "unregister_project" -> toolUnregisterProject(args)
-      "list_projects" -> toolListProjects()
-      "list_devices" -> toolListDevices()
-      "find_previews_for_file" -> toolFindPreviewsForFile(args)
-      PreviewTray.TOOL ->
-        PreviewTray.call(args, previewCatalog(), previewActivity, renderThumbnails)
-      PreviewGuidelinesMcp.PROMPT_TOOL -> PreviewGuidelinesMcp.prompt(args, previewGuidelinesHost)
-      PreviewGuidelinesMcp.CHECK_TOOL -> PreviewGuidelinesMcp.check(args, previewGuidelinesHost)
-      PreviewMentions.TOOL ->
-        PreviewMentions.call(args, previewCatalog(), previewActivity, renderThumbnails)
-      // Both declare an outputSchema, so both carry structuredContent (#1114).
-      "render_preview" ->
-        withCallBudget(session, name, args, progress) { report ->
+    val result =
+      when (name) {
+        "status" -> toolStatus(session)
+        "register_project" -> toolRegisterProject(args)
+        "unregister_project" -> toolUnregisterProject(args)
+        "list_projects" -> toolListProjects()
+        "list_devices" -> toolListDevices()
+        "find_previews_for_file" -> toolFindPreviewsForFile(args)
+        PreviewTray.TOOL ->
+          PreviewTray.call(args, previewCatalog(), previewActivity, renderThumbnails)
+        PreviewGuidelinesMcp.PROMPT_TOOL -> PreviewGuidelinesMcp.prompt(args, previewGuidelinesHost)
+        PreviewGuidelinesMcp.CHECK_TOOL -> PreviewGuidelinesMcp.check(args, previewGuidelinesHost)
+        PreviewMentions.TOOL ->
+          PreviewMentions.call(args, previewCatalog(), previewActivity, renderThumbnails)
+        "render_preview" ->
+          withCallBudget(session, name, args, progress) { report ->
             if (scope == null) autoRegisterWorkspace(session)
             renderPreviewChoosingVariant(session, withSettings(session, args), scope, report)
           }
-          .withJsonTextStructure()
-      "render_matrix" ->
-        withCallBudget(session, name, args, progress) { report ->
+        "render_matrix" ->
+          withCallBudget(session, name, args, progress) { report ->
             if (scope == null) autoRegisterWorkspace(session)
             toolRenderMatrix(session, args, scope, report)
           }
-          .withJsonTextStructure()
-      "watch" -> toolWatch(session, args)
-      "unwatch" -> toolUnwatch(session, args)
-      "list_watches" -> toolListWatches(session)
-      "source_watch" -> toolSourceWatch(args)
-      "notify_file_changed" -> toolNotifyFileChanged(args)
-      "set_visible" -> toolSetVisible(args)
-      "set_focus" -> toolSetFocus(args)
-      "history_list" -> toolHistoryList(args)
-      "history_diff" -> toolHistoryDiff(args)
-      "list_data_products" -> toolListDataProducts(args)
-      "enable_extensions" -> toolEnableExtensions(args)
-      "list_extension_commands" -> toolListExtensionCommands(args)
-      "run_extension_command" -> toolRunExtensionCommand(session, args)
-      "get_preview_data" -> toolGetPreviewData(args)
-      "diff_semantics" -> toolDiffSemantics(args)
-      "render_preview_overlay" -> toolRenderPreviewOverlay(args)
-      "get_preview_extras" -> toolGetPreviewExtras(args)
-      "subscribe_preview_data" -> toolDataSubOrUnsub(session, args, subscribe = true)
-      "unsubscribe_preview_data" -> toolDataSubOrUnsub(session, args, subscribe = false)
-      "record_preview" -> toolRecordPreview(args)
-      // Storybook-MCP-compatible aliases → existing handlers via the story-id adapter.
-      "list-all-documentation" -> toolStorybookListDocs()
-      "get-documentation-for-story" -> toolStorybookGetDoc(args)
-      "preview-stories" -> toolStorybookPreviewStories(session, args)
-      "run-story-tests" -> toolStorybookRunTests(args)
-      RcViewerMcp.TOOL_NAME -> rcViewer.handle(name, args)!!
-      in SimulatorMcp.HANDLED_NAMES -> simulators.handle(name, args)!!
-      UiBuilderDesignMcp.TOOL_NAME ->
-        uiBuilderDesign?.handle(name, args) ?: errorCallToolResult("unknown tool: $name")
-      else ->
-        if (profile == McpToolProfile.NATIVE) {
-          openAiProbe?.handle(name, args, (session as? McpSession)?.clientName)
-            ?: previewSettings.handle(name, args)
-            ?: previewLibrary.handle(name, args)
-            ?: uiBuilderMcp?.handle(name, args)
-            ?: errorCallToolResult("unknown tool: $name")
-        } else {
-          errorCallToolResult("unknown tool: $name")
-        }
-    }
+        "watch" -> toolWatch(session, args)
+        "unwatch" -> toolUnwatch(session, args)
+        "list_watches" -> toolListWatches(session)
+        "source_watch" -> toolSourceWatch(args)
+        "notify_file_changed" -> toolNotifyFileChanged(args)
+        "set_visible" -> toolSetVisible(args)
+        "set_focus" -> toolSetFocus(args)
+        "history_list" -> toolHistoryList(args)
+        "history_diff" -> toolHistoryDiff(args)
+        "list_data_products" -> toolListDataProducts(args)
+        "enable_extensions" -> toolEnableExtensions(args)
+        "list_extension_commands" -> toolListExtensionCommands(args)
+        "run_extension_command" -> toolRunExtensionCommand(session, args)
+        "get_preview_data" -> toolGetPreviewData(args)
+        "diff_semantics" -> toolDiffSemantics(args)
+        "render_preview_overlay" -> toolRenderPreviewOverlay(args)
+        "get_preview_extras" -> toolGetPreviewExtras(args)
+        "subscribe_preview_data" -> toolDataSubOrUnsub(session, args, subscribe = true)
+        "unsubscribe_preview_data" -> toolDataSubOrUnsub(session, args, subscribe = false)
+        "record_preview" -> toolRecordPreview(args)
+        // Storybook-MCP-compatible aliases → existing handlers via the story-id adapter.
+        "list-all-documentation" -> toolStorybookListDocs()
+        "get-documentation-for-story" -> toolStorybookGetDoc(args)
+        "preview-stories" -> toolStorybookPreviewStories(session, args)
+        "run-story-tests" -> toolStorybookRunTests(args)
+        RcViewerMcp.TOOL_NAME -> rcViewer.handle(name, args)!!
+        in SimulatorMcp.HANDLED_NAMES -> simulators.handle(name, args)!!
+        UiBuilderDesignMcp.TOOL_NAME ->
+          uiBuilderDesign?.handle(name, args) ?: errorCallToolResult("unknown tool: $name")
+        else ->
+          if (profile == McpToolProfile.NATIVE) {
+            openAiProbe?.handle(name, args, (session as? McpSession)?.clientName)
+              ?: previewSettings.handle(name, args)
+              ?: previewLibrary.handle(name, args)
+              ?: uiBuilderMcp?.handle(name, args)
+              ?: errorCallToolResult("unknown tool: $name")
+          } else {
+            errorCallToolResult("unknown tool: $name")
+          }
+      }
+    return if (name in CORE_TOOL_OUTPUT_SCHEMAS) result.withJsonTextStructure() else result
   }
 
   /** A budgeted render call still running or not yet collected; see [withCallBudget]. */

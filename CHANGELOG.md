@@ -1,5 +1,28 @@
 # Changelog
 
+## [4.22.0](https://github.com/yschimke/compose-preview-mcp/compare/v4.21.0...v4.22.0) (2026-11-20)
+
+
+### Features
+
+* declare MCP ToolAnnotations and outputSchemas for core tools ([#214](https://github.com/yschimke/compose-preview-mcp/issues/214)) ([bc2f3c6](https://github.com/yschimke/compose-preview-mcp/commit/bc2f3c658d81c90c45fd54a5ef54fb5825d73233))
+* rename the simulator tools to android_simulator_* ([#202](https://github.com/yschimke/compose-preview-mcp/issues/202)) ([8aa0b16](https://github.com/yschimke/compose-preview-mcp/commit/8aa0b16d693c41e9f4196d91d3435f2820d12aab))
+* **simulator:** expose the Android Simulator as an MCP App ([#215](https://github.com/yschimke/compose-preview-mcp/issues/215)) ([747effc](https://github.com/yschimke/compose-preview-mcp/commit/747effc5e94785f02381c993306760e9e9dab19d))
+
+
+### Bug Fixes
+
+* **deps:** update dependency ee.schimke.composeai:compose-ai-tools-bom to v2.101.0 ([#212](https://github.com/yschimke/compose-preview-mcp/issues/212)) ([6a2c171](https://github.com/yschimke/compose-preview-mcp/commit/6a2c171bc6d7e9296223b7d4aa217506e0862fe9))
+* **deps:** update dependency ee.schimke.composeai:compose-ai-tools-bom to v2.95.0 ([#204](https://github.com/yschimke/compose-preview-mcp/issues/204)) ([a28def8](https://github.com/yschimke/compose-preview-mcp/commit/a28def833e24ac53de3b2c7e207264de82bd6b87))
+* **deps:** update dependency ee.schimke.composeai:compose-ai-tools-bom to v2.95.2 ([#206](https://github.com/yschimke/compose-preview-mcp/issues/206)) ([ac8c32a](https://github.com/yschimke/compose-preview-mcp/commit/ac8c32abaf592e1a5cc7ead1e6988967bf106f99))
+* **deps:** update dependency ee.schimke.composeai:compose-ai-tools-bom to v2.97.0 ([#207](https://github.com/yschimke/compose-preview-mcp/issues/207)) ([d3f743e](https://github.com/yschimke/compose-preview-mcp/commit/d3f743ea3daf27c554ccb7e6ed7d09269b97d87f))
+* **deps:** update dependency ee.schimke.composeai:compose-ai-tools-bom to v2.98.0 ([#209](https://github.com/yschimke/compose-preview-mcp/issues/209)) ([0091c66](https://github.com/yschimke/compose-preview-mcp/commit/0091c66433a0c15e6341f81edfa06578a8de5166))
+* **deps:** update dependency ee.schimke.composeai:compose-ai-tools-bom to v2.98.1 ([#210](https://github.com/yschimke/compose-preview-mcp/issues/210)) ([6f2ff74](https://github.com/yschimke/compose-preview-mcp/commit/6f2ff74817b1a9c45e8026b6cdd324b698aaa5e0))
+* **deps:** update dependency ee.schimke.composeai:compose-ai-tools-bom to v2.99.2 ([#211](https://github.com/yschimke/compose-preview-mcp/issues/211)) ([0295730](https://github.com/yschimke/compose-preview-mcp/commit/02957308e63a8a60de54df72d6c5700d70d2280d))
+* **deps:** update dependency ee.schimke.composeai:compose-preview-contracts-bom to v3.44.0 ([#213](https://github.com/yschimke/compose-preview-mcp/issues/213)) ([1a069b7](https://github.com/yschimke/compose-preview-mcp/commit/1a069b7d95368821c36249ed3512ffafaea7455c))
+* **mcp-app:** take the viewer and preview library from compose-preview-server v3.165.0 ([#203](https://github.com/yschimke/compose-preview-mcp/issues/203)) ([8be6d00](https://github.com/yschimke/compose-preview-mcp/commit/8be6d008582501e8c08f497c30dad7d6ad25a320))
+* **simulator:** sync MCP schema, fix location lng, and evict exited simulators ([#217](https://github.com/yschimke/compose-preview-mcp/issues/217)) ([238cbfd](https://github.com/yschimke/compose-preview-mcp/commit/238cbfdd384fed9714753c1f1ea0f74278d3ac51))
+
 ## [4.21.0](https://github.com/yschimke/compose-preview-mcp/compare/v4.20.0...v4.21.0) (2026-11-15)
 
 

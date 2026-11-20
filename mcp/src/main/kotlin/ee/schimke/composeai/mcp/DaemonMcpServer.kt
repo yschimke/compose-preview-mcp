@@ -181,7 +181,12 @@ private val LIST_PROJECTS_OUTPUT_SCHEMA: JsonObject = buildJsonObject {
             put("type", "array")
             putJsonObject("items") { put("type", "string") }
           }
-          putJsonObject("branch") { put("type", "string") }
+          putJsonObject("branch") {
+            putJsonArray("type") {
+              add(JsonPrimitive("string"))
+              add(JsonPrimitive("null"))
+            }
+          }
         }
       }
     }

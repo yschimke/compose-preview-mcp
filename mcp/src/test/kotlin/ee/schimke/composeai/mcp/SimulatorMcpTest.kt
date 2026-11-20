@@ -1185,6 +1185,8 @@ class SimulatorMcpTest {
     for (name in followUpTools) {
       assertThat(byName.getValue(name).meta).isEqualTo(expectedFollowUpMeta)
     }
+    assertThat(DaemonMcpServer.localInstructionsTail("antigravity-client"))
+      .contains("sidecar://compose-preview/compose-preview/simulator")
   }
 
   @Test

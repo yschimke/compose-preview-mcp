@@ -2249,25 +2249,42 @@ class DaemonMcpServer(
   }
 
   private fun currentToolDefs(session: Session): List<ToolDef> {
-    if (fullToolDefsFuture.isDone) {
-      return runCatching { fullToolDefsFuture.getNow(bootstrapToolDefs) }
-        .getOrDefault(bootstrapToolDefs)
-    }
-    // Enroll the session under the lock so the completion handler can't race past it; if the future
-    // completed meanwhile, serve the full list instead.
-    val servedBootstrap =
-      synchronized(bootstrapNotifyLock) {
-        if (fullToolDefsFuture.isDone) {
-          false
+    val tools =
+      if (fullToolDefsFuture.isDone) {
+        runCatching { fullToolDefsFuture.getNow(bootstrapToolDefs) }.getOrDefault(bootstrapToolDefs)
+      } else {
+        // Enroll the session under the lock so the completion handler can't race past it; if the
+        // future completed meanwhile, serve the full list instead.
+        val servedBootstrap =
+          synchronized(bootstrapNotifyLock) {
+            if (fullToolDefsFuture.isDone) {
+              false
+            } else {
+              bootstrapServedSessions.add(session)
+              true
+            }
+          }
+        if (servedBootstrap) {
+          bootstrapToolDefs
         } else {
-          bootstrapServedSessions.add(session)
-          true
+          runCatching { fullToolDefsFuture.getNow(bootstrapToolDefs) }
+            .getOrDefault(bootstrapToolDefs)
         }
       }
-    return if (servedBootstrap) {
-      bootstrapToolDefs
-    } else {
-      runCatching { fullToolDefsFuture.getNow(bootstrapToolDefs) }.getOrDefault(bootstrapToolDefs)
+    return adjustToolDefsForClient(tools, (session as? McpSession)?.clientName)
+  }
+
+  internal fun adjustToolDefsForClient(tools: List<ToolDef>, clientName: String?): List<ToolDef> {
+    if (clientName != ANTIGRAVITY_CLIENT_NAME) return tools
+    // Antigravity hosts the live simulator in its Auxiliary Pane sidecar
+    // (`sidecar://compose-preview/compose-preview/simulator`); omit `ui.resourceUri` so
+    // `android_simulator_launch` does not also mount a duplicate inline card in chat.
+    return tools.map { tool ->
+      if (tool.name == SimulatorMcp.LAUNCH) {
+        tool.copy(meta = SimulatorMcp.APP_CALLABLE_TOOL_META)
+      } else {
+        tool
+      }
     }
   }
 
@@ -9262,7 +9279,11 @@ class DaemonMcpServer(
       when (clientName) {
         ANTIGRAVITY_CLIENT_NAME ->
           "Show a render to the person by pasting the <agent-embed> line render_preview " +
-            "returns (it writes cardPath beside pngPath) into your reply."
+            "returns (it writes cardPath beside pngPath) into your reply.\n" +
+            "After android_simulator_launch, link " +
+            "[Open Android Simulator](sidecar://compose-preview/compose-preview/simulator) in " +
+            "your reply so the live simulator (including paired phone + watch) opens in the " +
+            "sidebar instead of inline in chat."
         in FILE_RESULT_CLIENT_NAMES ->
           "render_preview returns pngPath rather than the image here; open it with your " +
             "file-read tool to see the render."

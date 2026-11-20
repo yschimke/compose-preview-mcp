@@ -976,21 +976,8 @@ class SimulatorMcp(
     )
   }
 
-  /**
-   * Follow-up simulator tools stay app-callable (`ui.visibility = ["model", "app"]`) so the open
-   * simulator UI can invoke them directly without causing hosts to mount a fresh inline card on
-   * every model call.
-   */
-  private val appCallableToolMeta: JsonObject by lazy {
-    buildJsonObject {
-      putJsonObject("ui") {
-        putJsonArray("visibility") {
-          add(JsonPrimitive("model"))
-          add(JsonPrimitive("app"))
-        }
-      }
-    }
-  }
+  private val appCallableToolMeta: JsonObject
+    get() = APP_CALLABLE_TOOL_META
 
   private fun error(message: String, events: JsonArray? = null): CallToolResult {
     val structured =
@@ -1479,6 +1466,19 @@ class SimulatorMcp(
     const val MCP_APP_MIME_TYPE: String = "text/html;profile=mcp-app"
     const val RESULT_META_KEY: String = "compose-preview/simulator"
     internal const val VIEWER_ASSET: String = "simulator.html"
+
+    /**
+     * Visibility-only MCP App metadata (`ui.visibility = ["model", "app"]`, no `resourceUri`):
+     * keeps simulator tools app-callable without causing hosts to mount an inline card in chat.
+     */
+    internal val APP_CALLABLE_TOOL_META: JsonObject = buildJsonObject {
+      putJsonObject("ui") {
+        putJsonArray("visibility") {
+          add(JsonPrimitive("model"))
+          add(JsonPrimitive("app"))
+        }
+      }
+    }
 
     /** A phone frame with a play indicator; monochrome 20x20 stroke icon. */
     private const val SIMULATOR_ICON_SVG: String =

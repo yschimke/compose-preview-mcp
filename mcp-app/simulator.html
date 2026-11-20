@@ -551,7 +551,7 @@
   function simArgs(extra = {}) {
     const args = { ...extra };
     if (state.simulatorId) args.simulator = state.simulatorId;
-    if (state.device && state.devices.length > 1) args.device = state.device;
+    if (state.device) args.device = state.device;
     return args;
   }
 
@@ -761,10 +761,12 @@
     const target = state.device ? ` (${state.device})` : '';
     request('ui/message', {
       role: 'user',
-      content: {
-        type: 'text',
-        text: `Inspect the current Android Simulator screen for ${state.simulatorId}${target} and describe what you see.`,
-      },
+      content: [
+        {
+          type: 'text',
+          text: `Inspect the current Android Simulator screen for ${state.simulatorId}${target} and describe what you see.`,
+        },
+      ],
     }).catch(err => showNotice('Message failed', err.message));
   });
 

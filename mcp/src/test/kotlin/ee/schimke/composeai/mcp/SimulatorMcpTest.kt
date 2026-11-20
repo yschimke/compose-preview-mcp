@@ -1129,6 +1129,8 @@ class SimulatorMcpTest {
     assertThat(content.text).contains("android_simulator_command")
     assertThat(content.text).contains("android_simulator_screenshot")
     assertThat(content.text).contains("if (event.source !== window.parent) return;")
+    assertThat(content.text).contains("if (state.device) args.device = state.device;")
+    assertThat(content.text).contains("content: [")
   }
 
   @Test

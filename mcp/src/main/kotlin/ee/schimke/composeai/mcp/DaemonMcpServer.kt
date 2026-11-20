@@ -9279,7 +9279,7 @@ class DaemonMcpServer(
       when (clientName) {
         ANTIGRAVITY_CLIENT_NAME ->
           "Show a render to the person by pasting the <agent-embed> line render_preview " +
-            "returns (it writes cardPath beside pngPath) into your reply.\n" +
+            "returns (it writes cardPath beside pngPath) into your reply. " +
             "After android_simulator_launch, link " +
             "[Open Android Simulator](sidecar://compose-preview/compose-preview/simulator) in " +
             "your reply so the live simulator (including paired phone + watch) opens in the " +

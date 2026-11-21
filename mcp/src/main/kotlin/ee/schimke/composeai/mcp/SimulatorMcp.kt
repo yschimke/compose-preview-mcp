@@ -38,33 +38,31 @@ import kotlinx.serialization.json.putJsonArray
 import kotlinx.serialization.json.putJsonObject
 
 /**
- * An Android app running in Robolectric's simulator, driven by the agent: the `android_simulator_*`
- * tools over `compose-preview android-simulator <apk> --control stdio` (run as its original name,
+ * An Android app running in Robolectric's simulator, driven by the agent: the `simulator_*` tools
+ * over `compose-preview android-simulator <apk> --control stdio` (run as its original name,
  * `launch`; compose-ai-tools' `docs/SIMULATOR.md`).
  *
- * - `android_simulator_launch` starts the CLI on an APK and waits for its `ready` event. The window
- *   stays up unless `headless`, so the person watches the agent work (the CLI draws each tap and
- *   swipe over it); with no display the CLI runs headless anyway.
- * - `android_simulator_command` sends one control-channel command (tap, swipe, text, back,
- *   hierarchy, startActivity, startService, broadcast, query, …) and returns its result, plus the
- *   events the app produced since the last call (activities resumed, services started, unhandled
- *   intents).
- * - `android_simulator_screenshot` returns the display as an image.
- * - `android_simulator_logs` returns the tail of the simulator's log (the app's logcat,
- *   Robolectric).
- * - `android_simulator_restart` starts the app again in a fresh simulator JVM, keeping its data
- *   unless asked not to; `android_simulator_update` does the same with another APK (a rebuild), as
- *   `adb install -r` would. Both are the CLI's own `restart` / `update` commands, so the session,
- *   its id and the window's place survive, and both report where the time went.
- * - `android_simulator_stop` ends a simulator; all of them end with the server.
+ * - `simulator_launch` starts the CLI on an APK and waits for its `ready` event. The window stays
+ *   up unless `headless`, so the person watches the agent work (the CLI draws each tap and swipe
+ *   over it); with no display the CLI runs headless anyway.
+ * - `simulator_command` sends one control-channel command (tap, swipe, text, back, hierarchy,
+ *   startActivity, startService, broadcast, query, …) and returns its result, plus the events the
+ *   app produced since the last call (activities resumed, services started, unhandled intents).
+ * - `simulator_screenshot` returns the display as an image.
+ * - `simulator_logs` returns the tail of the simulator's log (the app's logcat, Robolectric).
+ * - `simulator_restart` starts the app again in a fresh simulator JVM, keeping its data unless
+ *   asked not to; `simulator_update` does the same with another APK (a rebuild), as `adb install
+ *   -r` would. Both are the CLI's own `restart` / `update` commands, so the session, its id and the
+ *   window's place survive, and both report where the time went.
+ * - `simulator_stop` ends a simulator; all of them end with the server.
  *
  * With `pair`, one simulator id is a phone and its paired watch (`launch --pair`): `device` picks
  * which one a command, screenshot or log read is for, every event carries its `device`, and every
  * log line starts with `[phone]` or `[watch]`.
  *
  * Each simulator is one CLI child process speaking JSON lines; stderr (the app's logs) is kept as a
- * bounded tail for error reports and `android_simulator_logs`. Opens no socket, so it adds nothing
- * to the layer rule.
+ * bounded tail for error reports and `simulator_logs`. Opens no socket, so it adds nothing to the
+ * layer rule.
  */
 class SimulatorMcp(
   /**
@@ -77,7 +75,7 @@ class SimulatorMcp(
   /** Runs `adb <args>`; a seam so tests need no SDK. */
   private val adb: (List<String>, Long) -> AdbRun = defaultAdb(),
   /**
-   * Compiles a `android_simulator_reload`'s edited `files` through the preview build (the server's
+   * Compiles a `simulator_reload`'s edited `files` through the preview build (the server's
    * `notify_file_changed`), so the reload can take the classes it wrote instead of running Gradle.
    * Answers null when every file was compiled and each compile succeeded, else why not (reported as
    * `precompileSkipped`); the seam itself is null when the server has no preview build.
@@ -89,6 +87,11 @@ class SimulatorMcp(
    * tests that do not need HTTP).
    */
   private val bridgeFile: File? = SimulatorBridgeServer.defaultBridgeFile(),
+  /**
+   * Timeout for best-effort initial frame capture embedded into `simulator_launch`'s UI-only
+   * `_meta`; 0 disables initial capture.
+   */
+  private val initialScreenshotTimeoutMs: Long = DEFAULT_INITIAL_SCREENSHOT_TIMEOUT_MS,
 ) {
 
   private val simulators = ConcurrentHashMap<String, Simulator>()
@@ -213,7 +216,7 @@ class SimulatorMcp(
   private suspend fun launch(args: JsonObject): CallToolResult {
     val project = args.string("project")?.let { File(it).absoluteFile }
     if (project != null && !project.isDirectory) {
-      return error("android_simulator_launch: no such project directory: $project")
+      return error("simulator_launch: no such project directory: $project")
     }
     val apk = args.string("apk")
     val adbDevice = args.boolean("adb") == true
@@ -223,21 +226,21 @@ class SimulatorMcp(
       apk == null && project == null && !adbDevice && rawWatchface == null && formFactor == null
     ) {
       return error(
-        "android_simulator_launch: `apk` (a path), `project` (a Gradle build), `watchface`, or " +
+        "simulator_launch: `apk` (a path), `project` (a Gradle build), `watchface`, or " +
           "`formFactor` is required, unless `adb` starts a device with nothing installed.",
       )
     }
     if (adbDevice && project != null) {
       return error(
-        "android_simulator_launch: `adb` runs its own device; drop `project` (or `adb`).",
+        "simulator_launch: `adb` runs its own device; drop `project` (or `adb`).",
       )
     }
     val file = apk?.let { File(it).absoluteFile }
-    if (file != null && !file.isFile) return error("android_simulator_launch: no such APK: $file")
+    if (file != null && !file.isFile) return error("simulator_launch: no such APK: $file")
     val watchfaceFile =
       rawWatchface?.takeIf { it.endsWith(".apk", ignoreCase = true) }?.let { File(it).absoluteFile }
     if (watchfaceFile != null && !watchfaceFile.isFile) {
-      return error("android_simulator_launch: no such watchface APK: $watchfaceFile")
+      return error("simulator_launch: no such watchface APK: $watchfaceFile")
     }
     val watchfaceArg = watchfaceFile?.path ?: rawWatchface
     val rawDwfRuntime = args.string("dwfRuntime")
@@ -248,7 +251,7 @@ class SimulatorMcp(
         else -> {
           val runtimeFile = File(rawDwfRuntime).absoluteFile
           if (!runtimeFile.isFile) {
-            return error("android_simulator_launch: no such DWF runtime APK: $runtimeFile")
+            return error("simulator_launch: no such DWF runtime APK: $runtimeFile")
           }
           runtimeFile.path
         }
@@ -259,11 +262,10 @@ class SimulatorMcp(
         ?.map { File(it).absoluteFile }
         .orEmpty()
     for (extra in installs) {
-      if (!extra.isFile) return error("android_simulator_launch: no such APK to install: $extra")
+      if (!extra.isFile) return error("simulator_launch: no such APK to install: $extra")
     }
     val pair = args.string("pair")?.let { File(it).absoluteFile }
-    if (pair != null && !pair.isFile)
-      return error("android_simulator_launch: no such APK to pair: $pair")
+    if (pair != null && !pair.isFile) return error("simulator_launch: no such APK to pair: $pair")
     val cliArgs = buildList {
       // `launch` is the CLI's original name for `android-simulator`, kept there as a trampoline to
       // it. Every CLI release has `launch`, and the launcher found here can be an older one than
@@ -324,7 +326,7 @@ class SimulatorMcp(
       } catch (e: CancellationException) {
         throw e
       } catch (e: Exception) {
-        return error("android_simulator_launch: could not start compose-preview: ${e.message}")
+        return error("simulator_launch: could not start compose-preview: ${e.message}")
       }
     val id = "sim-${nextId.getAndIncrement()}"
     val expectedReadies = if (adbDevice) 1 else (if (pair != null) 2 else 1) + installs.size
@@ -397,6 +399,7 @@ class SimulatorMcp(
       put("info", ready)
       simulator.device?.let { put("device", it) }
       installed?.string("package")?.let { put("installed", it) }
+      bridgePort?.let { put("bridgePort", it) }
       // The CLI's `conversion` event: whether the APK's classes came from its cache, and the cost.
       val conversions = events.filter { (it as? JsonObject)?.string("event") == "conversion" }
       if (conversions.isNotEmpty()) {
@@ -407,7 +410,45 @@ class SimulatorMcp(
       }
       put("events", events)
     }
-    return ok(result, simulatorResultMeta(simulator, action = "launch", running = true))
+    val initialShots =
+      if (!simulator.exited && initialScreenshotTimeoutMs > 0L) {
+        withContext(Dispatchers.IO) { captureInitialScreenshots(simulator) }
+      } else {
+        emptyMap()
+      }
+    val singlePng = if (simulator.deviceList().isEmpty()) initialShots[""] else null
+    val multiShots = if (simulator.deviceList().isNotEmpty()) initialShots else emptyMap()
+    return ok(
+      result,
+      simulatorResultMeta(
+        simulator,
+        action = "launch",
+        running = !simulator.exited,
+        pngBase64 = singlePng,
+        screenshots = multiShots,
+      ),
+    )
+  }
+
+  private fun captureInitialScreenshots(simulator: Simulator): Map<String, String> {
+    val devices = simulator.deviceList()
+    val targets = if (devices.isEmpty()) listOf<String?>(null) else devices
+    val captured = LinkedHashMap<String, String>()
+    for (dev in targets) {
+      if (simulator.exited) break
+      val payload = buildJsonObject {
+        put("cmd", "screenshot")
+        dev?.let { put("device", it) }
+      }
+      val reply = simulator.send(payload, initialScreenshotTimeoutMs)
+      if (reply is Reply.Ok) {
+        reply.result
+          .string("png")
+          ?.takeIf { it.isNotBlank() }
+          ?.let { png -> captured[dev ?: ""] = png }
+      }
+    }
+    return captured
   }
 
   /**
@@ -420,12 +461,12 @@ class SimulatorMcp(
 
   private fun notStarted(simulator: Simulator, cause: String): CallToolResult =
     error(
-      "android_simulator_launch: the simulator did not start ($cause).\n" + simulator.stderrTail(),
+      "simulator_launch: the simulator did not start ($cause).\n" + simulator.stderrTail(),
     )
 
   private fun command(args: JsonObject): CallToolResult {
     val simulator = simulator(args) ?: return noSimulator()
-    val cmd = args.string("cmd") ?: return error("android_simulator_command: `cmd` is required.")
+    val cmd = args.string("cmd") ?: return error("simulator_command: `cmd` is required.")
     val payload = buildJsonObject {
       for ((key, value) in args) if (key != "simulator") put(key, value)
       put("cmd", cmd)
@@ -648,7 +689,7 @@ class SimulatorMcp(
     val device =
       simulator.device
         ?: return error(
-          "$ADB: ${simulator.id} is not an adb device: launch it with android_simulator_launch `adb: true`.",
+          "$ADB: ${simulator.id} is not an adb device: launch it with simulator_launch `adb: true`.",
         )
     val serial = device.string("serial") ?: return error("$ADB: the device has no serial.")
     val argv =
@@ -754,7 +795,7 @@ class SimulatorMcp(
 
   private fun noSimulator(): CallToolResult =
     error(
-      if (simulators.isEmpty()) "No simulator is running: start one with android_simulator_launch."
+      if (simulators.isEmpty()) "No simulator is running: start one with simulator_launch."
       else "Name the simulator: one of ${simulators.keys.sorted().joinToString()}.",
     )
 
@@ -956,6 +997,7 @@ class SimulatorMcp(
     running: Boolean,
     device: String? = null,
     pngBase64: String? = null,
+    screenshots: Map<String, String> = emptyMap(),
   ): JsonObject = buildJsonObject {
     putJsonObject(RESULT_META_KEY) {
       put("simulator", simulator.id)
@@ -968,6 +1010,13 @@ class SimulatorMcp(
       }
       device?.let { put("device", it) }
       pngBase64?.let { put("pngBase64", it) }
+      if (screenshots.isNotEmpty()) {
+        putJsonObject("screenshots") {
+          for ((dev, png) in screenshots) {
+            put(dev, png)
+          }
+        }
+      }
     }
   }
 
@@ -977,9 +1026,9 @@ class SimulatorMcp(
     )
 
   /**
-   * Only `android_simulator_launch` links `ui.resourceUri` so MCP Apps hosts open one interactive
-   * simulator view per launch instead of spawning duplicate cards on every follow-up command,
-   * screenshot, or log call.
+   * Only `simulator_launch` links `ui.resourceUri` so MCP Apps hosts open one interactive simulator
+   * view per launch instead of spawning duplicate cards on every follow-up command, screenshot, or
+   * log call.
    */
   private val launchToolMeta: JsonObject by lazy {
     OpenAiUi.appToolMeta(
@@ -1009,40 +1058,40 @@ class SimulatorMcp(
           "simulator id plus the app's package, display size and first activity. The first " +
           "launch of an APK converts its dex (tens of seconds; cached by content after that). " +
           "The person sees the app in a window, with each tap and swipe you send drawn over " +
-          "it, unless `headless`. Drive it with android_simulator_command and android_simulator_screenshot; " +
-          "end it with android_simulator_stop. Needs Java 21+ and a local Android SDK. With `project` " +
-          "(the app's Gradle build) the APK is optional, and android_simulator_reload delivers an " +
+          "it, unless `headless`. Drive it with simulator_command and simulator_screenshot; " +
+          "end it with simulator_stop. Needs Java 21+ and a local Android SDK. With `project` " +
+          "(the app's Gradle build) the APK is optional, and simulator_reload delivers an " +
           "edit in seconds by compiling only the classes. With " +
           "`dataLayer: agent` the app's Wearable Data Layer is simulated and you play its " +
-          "peer devices (android_simulator_command dataLayer). With `pair` (a Wear OS APK) a phone " +
+          "peer devices (simulator_command dataLayer). With `pair` (a Wear OS APK) a phone " +
           "and its watch run paired over a simulated Data Layer under one simulator id: " +
           "`info` then holds each device's, `device: watch` sends a command or screenshot to " +
           "the watch, every event carries its `device`, and log lines start [phone] or [watch]. " +
           "With `install` extra APKs (such as a ComplicationDataSourceService or Watch Face " +
           "Push app) run beside the main APK on the same device bus. " +
           "With `launcher` a home screen sits under the app: HOME, icons, shortcuts and the " +
-          "app's own widgets (android_simulator_command home, widget, …); `widgets` starts with some " +
+          "app's own widgets (simulator_command home, widget, …); `widgets` starts with some " +
           "placed. On a Wear app `launcher` is the watch's system UI instead: watch face " +
           "(androidx WatchFaceService and Declarative / Watch Face Format faces, either via " +
           "`dwfRuntime` or built-in WFF compilation, plus Watch Face Push), launcher, " +
           "notification stream, tiles and widgets carousel, quick settings; `watchface` sets " +
           "the initial watch face APK or component, `themeFromWatchface` applies watch face " +
           "palette colors to dynamic Material 3 system colors, `tiles` starts with tiles or " +
-          "Wear Widgets in the carousel, and android_simulator_watchface_snapshot captures watch face " +
+          "Wear Widgets in the carousel, and simulator_watchface_snapshot captures watch face " +
           "status and pixels together. " +
           "With `adb` the simulator is a device adb and Android Studio see (emulator-5554 and " +
-          "up), with or without an APK: drive it with android_simulator_adb as well.",
+          "up), with or without an APK: drive it with simulator_adb as well.",
       inputSchema =
         schema(
           """
           {"type":"object","properties":{
             "apk":{"type":"string","description":"Absolute path to the APK (a debug build works best). Optional with `project`, `watchface`, `formFactor`, or `adb`."},
-            "project":{"type":"string","description":"The app's Gradle build (absolute path), for android_simulator_reload: edit, then reload without packaging an APK."},
+            "project":{"type":"string","description":"The app's Gradle build (absolute path), for simulator_reload: edit, then reload without packaging an APK."},
             "module":{"type":"string","description":"With project: the app module (default app)."},
             "variant":{"type":"string","description":"With project: the variant (default debug)."},
             "live":{"type":"boolean","description":"With project: reload by itself whenever a source file is saved; each reload is a `reload` event."},
             "gradleArgs":{"type":"array","items":{"type":"string"},"description":"With project: extra Gradle arguments, e.g. --max-workers=2."},
-            "standby":{"type":"boolean","description":"Keep a second simulator JVM prepared up to the app's own code, so android_simulator_restart and android_simulator_reload take seconds. Default on with project, off otherwise; it costs a second JVM's memory."},
+            "standby":{"type":"boolean","description":"Keep a second simulator JVM prepared up to the app's own code, so simulator_restart and simulator_reload take seconds. Default on with project, off otherwise; it costs a second JVM's memory."},
             "headless":{"type":"boolean","description":"No window. Default false: the person can watch."},
             "showAgent":{"type":"boolean","description":"Draw your taps, swipes and commands over the window. Default true."},
             "qualifiers":{"type":"string","description":"Display resource qualifiers, Robolectric syntax, e.g. w411dp-h891dp-xxhdpi-night. Default w360dp-h640dp-hdpi."},
@@ -1050,7 +1099,7 @@ class SimulatorMcp(
             "sdk":{"type":"integer","description":"Android API level to simulate (default 35)."},
             "network":{"type":"string","description":"Start on wifi (default), cellular, ethernet, vpn, captive (no internet) or offline; append ,airplane (or just airplane) for airplane mode."},
             "java":{"type":"string","description":"JDK 21+ home or java binary, when the default JDK is older."},
-            "dataLayer":{"type":"string","enum":["agent"],"description":"Simulate the Wearable Data Layer with you as the peer: what the app sends arrives as datalayer events of kind send; android_simulator_command dataLayer {action} connects a peer, puts data items, sends messages and replies."},
+            "dataLayer":{"type":"string","enum":["agent"],"description":"Simulate the Wearable Data Layer with you as the peer: what the app sends arrives as datalayer events of kind send; simulator_command dataLayer {action} connects a peer, puts data items, sends messages and replies."},
             "fingerprint":{"type":"string","description":"Build.FINGERPRINT in place of Robolectric's 'robolectric', which some apps check to skip real work under tests."},
             "pair":{"type":"string","description":"Absolute path to a Wear OS APK to run as this phone app's paired watch."},
             "pairQualifiers":{"type":"string","description":"The paired watch's display qualifiers (default a large round watch)."},
@@ -1058,10 +1107,10 @@ class SimulatorMcp(
             "watchface":{"type":"string","description":"Wear: initial watch face to activate on launch — an APK path, a package name, or a WatchFaceService component (pkg/.Cls). Implies launcher on Wear."},
             "dwfRuntime":{"type":"string","description":"Wear Declarative Watch Face runtime APK path, or 'auto' to use a cached/pulled DeclarativeWatchFaceRuntime.apk and fall back to built-in WFF compilation."},
             "themeFromWatchface":{"type":"boolean","description":"Wear: apply active watch face palette colors to Android dynamic Material 3 system colors (system_accent1..3, system_neutral1..2, system_primary_dark, etc.). Default true on Wear."},
-            "adb":{"type":"boolean","description":"Serve the simulator to adb and Android Studio as an emulator (emulator-5554 and up): `apk` becomes optional (the device boots to its home screen or watch face), an `apk` given is installed rather than started, and android_simulator_adb runs adb commands against it. The result's `device` holds its serial and ports. Not with project or pair."},
+            "adb":{"type":"boolean","description":"Serve the simulator to adb and Android Studio as an emulator (emulator-5554 and up): `apk` becomes optional (the device boots to its home screen or watch face), an `apk` given is installed rather than started, and simulator_adb runs adb commands against it. The result's `device` holds its serial and ports. Not with project or pair."},
             "formFactor":{"type":"string","enum":["phone","wear","glimmer","xr"],"description":"The device's form factor; detected from the APK when there is one. With no apk, wear boots a watch."},
-            "playServices":{"type":"string","enum":["installed","none","outdated","disabled","invalid"],"description":"Google Play services as the app's availability checks see it: installed (default, SUCCESS), or none / outdated / disabled / invalid to test the app's error paths. android_simulator_command playServices {state} changes it while the app runs."},
-            "launcher":{"type":"boolean","description":"A system UI under the app. On a phone, a home screen: HOME and Back from the app's root go there, its icons reopen the app, a long press shows the app's shortcuts, and the app's widgets are placed, sized, updated and tapped there (android_simulator_command home, drawer, shortcuts, shortcut, widgets, widget, picker). On a Wear app, the watch's: a watch face, launcher, notification stream, tiles and widgets carousel and quick settings (android_simulator_command home, launcher, notifications, notification, ongoing, tiles, watchface, health, clock, weather, accel, quickSettings)."},
+            "playServices":{"type":"string","enum":["installed","none","outdated","disabled","invalid"],"description":"Google Play services as the app's availability checks see it: installed (default, SUCCESS), or none / outdated / disabled / invalid to test the app's error paths. simulator_command playServices {state} changes it while the app runs."},
+            "launcher":{"type":"boolean","description":"A system UI under the app. On a phone, a home screen: HOME and Back from the app's root go there, its icons reopen the app, a long press shows the app's shortcuts, and the app's widgets are placed, sized, updated and tapped there (simulator_command home, drawer, shortcuts, shortcut, widgets, widget, picker). On a Wear app, the watch's: a watch face, launcher, notification stream, tiles and widgets carousel and quick settings (simulator_command home, launcher, notifications, notification, ongoing, tiles, watchface, health, clock, weather, accel, quickSettings)."},
             "widgets":{"type":"array","items":{"type":"string"},"description":"Widget providers (a receiver class or its short name) to place on the home screen at launch: the app starts once, then the home screen shows with them. Implies launcher."},
             "tiles":{"type":"array","items":{"type":"string"},"description":"Wear: tile or Wear Widget services (a class or its short name) in the carousel at launch. Implies launcher."},
             "displays":{"type":"array","items":{"type":"string"},"description":"Secondary displays to attach at launch, e.g. '1280x720,name=TV'."}
@@ -1199,7 +1248,7 @@ class SimulatorMcp(
         schema(
           """
           {"type":"object","required":["cmd"],"properties":{
-            "simulator":{"type":"string","description":"Simulator id from android_simulator_launch; optional when only one runs."},
+            "simulator":{"type":"string","description":"Simulator id from simulator_launch; optional when only one runs."},
             "device":{"type":"string","description":"With a paired or multi-app (`install`) launch: which device or package runs the command (e.g. phone, watch, watch/<pkg>, or <pkg>)."},
             "cmd":{"type":"string","enum":["info","hierarchy","find","tap","longPress","swipe","touch","key","back","text","launch","finish","activities","startActivity","startService","stopService","bindService","unbindService","services","broadcast","notifications","query","components","qualifiers","permissions","biometric","speech","credentials","clipboard","alarms","jobs","downloads","pick","assistant","appfunctions","wait","ping","dataLayer","companion","shell","settings","logcat","files","content","network","wifi","bluetooth","display","displays","resize","device","rotate","posture","fontScale","split","foreground","battery","location","timezone","forceStop","clearData","kill","recreate","savedState","snapshotData","getprop","package","packages","screen","ambient","tilt","wake","palm","sleep","playServices","home","drawer","shortcuts","shortcut","widgets","widget","picker","launcher","notification","ongoing","tiles","watchface","clock","health","weather","accel","quickSettings","rotary","zoom"]},
             "text":{"type":"string"},"textContains":{"type":"string"},"desc":{"type":"string"},"descContains":{"type":"string"},
@@ -1329,7 +1378,7 @@ class SimulatorMcp(
         "Start the app again in a fresh simulator JVM (a new process: statics, singletons and " +
           "in-memory state reset), without ending the simulator session. Its data (files, " +
           "databases, preferences, external storage) is kept unless keepData is false. Faster " +
-          "than android_simulator_stop + android_simulator_launch: the converted classes are reused. Returns " +
+          "than simulator_stop + simulator_launch: the converted classes are reused. Returns " +
           "the new `info` and timings: snapshotMs, stopMs, startMs, totalMs and startup " +
           "{jvmMs, sandboxMs, applicationMs, firstActivityMs}.",
       inputSchema =
@@ -1356,7 +1405,7 @@ class SimulatorMcp(
           "-r` would: its data is kept (keepData false drops it) and the session continues. " +
           "The APK's classes come from the CLI's conversion cache when this exact APK was seen " +
           "before; otherwise it converts first (the result's `conversion` says which, and how " +
-          "long). Returns the new `info` and the same timings as android_simulator_restart.",
+          "long). Returns the new `info` and the same timings as simulator_restart.",
       inputSchema =
         schema(
           """
@@ -1380,7 +1429,7 @@ class SimulatorMcp(
       description =
         "After editing the app's source: compile it (the module's Kotlin/Java compile, which " +
           "also relinks resources; no dexing or APK packaging) and put the changed classes in " +
-          "the running app. Needs a android_simulator_launch with `project`. An edit inside composables " +
+          "the running app. Needs a simulator_launch with `project`. An edit inside composables " +
           "only is hot-swapped (mode `hotswap`): the classes are redefined and the activity " +
           "re-created as on a rotation, so the app stays on its screen and keeps " +
           "rememberSaveable and saveable navigation state. Anything else restarts the app on " +
@@ -1430,7 +1479,7 @@ class SimulatorMcp(
           "them; Studio's watch face and complication run configurations (set-watchface, " +
           "set-complication, show-watchface) work the same way. Returns exitCode, stdout (or the bytes written to `output`), stderr and the " +
           "simulator's events. Needs the SDK's platform-tools adb (ANDROID_HOME or PATH). " +
-          "android_simulator_command and android_simulator_screenshot keep working on the same device.",
+          "simulator_command and simulator_screenshot keep working on the same device.",
       inputSchema =
         schema(
           """
@@ -1452,7 +1501,7 @@ class SimulatorMcp(
       name = STOP,
       title = "Android simulator: stop it",
       meta = appCallableToolMeta,
-      description = "End a simulator started with android_simulator_launch, closing its window.",
+      description = "End a simulator started with simulator_launch, closing its window.",
       inputSchema =
         schema(
           """
@@ -1479,6 +1528,7 @@ class SimulatorMcp(
     const val MCP_APP_MIME_TYPE: String = "text/html;profile=mcp-app"
     const val RESULT_META_KEY: String = "compose-preview/simulator"
     internal const val VIEWER_ASSET: String = "simulator.html"
+    internal const val DEFAULT_INITIAL_SCREENSHOT_TIMEOUT_MS: Long = 3_000L
 
     /**
      * Visibility-only MCP App metadata (`ui.visibility = ["model", "app"]`, no `resourceUri`):
@@ -1505,16 +1555,16 @@ class SimulatorMcp(
         .use { it.readText() }
     }
 
-    const val LAUNCH = "android_simulator_launch"
-    const val COMMAND = "android_simulator_command"
-    const val SCREENSHOT = "android_simulator_screenshot"
-    const val WATCHFACE_SNAPSHOT = "android_simulator_watchface_snapshot"
-    const val STOP = "android_simulator_stop"
-    const val LOGS = "android_simulator_logs"
-    const val RESTART = "android_simulator_restart"
-    const val UPDATE = "android_simulator_update"
-    const val RELOAD = "android_simulator_reload"
-    const val ADB = "android_simulator_adb"
+    const val LAUNCH = "simulator_launch"
+    const val COMMAND = "simulator_command"
+    const val SCREENSHOT = "simulator_screenshot"
+    const val WATCHFACE_SNAPSHOT = "simulator_watchface_snapshot"
+    const val STOP = "simulator_stop"
+    const val LOGS = "simulator_logs"
+    const val RESTART = "simulator_restart"
+    const val UPDATE = "simulator_update"
+    const val RELOAD = "simulator_reload"
+    const val ADB = "simulator_adb"
     /** The tools `tools/list` advertises, named for the CLI's `android-simulator` command. */
     val TOOL_NAMES: List<String> =
       listOf(
@@ -1531,11 +1581,10 @@ class SimulatorMcp(
       )
 
     /**
-     * The tools' names before they carried `android_`: still answered, so a host's permission
-     * allowlist or a saved prompt that names `simulator_launch` keeps working, but no longer
-     * listed, so an agent sees one set of Android simulator tools, distinct from the preview tools.
+     * Previous `android_simulator_*` names: still answered so existing host permission allowlists
+     * or saved prompts keep working, while `tools/list` advertises the shorter `simulator_*` names.
      */
-    val LEGACY_NAMES: Map<String, String> = TOOL_NAMES.associateBy { it.removePrefix("android_") }
+    val LEGACY_NAMES: Map<String, String> = TOOL_NAMES.associateBy { "android_$it" }
 
     /** Every name [handle] answers: [TOOL_NAMES] and their [LEGACY_NAMES]. */
     val HANDLED_NAMES: Set<String> = TOOL_NAMES.toSet() + LEGACY_NAMES.keys

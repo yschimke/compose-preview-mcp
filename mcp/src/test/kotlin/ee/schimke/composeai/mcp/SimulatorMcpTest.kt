@@ -118,20 +118,21 @@ class SimulatorMcpTest {
   }
 
   @Test
-  fun `tools are listed as android_simulator and their old names are still answered`() {
+  fun `tools are listed as simulator and their android_simulator aliases are still answered`() {
     val listed = mcp.toolDefs()
     assertThat(listed.map { it.name }).containsExactlyElementsIn(SimulatorMcp.TOOL_NAMES)
     for (tool in listed) {
-      assertThat(tool.name).startsWith("android_simulator_")
+      assertThat(tool.name).startsWith("simulator_")
       assertThat(tool.title).startsWith("Android simulator: ")
     }
-    assertThat(SimulatorMcp.LEGACY_NAMES).containsEntry("simulator_launch", SimulatorMcp.LAUNCH)
+    assertThat(SimulatorMcp.LEGACY_NAMES)
+      .containsEntry("android_simulator_launch", SimulatorMcp.LAUNCH)
 
-    // A host that still calls the old name reaches the same tool.
-    val result = call("simulator_launch", buildJsonObject { put("apk", apk().path) })
+    // A host that still calls the previous android_simulator_* name reaches the same tool.
+    val result = call("android_simulator_launch", buildJsonObject { put("apk", apk().path) })
     assertThat(result.isError).isNull()
     assertThat(started.single().first()).isEqualTo("launch")
-    assertThat(call("simulator_stop", buildJsonObject {}).isError).isNull()
+    assertThat(call("android_simulator_stop", buildJsonObject {}).isError).isNull()
   }
 
   @Test
@@ -444,6 +445,8 @@ class SimulatorMcpTest {
         },
         readyTimeoutMs = 10_000,
         commandTimeoutMs = 10_000,
+        bridgeFile = null,
+        initialScreenshotTimeoutMs = 0L,
       )
     try {
       val watch = tmp.newFile("wear.apk")
@@ -1127,8 +1130,8 @@ class SimulatorMcpTest {
     assertThat(content.mimeType).isEqualTo(SimulatorMcp.MCP_APP_MIME_TYPE)
     assertThat(content.meta).isEqualTo(descriptor.meta)
     assertThat(content.text).contains("request('ui/initialize'")
-    assertThat(content.text).contains("android_simulator_command")
-    assertThat(content.text).contains("android_simulator_screenshot")
+    assertThat(content.text).contains("simulator_command")
+    assertThat(content.text).contains("simulator_screenshot")
     assertThat(content.text).contains("if (event.source !== window.parent) return;")
     assertThat(content.text).contains("if (targetDevice) args.device = targetDevice;")
     assertThat(content.text).contains("content: [")
@@ -1261,13 +1264,17 @@ class SimulatorMcpTest {
   }
 
   @Test
-  fun `paired launch with extra install APKs reports all ready device keys in meta and bridge summaries`() {
+  fun `paired launch with extra install APKs reports all ready device keys and initial screenshots`() {
     val pairedInstallScript =
       """
       echo '{"event":"ready","device":"phone","package":"com.example.phone","width":540,"height":960}'
       echo '{"event":"ready","device":"watch","package":"com.example.watch","width":454,"height":454}'
       echo '{"event":"ready","device":"watch/com.example.extra","package":"com.example.extra","width":454,"height":454}'
-      while IFS= read -r line; do :; done
+      while IFS= read -r line; do
+        id=$(printf '%s' "${'$'}line" | sed -n 's/.*"id":\([0-9]*\).*/\1/p')
+        dev=$(printf '%s' "${'$'}line" | sed -n 's/.*"device":"\([^"]*\)".*/\1/p')
+        echo "{\"id\":${'$'}id,\"ok\":true,\"result\":{\"png\":\"png-${'$'}dev\"}}"
+      done
       """
         .trimIndent()
     val multi =
@@ -1292,11 +1299,17 @@ class SimulatorMcpTest {
         )!!
       }
       assertThat(launched.isError).isNull()
-      val metaDevices =
-        launched.meta!![SimulatorMcp.RESULT_META_KEY]!!.jsonObject["devices"]!!.jsonArray.map {
-          it.jsonPrimitive.content
-        }
+      // Model content stays text-only (no inline PNG token cost); screenshots live in UI-only
+      // _meta.
+      assertThat(launched.content.filterIsInstance<ContentBlock.Image>()).isEmpty()
+      val meta = launched.meta!![SimulatorMcp.RESULT_META_KEY]!!.jsonObject
+      val metaDevices = meta["devices"]!!.jsonArray.map { it.jsonPrimitive.content }
       assertThat(metaDevices).containsExactly("phone", "watch", "watch/com.example.extra").inOrder()
+      val screenshots = meta["screenshots"]!!.jsonObject
+      assertThat(screenshots["phone"]!!.jsonPrimitive.content).isEqualTo("png-phone")
+      assertThat(screenshots["watch"]!!.jsonPrimitive.content).isEqualTo("png-watch")
+      assertThat(screenshots["watch/com.example.extra"]!!.jsonPrimitive.content)
+        .isEqualTo("png-watch/com.example.extra")
 
       val summaryDevices =
         multi.activeSimulatorSummaries().single()["devices"]!!.jsonArray.map {
@@ -1317,6 +1330,8 @@ class SimulatorMcpTest {
     assertThat(launchMeta["simulator"]!!.jsonPrimitive.content).isEqualTo("sim-1")
     assertThat(launchMeta["action"]!!.jsonPrimitive.content).isEqualTo("launch")
     assertThat(launchMeta["running"]!!.jsonPrimitive.boolean).isTrue()
+    assertThat(launchMeta["pngBase64"]!!.jsonPrimitive.content).isEqualTo("iVBORw0KGgo=")
+    assertThat(launched.content.filterIsInstance<ContentBlock.Image>()).isEmpty()
 
     val shot = call(SimulatorMcp.SCREENSHOT, JsonObject(emptyMap()))
     val shotMeta = shot.meta!![SimulatorMcp.RESULT_META_KEY]!!.jsonObject

@@ -8268,7 +8268,7 @@ class DaemonMcpServerTest {
   @Test
   fun `core tools declare MCP annotations, outputSchemas, and structuredContent`() {
     client.initialize()
-    client.awaitToolsContaining("android_simulator_stop")
+    client.awaitToolsContaining("simulator_stop")
     val toolsByName =
       client.request("tools/list").jsonObject["tools"]!!.jsonArray.associateBy {
         it.jsonObject["name"]!!.jsonPrimitive.content
@@ -8290,7 +8290,7 @@ class DaemonMcpServerTest {
     assertThat(annotation("find_previews_for_file", "readOnlyHint")).isEqualTo("true")
     assertThat(annotation("register_project", "idempotentHint")).isEqualTo("true")
     assertThat(annotation("unregister_project", "destructiveHint")).isEqualTo("true")
-    assertThat(annotation("android_simulator_stop", "destructiveHint")).isEqualTo("true")
+    assertThat(annotation("simulator_stop", "destructiveHint")).isEqualTo("true")
 
     val expectedProperties =
       mapOf(

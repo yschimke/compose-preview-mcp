@@ -7,7 +7,7 @@
   Interactive Android Simulator MCP App (ui://compose-preview/simulator) and standalone sidebar UI.
 
   Displays the live screen(s) of an Android app running in Robolectric's simulator
-  (`android_simulator_*` tools in compose-preview-mcp), including paired phone + watch sessions
+  (`simulator_*` tools in compose-preview-mcp), including paired phone + watch sessions
   side-by-side, and lets the user tap, long-press, swipe, type text, press Back/Home, reload
   edits, restart, stop, and inspect logs/events.
 
@@ -190,8 +190,8 @@
   <div class="stage" id="stage">
     <div class="screens" id="screens" hidden></div>
     <div class="empty" id="empty">
-      Launch an app with <code>android_simulator_launch</code> or capture a frame with
-      <code>android_simulator_screenshot</code>.
+      Launch an app with <code>simulator_launch</code> or capture a frame with
+      <code>simulator_screenshot</code>.
     </div>
   </div>
 
@@ -747,10 +747,24 @@
       renderDrawer();
     }
 
+    const multiShots =
+      meta?.screenshots && typeof meta.screenshots === 'object' ? meta.screenshots : null;
+    let renderedAny = false;
+    if (multiShots) {
+      for (const [dev, b64] of Object.entries(multiShots)) {
+        if (typeof b64 === 'string' && b64) {
+          setImageBase64(b64, dev || null);
+          renderedAny = true;
+        }
+      }
+    }
     const imgDevice = deviceOverride || meta?.device || state.device;
-    const png = extractPngFromResult(result);
+    const png = renderedAny ? null : extractPngFromResult(result);
     if (png) {
       setImageBase64(png, imgDevice);
+      renderedAny = true;
+    }
+    if (renderedAny) {
       setStatus(state.lastActivity ? state.lastActivity.split('.').pop() : 'Ready');
     } else if (state.running && !fromSelf && meta?.action !== 'logs') {
       // Quietly pull fresh screenshot(s) after launch without showing an error banner
@@ -786,12 +800,12 @@
     let url = '';
     let options = { cache: 'no-store', headers: httpHeaders() };
 
-    if (name === 'android_simulator_screenshot') {
+    if (name === 'simulator_screenshot') {
       const qs = new URLSearchParams();
       if (args.device) qs.set('device', args.device);
       url = `${apiBase}/${encodedId}/screenshot${qs.toString() ? `?${qs}` : ''}`;
       options.method = 'GET';
-    } else if (name === 'android_simulator_logs') {
+    } else if (name === 'simulator_logs') {
       const qs = new URLSearchParams();
       if (args.device) qs.set('device', args.device);
       if (args.lines) qs.set('lines', String(args.lines));
@@ -799,10 +813,10 @@
       options.method = 'GET';
     } else {
       const actionMap = {
-        android_simulator_command: 'command',
-        android_simulator_reload: 'reload',
-        android_simulator_restart: 'restart',
-        android_simulator_stop: 'stop',
+        simulator_command: 'command',
+        simulator_reload: 'reload',
+        simulator_restart: 'restart',
+        simulator_stop: 'stop',
       };
       const action = actionMap[name];
       if (!action) throw new Error(`Unsupported HTTP bridge tool: ${name}`);
@@ -880,7 +894,7 @@
     const targets = isPaired() ? state.devices : [state.device || null];
     for (const dev of targets) {
       if (epoch !== selectionEpoch) return;
-      const res = await callTool('android_simulator_screenshot', simArgs({}, dev));
+      const res = await callTool('simulator_screenshot', simArgs({}, dev));
       if (epoch !== selectionEpoch) return;
       if (res && !res.isError) state.running = true;
       onToolResult(res, { fromSelf: true, deviceOverride: dev });
@@ -927,7 +941,7 @@
     setStatus(`${label}…`);
     syncControls();
     try {
-      const res = await callTool('android_simulator_command', simArgs({ cmd, ...extra }, targetDevice));
+      const res = await callTool('simulator_command', simArgs({ cmd, ...extra }, targetDevice));
       if (epoch !== selectionEpoch) return;
       state.lastAction = targetDevice ? `${targetDevice}: ${label}` : label;
       onToolResult(res, { fromSelf: true, deviceOverride: targetDevice || null });
@@ -958,7 +972,7 @@
       state.lastAction = label;
       onToolResult(res, { fromSelf: true });
       updateModelContext();
-      if (toolName !== 'android_simulator_stop' && !res?.isError && state.running) {
+      if (toolName !== 'simulator_stop' && !res?.isError && state.running) {
         await captureAllDevices(epoch);
       }
     } catch (err) {
@@ -977,6 +991,7 @@
     btnLive.classList.add('active');
     btnLive.setAttribute('aria-pressed', 'true');
     liveTimer = setInterval(() => {
+      if (document.visibilityState === 'hidden') return;
       if (state.running && !busy) void refreshScreenshot({ quiet: true });
     }, LIVE_POLL_MS);
   }
@@ -989,6 +1004,12 @@
     btnLive.classList.remove('active');
     btnLive.setAttribute('aria-pressed', 'false');
   }
+
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible' && liveTimer && state.running && !busy) {
+      void refreshScreenshot({ quiet: true });
+    }
+  });
 
   // ---------------------------------------------------------------------------------------------
   // Pointer gesture handling on each device screen
@@ -1091,9 +1112,9 @@
     if (liveTimer) stopLive();
     else startLive();
   });
-  btnReload.addEventListener('click', () => void runLifecycle('android_simulator_reload', 'Reloading'));
-  btnRestart.addEventListener('click', () => void runLifecycle('android_simulator_restart', 'Restarting'));
-  btnStop.addEventListener('click', () => void runLifecycle('android_simulator_stop', 'Stopping'));
+  btnReload.addEventListener('click', () => void runLifecycle('simulator_reload', 'Reloading'));
+  btnRestart.addEventListener('click', () => void runLifecycle('simulator_restart', 'Restarting'));
+  btnStop.addEventListener('click', () => void runLifecycle('simulator_stop', 'Stopping'));
 
   btnEnter.addEventListener('click', () => void sendCommand('key', { key: 'ENTER' }, 'Enter'));
   textForm.addEventListener('submit', event => {
@@ -1110,7 +1131,7 @@
     setStatus('Loading logs…');
     syncControls();
     try {
-      const res = await callTool('android_simulator_logs', simArgs({ lines: 80 }));
+      const res = await callTool('simulator_logs', simArgs({ lines: 80 }));
       onToolResult(res, { fromSelf: true });
       setStatus('Logs loaded');
     } catch (err) {

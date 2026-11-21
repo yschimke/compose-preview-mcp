@@ -113,17 +113,20 @@
     border-color: var(--accent);
     box-shadow: 0 0 0 1px var(--accent), 0 2px 12px rgba(0, 0, 0, 0.18);
   }
-  .device-card[data-device="watch"] .screen-wrap {
+  .device-card[data-device="watch"] .screen-wrap,
+  .device-card[data-device^="watch/"] .screen-wrap {
     border-radius: 28px;
   }
   .screen-wrap img {
     display: block; max-width: 100%; max-height: 64vh; width: auto; height: auto;
     cursor: crosshair; -webkit-user-drag: none;
   }
-  .screens.paired .device-card[data-device="phone"] .screen-wrap img {
+  .screens.paired .device-card[data-device="phone"] .screen-wrap img,
+  .screens.paired .device-card[data-device^="phone/"] .screen-wrap img {
     max-height: 58vh;
   }
-  .screens.paired .device-card[data-device="watch"] .screen-wrap img {
+  .screens.paired .device-card[data-device="watch"] .screen-wrap img,
+  .screens.paired .device-card[data-device^="watch/"] .screen-wrap img {
     max-height: 220px;
   }
   .ripple {

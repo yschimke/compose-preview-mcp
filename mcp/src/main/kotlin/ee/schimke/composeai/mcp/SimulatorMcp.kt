@@ -117,8 +117,9 @@ class SimulatorMcp(
           put("id", sim.id)
           put("apk", sim.apk)
           put("running", true)
-          if (sim.devices.isNotEmpty()) {
-            putJsonArray("devices") { sim.devices.sorted().forEach { add(JsonPrimitive(it)) } }
+          val devices = sim.deviceList()
+          if (devices.isNotEmpty()) {
+            putJsonArray("devices") { devices.forEach { add(JsonPrimitive(it)) } }
           }
           sim.ready.getNow(null)?.let { put("info", it) }
         }
@@ -787,6 +788,17 @@ class SimulatorMcp(
     val device: JsonObject?
       get() = deviceInfo.getNow(null)
 
+    /**
+     * All device targets reported by this simulator (`["phone", "watch"]` for `--pair`, or the
+     * sorted `ready` device keys for multi-app `--pair` + `--install` launches).
+     */
+    fun deviceList(): List<String> =
+      when {
+        devices.isNotEmpty() -> devices.sorted()
+        readies.isNotEmpty() -> readies.keys.sorted()
+        else -> emptyList()
+      }
+
     /** With `adb` and an APK: its `installed` or `installFailed` event. */
     val install = CompletableFuture<JsonObject>()
     private val readies = ConcurrentHashMap<String, JsonObject>()
@@ -950,8 +962,9 @@ class SimulatorMcp(
       put("apk", simulator.apk)
       put("action", action)
       put("running", running)
-      if (simulator.devices.isNotEmpty()) {
-        putJsonArray("devices") { simulator.devices.sorted().forEach { add(JsonPrimitive(it)) } }
+      val devices = simulator.deviceList()
+      if (devices.isNotEmpty()) {
+        putJsonArray("devices") { devices.forEach { add(JsonPrimitive(it)) } }
       }
       device?.let { put("device", it) }
       pngBase64?.let { put("pngBase64", it) }

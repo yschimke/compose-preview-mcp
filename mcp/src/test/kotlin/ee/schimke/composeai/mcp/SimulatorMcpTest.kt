@@ -1261,6 +1261,56 @@ class SimulatorMcpTest {
   }
 
   @Test
+  fun `paired launch with extra install APKs reports all ready device keys in meta and bridge summaries`() {
+    val pairedInstallScript =
+      """
+      echo '{"event":"ready","device":"phone","package":"com.example.phone","width":540,"height":960}'
+      echo '{"event":"ready","device":"watch","package":"com.example.watch","width":454,"height":454}'
+      echo '{"event":"ready","device":"watch/com.example.extra","package":"com.example.extra","width":454,"height":454}'
+      while IFS= read -r line; do :; done
+      """
+        .trimIndent()
+    val multi =
+      SimulatorMcp(
+        start = { _, _ -> ProcessBuilder("bash", "-c", pairedInstallScript).start() },
+        readyTimeoutMs = 10_000,
+        commandTimeoutMs = 10_000,
+        bridgeFile = null,
+      )
+    try {
+      val phoneApk = apk()
+      val wearApk = tmp.newFile("wear.apk").apply { writeText("wear") }
+      val extraApk = tmp.newFile("extra.apk").apply { writeText("extra") }
+      val launched = runBlocking {
+        multi.handle(
+          SimulatorMcp.LAUNCH,
+          buildJsonObject {
+            put("apk", phoneApk.path)
+            put("pair", wearApk.path)
+            put("install", buildJsonArray { add(extraApk.path) })
+          },
+        )!!
+      }
+      assertThat(launched.isError).isNull()
+      val metaDevices =
+        launched.meta!![SimulatorMcp.RESULT_META_KEY]!!.jsonObject["devices"]!!.jsonArray.map {
+          it.jsonPrimitive.content
+        }
+      assertThat(metaDevices).containsExactly("phone", "watch", "watch/com.example.extra").inOrder()
+
+      val summaryDevices =
+        multi.activeSimulatorSummaries().single()["devices"]!!.jsonArray.map {
+          it.jsonPrimitive.content
+        }
+      assertThat(summaryDevices)
+        .containsExactly("phone", "watch", "watch/com.example.extra")
+        .inOrder()
+    } finally {
+      multi.shutdown()
+    }
+  }
+
+  @Test
   fun `launch screenshot command and stop carry app metadata without changing structuredContent`() {
     val launched = call(SimulatorMcp.LAUNCH, buildJsonObject { put("apk", apk().path) })
     val launchMeta = launched.meta!![SimulatorMcp.RESULT_META_KEY]!!.jsonObject

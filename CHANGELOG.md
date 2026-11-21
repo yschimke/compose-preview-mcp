@@ -1,5 +1,18 @@
 # Changelog
 
+## [4.25.0](https://github.com/yschimke/compose-preview-mcp/compare/v4.24.0...v4.25.0) (2026-11-21)
+
+
+### Features
+
+* **simulator:** shorten tools to simulator_*, embed initial launch frames, and pause hidden Live polling ([#232](https://github.com/yschimke/compose-preview-mcp/issues/232)) ([ea9efc7](https://github.com/yschimke/compose-preview-mcp/commit/ea9efc7dff2d3344fbafd8dd60f43fdfeee72b54))
+
+
+### Bug Fixes
+
+* **deps:** update dependency ee.schimke.composeai:compose-preview-daemon-bom to v3.28.2 ([#233](https://github.com/yschimke/compose-preview-mcp/issues/233)) ([69dbda7](https://github.com/yschimke/compose-preview-mcp/commit/69dbda7b239d5c0dbaace6daba4054caab9842c0))
+* **mcp-app:** take the viewer and preview library from compose-preview-server v3.188.0 ([#235](https://github.com/yschimke/compose-preview-mcp/issues/235)) ([fa9870f](https://github.com/yschimke/compose-preview-mcp/commit/fa9870f7d9c5a9aeb701288d0335b00d4d15387f))
+
 ## [4.24.0](https://github.com/yschimke/compose-preview-mcp/compare/v4.23.0...v4.24.0) (2026-11-21)
 
 

@@ -221,6 +221,12 @@
   const DEFAULT_DEVICE_KEY = '__default__';
 
   const queryParams = new URLSearchParams(window.location.search);
+  const bridgeToken = queryParams.get('token') || '';
+  if (bridgeToken && window.history?.replaceState) {
+    const cleaned = new URL(window.location.href);
+    cleaned.searchParams.delete('token');
+    window.history.replaceState(null, '', cleaned.toString());
+  }
   const rawApiBase =
     (typeof window.__SIMULATOR_API_BASE__ === 'string' && window.__SIMULATOR_API_BASE__) ||
     queryParams.get('apiBase') ||
@@ -230,6 +236,12 @@
     queryParams.get('transport') === 'http' ||
     typeof window.__SIMULATOR_API_BASE__ === 'string' ||
     (window.parent === window && window.location.protocol.startsWith('http'));
+
+  function httpHeaders(extra = {}) {
+    const headers = { ...extra };
+    if (bridgeToken) headers['X-Simulator-Token'] = bridgeToken;
+    return headers;
+  }
 
   const $ = id => document.getElementById(id);
   const root = document.documentElement;
@@ -761,12 +773,15 @@
     return args;
   }
 
+  let selectionEpoch = 0;
+  let pendingRefresh = false;
+
   async function callToolHttp(name, args) {
     const simId = args.simulator || state.simulatorId;
     if (!simId) throw new Error('No simulator selected');
     const encodedId = encodeURIComponent(simId);
     let url = '';
-    let options = { cache: 'no-store' };
+    let options = { cache: 'no-store', headers: httpHeaders() };
 
     if (name === 'android_simulator_screenshot') {
       const qs = new URLSearchParams();
@@ -790,7 +805,7 @@
       if (!action) throw new Error(`Unsupported HTTP bridge tool: ${name}`);
       url = `${apiBase}/${encodedId}/${action}`;
       options.method = 'POST';
-      options.headers = { 'Content-Type': 'application/json' };
+      options.headers = httpHeaders({ 'Content-Type': 'application/json' });
       options.body = JSON.stringify(args);
     }
 
@@ -811,10 +826,12 @@
 
   async function pollHttpSimulators() {
     if (!isHttpTransport) return;
+    const epoch = selectionEpoch;
     try {
-      const res = await fetch(apiBase, { cache: 'no-store' });
-      if (!res.ok) return;
+      const res = await fetch(apiBase, { cache: 'no-store', headers: httpHeaders() });
+      if (!res.ok || epoch !== selectionEpoch) return;
       const data = await res.json();
+      if (epoch !== selectionEpoch) return;
       const list = Array.isArray(data?.simulators) ? data.simulators : [];
       state.simulators = list;
       syncSimPicker();
@@ -856,23 +873,34 @@
     }
   }
 
-  async function captureAllDevices() {
+  async function captureAllDevices(epoch = selectionEpoch) {
     const targets = isPaired() ? state.devices : [state.device || null];
     for (const dev of targets) {
+      if (epoch !== selectionEpoch) return;
       const res = await callTool('android_simulator_screenshot', simArgs({}, dev));
+      if (epoch !== selectionEpoch) return;
       if (res && !res.isError) state.running = true;
       onToolResult(res, { fromSelf: true, deviceOverride: dev });
     }
   }
 
+  function flushPendingRefresh() {
+    if (pendingRefresh && state.running && !busy) {
+      pendingRefresh = false;
+      void refreshScreenshot({ quiet: true });
+    }
+  }
+
   async function refreshScreenshot({ quiet = false } = {}) {
     if ((!state.running && quiet) || busy || !initialized) return;
+    const epoch = selectionEpoch;
     busy = true;
     if (!quiet) setStatus('Capturing…');
     syncControls();
     try {
-      await captureAllDevices();
+      await captureAllDevices(epoch);
     } catch (err) {
+      if (epoch !== selectionEpoch) return;
       if (quiet && isPermissionOrDisabledError(err)) {
         setStatus('Live view available in Simulator sidebar');
       } else {
@@ -882,6 +910,7 @@
     } finally {
       busy = false;
       syncControls();
+      flushPendingRefresh();
     }
   }
 
@@ -890,45 +919,53 @@
     if (targetDevice && isPaired()) {
       selectActiveDevice(targetDevice);
     }
+    const epoch = selectionEpoch;
     busy = true;
     setStatus(`${label}…`);
     syncControls();
     try {
       const res = await callTool('android_simulator_command', simArgs({ cmd, ...extra }, targetDevice));
+      if (epoch !== selectionEpoch) return;
       state.lastAction = targetDevice ? `${targetDevice}: ${label}` : label;
       onToolResult(res, { fromSelf: true, deviceOverride: targetDevice || null });
       updateModelContext();
       if (!res?.isError && state.running) {
-        await captureAllDevices();
+        await captureAllDevices(epoch);
       }
     } catch (err) {
+      if (epoch !== selectionEpoch) return;
       showNotice(`${label} failed`, err.message);
       setStatus('Error');
     } finally {
       busy = false;
       syncControls();
+      flushPendingRefresh();
     }
   }
 
   async function runLifecycle(toolName, label) {
     if (!state.running || busy) return;
+    const epoch = selectionEpoch;
     busy = true;
     setStatus(`${label}…`);
     syncControls();
     try {
       const res = await callTool(toolName, simArgs());
+      if (epoch !== selectionEpoch) return;
       state.lastAction = label;
       onToolResult(res, { fromSelf: true });
       updateModelContext();
       if (toolName !== 'android_simulator_stop' && !res?.isError && state.running) {
-        await captureAllDevices();
+        await captureAllDevices(epoch);
       }
     } catch (err) {
+      if (epoch !== selectionEpoch) return;
       showNotice(`${label} failed`, err.message);
       setStatus('Error');
     } finally {
       busy = false;
       syncControls();
+      flushPendingRefresh();
     }
   }
 
@@ -1099,13 +1136,18 @@
   simSelect.addEventListener('change', () => {
     const picked = state.simulators.find(s => s.id === simSelect.value);
     if (!picked) return;
+    selectionEpoch++;
     state.simulatorId = picked.id;
     state.appName = picked.apk || picked.id;
     state.devices = Array.isArray(picked.devices) ? picked.devices : [];
     state.device = state.devices[0] || null;
     state.running = Boolean(picked.running);
     syncControls();
-    void refreshScreenshot();
+    if (busy) {
+      pendingRefresh = true;
+    } else {
+      void refreshScreenshot();
+    }
   });
 
   deviceSelect.addEventListener('change', () => {

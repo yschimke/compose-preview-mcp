@@ -1,5 +1,12 @@
 # Changelog
 
+## [4.25.0](https://github.com/yschimke/compose-preview-mcp/compare/v4.24.0...v4.25.0) (2026-11-21)
+
+
+### Bug Fixes
+
+* **deps:** update dependency ee.schimke.composeai:compose-preview-daemon-bom to v3.28.2 ([#233](https://github.com/yschimke/compose-preview-mcp/issues/233)) ([69dbda7](https://github.com/yschimke/compose-preview-mcp/commit/69dbda7b239d5c0dbaace6daba4054caab9842c0))
+
 ## [4.24.0](https://github.com/yschimke/compose-preview-mcp/compare/v4.23.0...v4.24.0) (2026-11-21)
 
 

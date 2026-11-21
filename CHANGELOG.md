@@ -1,5 +1,16 @@
 # Changelog
 
+## [4.24.0](https://github.com/yschimke/compose-preview-mcp/compare/v4.23.0...v4.24.0) (2026-11-21)
+
+
+### Bug Fixes
+
+* **deps:** update dependency ee.schimke.composeai:compose-preview-contracts-bom to v3.45.0 ([#230](https://github.com/yschimke/compose-preview-mcp/issues/230)) ([b19e4ca](https://github.com/yschimke/compose-preview-mcp/commit/b19e4cae8536561f68810705d4ae22a2cd45b2f2))
+* **mcp-app:** take the viewer and preview library from compose-preview-server v3.186.0 ([#221](https://github.com/yschimke/compose-preview-mcp/issues/221)) ([55ed567](https://github.com/yschimke/compose-preview-mcp/commit/55ed56754816cfe5cbb2e71cc7f995348ad48394))
+* **mcp-app:** take the viewer and preview library from compose-preview-server v3.187.0 ([#224](https://github.com/yschimke/compose-preview-mcp/issues/224)) ([66d71d7](https://github.com/yschimke/compose-preview-mcp/commit/66d71d78f59c7e8c0935aacef6340edcfe90b528))
+* **simulator:** report ready device keys for paired + install launches ([#231](https://github.com/yschimke/compose-preview-mcp/issues/231)) ([dd870c7](https://github.com/yschimke/compose-preview-mcp/commit/dd870c70b193df76cd3fce573bbd759fa12e5842))
+* **simulator:** stop duplicate MCP App views and context buildup, add paired side-by-side and sidebar bridge ([#225](https://github.com/yschimke/compose-preview-mcp/issues/225)) ([3dfa9de](https://github.com/yschimke/compose-preview-mcp/commit/3dfa9de2baa0aa5dddf2ec5a4ee1834a359a8978))
+
 ## [4.23.0](https://github.com/yschimke/compose-preview-mcp/compare/v4.22.0...v4.23.0) (2026-11-20)
 
 

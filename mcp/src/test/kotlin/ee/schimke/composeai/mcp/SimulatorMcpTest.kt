@@ -125,6 +125,7 @@ class SimulatorMcpTest {
       assertThat(tool.name).startsWith("simulator_")
       assertThat(tool.title).startsWith("Android simulator: ")
     }
+    assertThat(SimulatorMcp.LEGACY_NAMES).containsEntry("android_simulator_open", SimulatorMcp.OPEN)
     assertThat(SimulatorMcp.LEGACY_NAMES)
       .containsEntry("android_simulator_launch", SimulatorMcp.LAUNCH)
 
@@ -1144,8 +1145,40 @@ class SimulatorMcpTest {
   }
 
   @Test
-  fun `only launch links simulator MCP App resource while follow-up tools stay app-callable`() {
+  fun `open and launch link simulator MCP App resource while follow-up tools stay app-callable`() {
     val byName = mcp.toolDefs().associateBy { it.name }
+    val expectedOpenMeta =
+      Json.parseToJsonElement(
+          """
+          {
+            "ui": {
+              "resourceUri": "ui://compose-preview/simulator",
+              "visibility": ["model", "app"]
+            },
+            "ui/resourceUri": "ui://compose-preview/simulator",
+            "com.google.antigravity/ui": {
+              "entrypoints": [
+                {
+                  "type": "aux_pane",
+                  "title": "Android Simulator"
+                }
+              ]
+            },
+            "openai/ui": {
+              "entrypoints": [
+                {
+                  "type": "global"
+                }
+              ]
+            }
+          }
+          """,
+        )
+        .jsonObject
+    assertThat(byName.getValue(SimulatorMcp.OPEN).meta).isEqualTo(expectedOpenMeta)
+    assertThat(byName.getValue(SimulatorMcp.OPEN).icons!!.single().src)
+      .startsWith("data:image/svg+xml;base64,")
+
     val expectedLaunchMeta =
       Json.parseToJsonElement(
           """
@@ -1190,6 +1223,62 @@ class SimulatorMcpTest {
     }
     assertThat(DaemonMcpServer.localInstructionsTail("antigravity-client"))
       .contains("sidecar://compose-preview/compose-preview/simulator")
+  }
+
+  @Test
+  fun `open returns idle state when no simulator is running`() {
+    val result = call(SimulatorMcp.OPEN, JsonObject(emptyMap()))
+    assertThat(result.isError).isNull()
+    assertThat(result.structuredContent!!["running"]!!.jsonPrimitive.boolean).isFalse()
+    val meta = result.meta!!["compose-preview/simulator"]!!.jsonObject
+    assertThat(meta["action"]!!.jsonPrimitive.content).isEqualTo("open")
+    assertThat(meta["running"]!!.jsonPrimitive.boolean).isFalse()
+  }
+
+  @Test
+  fun `open returns running simulator summary and screenshots when active`() {
+    val apk = apk()
+    val launched = call(SimulatorMcp.LAUNCH, buildJsonObject { put("apk", apk.path) })
+    assertThat(launched.isError).isNull()
+    val simId = launched.structuredContent!!["simulator"]!!.jsonPrimitive.content
+
+    val result = call(SimulatorMcp.OPEN, JsonObject(emptyMap()))
+    assertThat(result.isError).isNull()
+    assertThat(result.structuredContent!!["running"]!!.jsonPrimitive.boolean).isTrue()
+    assertThat(result.structuredContent!!["simulator"]!!.jsonPrimitive.content).isEqualTo(simId)
+    val meta = result.meta!!["compose-preview/simulator"]!!.jsonObject
+    assertThat(meta["action"]!!.jsonPrimitive.content).isEqualTo("open")
+    assertThat(meta["running"]!!.jsonPrimitive.boolean).isTrue()
+    assertThat(meta["simulator"]!!.jsonPrimitive.content).isEqualTo(simId)
+  }
+
+  @Test
+  fun `adjustToolDefsForClient preserves simulator_open for antigravity client while stripping launch`() {
+    val tools = mcp.toolDefs()
+    val adjusted = DaemonMcpServer.adjustToolDefsForClient(tools, "antigravity-client")
+    val byName = adjusted.associateBy { it.name }
+
+    // simulator_open keeps its resourceUri and entrypoint metadata intact
+    val openMeta = byName.getValue(SimulatorMcp.OPEN).meta!!
+    assertThat(openMeta["ui"]!!.jsonObject["resourceUri"]!!.jsonPrimitive.content)
+      .isEqualTo("ui://compose-preview/simulator")
+    assertThat(openMeta["com.google.antigravity/ui"]!!.jsonObject["entrypoints"]!!.jsonArray)
+      .hasSize(1)
+
+    // simulator_launch is stripped of resourceUri to avoid duplicate inline chat card
+    val launchMeta = byName.getValue(SimulatorMcp.LAUNCH).meta!!
+    assertThat(launchMeta["ui"]!!.jsonObject.containsKey("resourceUri")).isFalse()
+  }
+
+  @Test
+  fun `simulator html bundles fast live poll, paired follow-up capture, and lastB64 caching`() {
+    val descriptor = mcp.resourceDescriptors().single { it.uri == SimulatorMcp.VIEWER_URI }
+    val content = mcp.readResource(descriptor.uri)!!.contents.single() as ResourceContents.Text
+    assertThat(content.text).contains("const LIVE_POLL_MS = 1000;")
+    assertThat(content.text).contains("let userPausedLive = false;")
+    assertThat(content.text).contains("entry.img.dataset.lastB64 === b64")
+    assertThat(content.text).contains("isPaired()")
+    assertThat(content.text).contains("setTimeout(() => {")
   }
 
   @Test

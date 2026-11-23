@@ -211,6 +211,7 @@ class DaemonMcpServerTest {
         "rc_open",
         // APKs in Robolectric's simulator, over `compose-preview android-simulator --control
         // stdio`.
+        SimulatorMcp.OPEN,
         SimulatorMcp.LAUNCH,
         SimulatorMcp.COMMAND,
         SimulatorMcp.SCREENSHOT,

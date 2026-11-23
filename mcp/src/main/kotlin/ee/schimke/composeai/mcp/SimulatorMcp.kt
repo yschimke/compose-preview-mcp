@@ -28,6 +28,7 @@ import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.addJsonObject
 import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
@@ -142,6 +143,7 @@ class SimulatorMcp(
 
   fun toolDefs(): List<ToolDef> =
     listOf(
+      openTool,
       launchTool,
       commandTool,
       screenshotTool,
@@ -184,6 +186,7 @@ class SimulatorMcp(
 
   suspend fun handle(name: String, args: JsonObject): CallToolResult? =
     when (LEGACY_NAMES[name] ?: name) {
+      OPEN -> open(args)
       LAUNCH -> launch(args)
       COMMAND -> withContext(Dispatchers.IO) { command(args) }
       SCREENSHOT -> withContext(Dispatchers.IO) { screenshot(args) }
@@ -207,6 +210,80 @@ class SimulatorMcp(
   }
 
   // -----------------------------------------------------------------------------------------------
+
+  /**
+   * Serves [OPEN]: opens or exposes the interactive simulator view in hosts supporting MCP App
+   * entrypoints (Antigravity's Auxiliary Pane / side pane and OpenAI / Codex global entrypoints).
+   *
+   * When no simulator is currently running, returns an idle status (isError = false) so the MCP App
+   * opens into its ready/idle state. When a simulator is running, returns its summary and initial
+   * screenshot(s) embedded in `_meta`.
+   */
+  private suspend fun open(args: JsonObject): CallToolResult {
+    val simId = args.string("simulator")
+    val requestedDevice = args.string("device")
+    val simulator =
+      if (simId != null) {
+        simulators[simId]
+      } else {
+        simulators.values.singleOrNull() ?: simulators.values.minByOrNull { it.id }
+      }
+
+    if (simulator == null || simulator.exited) {
+      val summaries = activeSimulatorSummaries()
+      val structured = buildJsonObject {
+        put("running", false)
+        put(
+          "message",
+          if (simId != null) "Simulator $simId is not running."
+          else "No Android simulator is currently running. Use simulator_launch to start an app.",
+        )
+        if (summaries.isNotEmpty()) {
+          putJsonArray("simulators") { summaries.forEach { add(it) } }
+        }
+      }
+      val meta = buildJsonObject {
+        putJsonObject(RESULT_META_KEY) {
+          put("action", "open")
+          put("running", false)
+          if (simId != null) put("simulator", simId)
+        }
+      }
+      return ok(structured, meta)
+    }
+
+    val initialShots =
+      if (initialScreenshotTimeoutMs > 0) {
+        withContext(Dispatchers.IO) { captureInitialScreenshots(simulator) }
+      } else {
+        emptyMap()
+      }
+    val singlePng = if (simulator.deviceList().isEmpty()) initialShots[""] else null
+    val multiShots = if (simulator.deviceList().isNotEmpty()) initialShots else emptyMap()
+
+    val structured = buildJsonObject {
+      put("simulator", simulator.id)
+      put("running", true)
+      put("apk", simulator.apk)
+      val devices = simulator.deviceList()
+      if (devices.isNotEmpty()) {
+        putJsonArray("devices") { devices.forEach { add(JsonPrimitive(it)) } }
+      }
+      simulator.ready.getNow(null)?.let { put("info", it) }
+    }
+
+    val meta =
+      simulatorResultMeta(
+        simulator,
+        action = "open",
+        running = true,
+        device = requestedDevice,
+        pngBase64 = singlePng,
+        screenshots = multiShots,
+      )
+
+    return ok(structured, meta)
+  }
 
   /**
    * Waits for `ready` without holding a thread, so a host cancelling the call cancels the wait; the
@@ -1026,6 +1103,58 @@ class SimulatorMcp(
     )
 
   /**
+   * `simulator_open` carries MCP App and entrypoint metadata: `ui.resourceUri` plus
+   * `com.google.antigravity/ui.entrypoints = [{type: "aux_pane"}]` for Antigravity's side pane and
+   * `openai/ui.entrypoints = [{type: "global"}]` for ChatGPT / Codex.
+   */
+  private val openToolMeta: JsonObject by lazy {
+    buildJsonObject {
+      putJsonObject("ui") {
+        put("resourceUri", VIEWER_URI)
+        putJsonArray("visibility") {
+          add(JsonPrimitive("model"))
+          add(JsonPrimitive("app"))
+        }
+      }
+      put("ui/resourceUri", VIEWER_URI)
+      putJsonObject(OpenAiUi.ANTIGRAVITY_UI_KEY) {
+        putJsonArray("entrypoints") {
+          addJsonObject {
+            put("type", "aux_pane")
+            put("title", "Android Simulator")
+          }
+        }
+      }
+      putJsonObject(OpenAiUi.UI_KEY) {
+        putJsonArray("entrypoints") { addJsonObject { put("type", "global") } }
+      }
+    }
+  }
+
+  private val openTool =
+    ToolDef(
+      name = OPEN,
+      title = "Android simulator: open interactive view",
+      icons = listOf(OpenAiUi.svgIcon(SIMULATOR_ICON_SVG)),
+      meta = openToolMeta,
+      description =
+        "Open the interactive Android Simulator MCP App in the side pane or full view. " +
+          "Shows the active simulator session (or an idle screen if none is running) and " +
+          "allows tapping, swiping, typing, and inspecting. Takes no arguments (optional " +
+          "`simulator` id or `device` when multiple run).",
+      inputSchema =
+        schema(
+          """
+          {"type":"object","properties":{
+            "simulator":{"type":"string","description":"Simulator id; optional when only one runs."},
+            "device":{"type":"string","description":"With a paired launch: which device's display (default phone/primary)."}
+          }}
+          """,
+        ),
+      readOnlyHint = true,
+    )
+
+  /**
    * Only `simulator_launch` links `ui.resourceUri` so MCP Apps hosts open one interactive simulator
    * view per launch instead of spawning duplicate cards on every follow-up command, screenshot, or
    * log call.
@@ -1555,6 +1684,7 @@ class SimulatorMcp(
         .use { it.readText() }
     }
 
+    const val OPEN = "simulator_open"
     const val LAUNCH = "simulator_launch"
     const val COMMAND = "simulator_command"
     const val SCREENSHOT = "simulator_screenshot"
@@ -1568,6 +1698,7 @@ class SimulatorMcp(
     /** The tools `tools/list` advertises, named for the CLI's `android-simulator` command. */
     val TOOL_NAMES: List<String> =
       listOf(
+        OPEN,
         LAUNCH,
         COMMAND,
         SCREENSHOT,

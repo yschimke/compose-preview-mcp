@@ -218,7 +218,7 @@
   const RESULT_META = 'compose-preview/simulator';
   const DRAG_THRESHOLD_PX = 12;
   const LONG_PRESS_MS = 550;
-  const LIVE_POLL_MS = 2000;
+  const LIVE_POLL_MS = 1000;
   const DISCOVERY_POLL_MS = 2500;
   const MAX_EVENT_LINES = 40;
   const DEFAULT_DEVICE_KEY = '__default__';
@@ -286,6 +286,7 @@
   let lastHeight = 0;
   let lastContextSummary = '';
   let dragStart = null;
+  let userPausedLive = false;
 
   const state = {
     simulatorId: null,
@@ -508,6 +509,8 @@
       ? device
       : (isPaired() ? (state.device || state.devices[0]) : DEFAULT_DEVICE_KEY);
     const entry = ensureScreenCard(key);
+    if (entry.img.dataset.lastB64 === b64) return;
+    entry.img.dataset.lastB64 = b64;
     entry.img.src = `data:image/png;base64,${b64}`;
     screensEl.hidden = false;
     emptyEl.hidden = true;
@@ -558,6 +561,8 @@
     btnAsk.disabled = !state.running || busy;
     if (!state.running && liveTimer) {
       stopLive();
+    } else if (state.running && !liveTimer && !userPausedLive) {
+      startLive();
     }
     syncDevicePicker();
     syncScreenCards();
@@ -948,6 +953,13 @@
       updateModelContext();
       if (!res?.isError && state.running) {
         await captureAllDevices(epoch);
+        if (isPaired()) {
+          setTimeout(() => {
+            if (state.running && !busy && epoch === selectionEpoch) {
+              void captureAllDevices(epoch);
+            }
+          }, 350);
+        }
       }
     } catch (err) {
       if (epoch !== selectionEpoch) return;
@@ -996,7 +1008,10 @@
     }, LIVE_POLL_MS);
   }
 
-  function stopLive() {
+  function stopLive({ userInitiated = false } = {}) {
+    if (userInitiated) {
+      userPausedLive = true;
+    }
     if (liveTimer) {
       clearInterval(liveTimer);
       liveTimer = null;
@@ -1109,8 +1124,12 @@
   btnHome.addEventListener('click', () => void sendCommand('home', {}, 'Home'));
   btnRefresh.addEventListener('click', () => void refreshScreenshot());
   btnLive.addEventListener('click', () => {
-    if (liveTimer) stopLive();
-    else startLive();
+    if (liveTimer) {
+      stopLive({ userInitiated: true });
+    } else {
+      userPausedLive = false;
+      startLive();
+    }
   });
   btnReload.addEventListener('click', () => void runLifecycle('simulator_reload', 'Reloading'));
   btnRestart.addEventListener('click', () => void runLifecycle('simulator_restart', 'Restarting'));

@@ -29,6 +29,9 @@ object OpenAiUi {
   /** `_meta` key for entrypoints (tools) and display modes (UI resource contents). */
   const val UI_KEY: String = "openai/ui"
 
+  /** `_meta` key for Antigravity UI entrypoints (`aux_pane`). */
+  const val ANTIGRAVITY_UI_KEY: String = "com.google.antigravity/ui"
+
   /** `_meta` key for opt-in OpenAI capabilities on a tool, e.g. [MENTIONS_SEARCH]. */
   const val EXTENSIONS_KEY: String = "openai/extensions"
 

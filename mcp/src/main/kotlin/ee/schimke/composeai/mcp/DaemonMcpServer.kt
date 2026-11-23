@@ -2274,20 +2274,6 @@ class DaemonMcpServer(
     return adjustToolDefsForClient(tools, (session as? McpSession)?.clientName)
   }
 
-  internal fun adjustToolDefsForClient(tools: List<ToolDef>, clientName: String?): List<ToolDef> {
-    if (clientName != ANTIGRAVITY_CLIENT_NAME) return tools
-    // Antigravity hosts the live simulator in its Auxiliary Pane sidecar
-    // (`sidecar://compose-preview/compose-preview/simulator`); omit `ui.resourceUri` so
-    // `android_simulator_launch` does not also mount a duplicate inline card in chat.
-    return tools.map { tool ->
-      if (tool.name == SimulatorMcp.LAUNCH) {
-        tool.copy(meta = SimulatorMcp.APP_CALLABLE_TOOL_META)
-      } else {
-        tool
-      }
-    }
-  }
-
   /** Tools served in the [McpToolProfile.STORYBOOK] profile: the aliases plus `status`. */
   private fun storybookToolDefs(): List<ToolDef> =
     buildFullToolDefs().filter { it.name == "status" || it.name in STORYBOOK_ALIAS_NAMES }
@@ -9220,6 +9206,22 @@ class DaemonMcpServer(
      * `clientInfo.name` Antigravity sends; it gets the file result and a preview card by default.
      */
     private const val ANTIGRAVITY_CLIENT_NAME: String = "antigravity-client"
+
+    internal fun adjustToolDefsForClient(tools: List<ToolDef>, clientName: String?): List<ToolDef> {
+      if (clientName != ANTIGRAVITY_CLIENT_NAME) return tools
+      // Antigravity hosts the live simulator in its Auxiliary Pane sidecar
+      // (`sidecar://compose-preview/compose-preview/simulator`); omit `ui.resourceUri` from launch
+      // so
+      // `simulator_launch` does not also mount a duplicate inline card in chat. `simulator_open`
+      // retains its entrypoint metadata for Antigravity's aux pane.
+      return tools.map { tool ->
+        if (tool.name == SimulatorMcp.LAUNCH || tool.name == "android_${SimulatorMcp.LAUNCH}") {
+          tool.copy(meta = SimulatorMcp.APP_CALLABLE_TOOL_META)
+        } else {
+          tool
+        }
+      }
+    }
 
     /** Largest static result a preview card embeds (UTF-8 bytes), as in compose-preview-card.py. */
     private const val MAX_CARD_RESULT_BYTES: Int = 500_000

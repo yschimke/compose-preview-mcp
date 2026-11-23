@@ -956,7 +956,7 @@
         if (isPaired()) {
           setTimeout(() => {
             if (state.running && !busy && epoch === selectionEpoch) {
-              void captureAllDevices(epoch);
+              void refreshScreenshot({ quiet: true });
             }
           }, 350);
         }

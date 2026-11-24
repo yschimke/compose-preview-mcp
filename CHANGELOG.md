@@ -1,5 +1,20 @@
 # Changelog
 
+## [4.26.0](https://github.com/yschimke/compose-preview-mcp/compare/v4.25.0...v4.26.0) (2026-11-24)
+
+
+### Features
+
+* **simulator:** expose aux_pane entrypoint and push live paired updates ([#243](https://github.com/yschimke/compose-preview-mcp/issues/243)) ([c1083e2](https://github.com/yschimke/compose-preview-mcp/commit/c1083e2c24bc1b0f0b77c865312042f57f3573f8))
+
+
+### Bug Fixes
+
+* **deps:** update dependency ee.schimke.composeai:compose-ai-tools-bom to v2.103.0 ([#239](https://github.com/yschimke/compose-preview-mcp/issues/239)) ([18df6a1](https://github.com/yschimke/compose-preview-mcp/commit/18df6a116d4bc8390560cf7ac6134ab18f64cf06))
+* **deps:** update dependency ee.schimke.composeai:compose-preview-contracts-bom to v3.46.0 ([#241](https://github.com/yschimke/compose-preview-mcp/issues/241)) ([0af50a6](https://github.com/yschimke/compose-preview-mcp/commit/0af50a6e6ce1097cea3bb12b125efbef5453e78c))
+* **deps:** update dependency ee.schimke.composeai:compose-preview-daemon-bom to v3.29.0 ([#242](https://github.com/yschimke/compose-preview-mcp/issues/242)) ([988fc8a](https://github.com/yschimke/compose-preview-mcp/commit/988fc8a23db39c0fa6a5211d7e678096e06857e6))
+* **mcp:** attach viewer PNG in _meta on file and observation renders ([#244](https://github.com/yschimke/compose-preview-mcp/issues/244)) ([3034dc7](https://github.com/yschimke/compose-preview-mcp/commit/3034dc72d3a69f5b0f1d584cc71b2d82953defde))
+
 ## [4.25.0](https://github.com/yschimke/compose-preview-mcp/compare/v4.24.0...v4.25.0) (2026-11-21)
 
 

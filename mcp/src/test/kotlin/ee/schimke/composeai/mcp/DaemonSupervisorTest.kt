@@ -169,6 +169,25 @@ class DaemonSupervisorTest {
   }
 
   @Test
+  fun `no replicas asks the daemon for exactly one sandbox`() {
+    // #237: an absent sandboxCount is not one sandbox; the Android daemon's own default is a pool
+    // of 5, whose workers all boot at start when on-demand boot is not requested.
+    val factory = FakeDaemonClientFactory()
+    val supervisor =
+      DaemonSupervisor(
+        descriptorProvider = FakeDescriptorProvider(),
+        clientFactory = factory,
+        replicasPerDaemon = 0,
+      )
+    val project = supervisor.registerProject(createTempDirectory("cp-no-replicas").toFile())
+    supervisor.daemonFor(project.workspaceId, ":app")
+    val properties = factory.spawnDescriptors.single().systemProperties
+    assertThat(properties).containsEntry("composeai.daemon.sandboxCount", "1")
+    assertThat(properties).doesNotContainKey(DaemonSupervisor.ON_DEMAND_WORKER_BOOT_PROP)
+    supervisor.shutdown()
+  }
+
+  @Test
   fun `a restarted supervisor re-registers a stored workspace id from workspaces json`() {
     val root = createTempDirectory("cp-supervisor-store").toFile()
     val project = File(root, "ComposeStarter").apply { mkdirs() }

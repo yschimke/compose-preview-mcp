@@ -4149,8 +4149,8 @@ class DaemonMcpServer(
 
   /**
    * Resolves `render_preview`'s `preview` argument (a function name or unique FQN suffix). With no
-   * match it first starts the registered modules' daemons so discovery seeds the catalog, then
-   * looks again.
+   * match it first starts the daemon of the module that lists or declares it
+   * ([spawnUndiscoveredModules]) so discovery seeds the catalog, then looks again.
    */
   private fun resolvePreviewName(
     name: String,
@@ -4201,20 +4201,13 @@ class DaemonMcpServer(
     progress: (String) -> Unit,
   ): List<String> {
     val bootstrap = projectBootstrap ?: return emptyList()
-    val function = name.substringAfterLast('.').trim()
-    if (function.isEmpty()) return emptyList()
-    val candidates = buildList {
-      add(function)
-      if ('_' in function) add(function.substringBefore('_'))
-    }
     var ran = false
     supervisor
       .listProjects()
       .filter { scope == null || it.workspaceId in scope }
       .filter { it.daemons.isNotEmpty() }
       .forEach { project ->
-        val declaring =
-          candidates.firstNotNullOfOrNull { findFunctionSource(project.path, it) } ?: return@forEach
+        val declaring = declaringSource(project.path, name) ?: return@forEach
         val attempt = RediscoveryKey(project.path.absolutePath, declaring.absolutePath)
         val version = declaring.lastModified()
         if (rediscoveredSources.put(attempt, version) == version) return@forEach
@@ -4304,6 +4297,17 @@ class DaemonMcpServer(
 
   private val rediscoveredSources = ConcurrentHashMap<RediscoveryKey, Long>()
 
+  /**
+   * The source under [root] declaring the function [name] names: its last segment, else, for a
+   * variant id such as `…Preview_Dark`, the part before the first `_`.
+   */
+  private fun declaringSource(root: File, name: String): File? {
+    val function = name.substringAfterLast('.').trim()
+    if (function.isEmpty()) return null
+    return listOfNotNull(function, function.substringBefore('_').takeIf { '_' in function })
+      .firstNotNullOfOrNull { findFunctionSource(root, it) }
+  }
+
   /** The first `.kt` under [root], outside build output, that declares `fun <function>(`. */
   private fun findFunctionSource(root: File, function: String): File? {
     val declaration = Regex("""\bfun\s+${Regex.escape(function)}\s*\(""")
@@ -4322,9 +4326,10 @@ class DaemonMcpServer(
    * as `structuredContent.suggestions`, so the agent can retry without listing every preview.
    */
   private fun noPreviewMatches(name: String): PreviewNameResolution.Missing {
-    val previewCount = catalog.values.sumOf { it.size }
-    val moduleCount = catalog.values.count { it.isNotEmpty() }
-    val suggestions = closePreviewNames(name)
+    val listed = unstartedManifestNames()
+    val previewCount = catalog.values.sumOf { it.size } + listed.sumOf { it.size }
+    val moduleCount = catalog.values.count { it.isNotEmpty() } + listed.count { it.isNotEmpty() }
+    val suggestions = closePreviewNames(name, listed.flatten())
     val message = buildString {
       append("no preview matches '").append(name).append("'.")
       if (suggestions.isNotEmpty()) append(" Closest: ").append(suggestions.joinToString(", "))
@@ -4400,12 +4405,30 @@ class DaemonMcpServer(
     return listOf(if (owner.isEmpty()) functionName else "$owner.$functionName")
   }
 
-  /** Up to five catalogued function names nearest to [name], for the no-match error. */
-  private fun closePreviewNames(name: String): List<String> {
+  /**
+   * Each module's function names from its `previews.json`, for the modules with a launch descriptor
+   * and nothing in the catalog: a lookup by name starts only the daemon it needs, so the no-match
+   * error reads what discovery wrote for the rest.
+   */
+  private fun unstartedManifestNames(): List<List<String>> =
+    supervisor.listProjects().flatMap { project ->
+      runCatching { DescriptorProvider.indexDescriptorsByModulePath(project.path) }
+        .getOrDefault(emptyMap())
+        .filter { (module, _) -> catalog[DaemonAddr(project.workspaceId, module)].isNullOrEmpty() }
+        .map { (_, descriptor) ->
+          manifestFunctionNames(File(descriptor.parentFile, "previews.json"))
+        }
+    }
+
+  /**
+   * Up to five function names nearest to [name], catalogued or [listed], for the no-match error.
+   */
+  private fun closePreviewNames(name: String, listed: List<String> = emptyList()): List<String> {
     val needle = name.substringAfterLast('.').lowercase()
     return catalog.values
       .flatMap { it.values }
       .map { entry -> entry.functionName ?: entry.fqn.substringAfterLast('.') }
+      .plus(listed)
       .distinct()
       .sortedWith(
         compareBy<String> { !it.lowercase().contains(needle) && !needle.contains(it.lowercase()) }
@@ -4431,8 +4454,11 @@ class DaemonMcpServer(
 
   /**
    * Starts each registered module's daemon that is not running, to seed the catalog. With a preview
-   * [name], only modules whose `previews.json` names it (when any does), so a multi-module build
-   * doesn't start every module's daemon for one preview.
+   * [name] in a build of several modules, only the modules whose `previews.json` names it; when
+   * none does (a preview no discovery has seen yet, or a typo), only the module holding the source
+   * that declares it, and none when no source does. So a multi-module build never starts every
+   * module's daemon for one preview, while a single-module build starts its one daemon as the
+   * warm-up would.
    */
   private fun spawnUndiscoveredModules(
     scope: Set<WorkspaceId>? = null,
@@ -4449,17 +4475,16 @@ class DaemonMcpServer(
           .getOrDefault(emptyMap())
         val modules =
           synchronized(project.knownModules) { project.knownModules.toSet() } + descriptors.keys
-        val declaring =
-          name
-            ?.let { previewName ->
-              descriptors.filter { (_, descriptor) ->
-                manifestNamesPreview(File(descriptor.parentFile, "previews.json"), previewName)
+        val wanted =
+          if (name == null || modules.size <= 1) modules
+          else
+            descriptors
+              .filter { (_, descriptor) ->
+                manifestNamesPreview(File(descriptor.parentFile, "previews.json"), name)
               }
-            }
-            ?.keys
-            .orEmpty()
-        declaring
-          .ifEmpty { modules }
+              .keys
+              .ifEmpty { setOfNotNull(moduleDeclaring(project.path, modules, descriptors, name)) }
+        wanted
           .filterNot { project.daemons.containsKey(it) }
           .forEach { module ->
             runCatching {
@@ -4470,22 +4495,65 @@ class DaemonMcpServer(
       }
   }
 
+  /**
+   * The module of [modules] whose directory holds the source declaring [name], the innermost when
+   * modules nest; `null` when no source declares it or no module's directory holds it. A module's
+   * directories are its launch descriptor's working directory and source directories, else the one
+   * its Gradle path gives.
+   */
+  private fun moduleDeclaring(
+    root: File,
+    modules: Set<String>,
+    descriptors: Map<String, File>,
+    name: String,
+  ): String? {
+    val source = declaringSource(root, name)?.let(::canonical) ?: return null
+    return modules
+      .flatMap { module ->
+        val launch =
+          descriptors[module]?.let {
+            runCatching { DaemonLaunchDescriptor.parse(it.readText()) }.getOrNull()
+          }
+        val dirs =
+          if (launch == null) listOf(moduleDir(root, module))
+          else
+            (listOf(launch.workingDirectory) + launch.sourceWatch?.sourceDirs.orEmpty()).map {
+              File(it).let { dir -> if (dir.isAbsolute) dir else File(root, it) }
+            }
+        dirs.map { module to canonical(it) }
+      }
+      .filter { (_, dir) -> source.startsWith(dir) }
+      .maxByOrNull { (_, dir) -> dir.path.length }
+      ?.first
+  }
+
+  /** The function name of each preview [manifest] (a module's `previews.json`) lists. */
+  private fun manifestFunctionNames(manifest: File): List<String> =
+    manifestPreviews(manifest).mapNotNull { preview ->
+      preview["functionName"]?.jsonPrimitive?.contentOrNull
+        ?: preview["id"]?.jsonPrimitive?.contentOrNull?.substringAfterLast('.')
+    }
+
   /** Whether [manifest] (a module's `previews.json`) lists a preview that [name] matches. */
   private fun manifestNamesPreview(manifest: File, name: String): Boolean {
-    if (!manifest.isFile) return false
-    val previews =
-      runCatching {
-        (json.parseToJsonElement(manifest.readText()) as? JsonObject)?.get("previews") as? JsonArray
-      }
-        .getOrNull() ?: return false
     val function = name.substringAfterLast('.')
-    return previews.any { element ->
-      val preview = element as? JsonObject ?: return@any false
+    return manifestPreviews(manifest).any { preview ->
       val id = preview["id"]?.jsonPrimitive?.contentOrNull.orEmpty()
       preview["functionName"]?.jsonPrimitive?.contentOrNull == function ||
         id == name ||
         id.endsWith(".$name")
     }
+  }
+
+  /** The previews [manifest] (a module's `previews.json`) lists; none when it is missing or bad. */
+  private fun manifestPreviews(manifest: File): List<JsonObject> {
+    if (!manifest.isFile) return emptyList()
+    val previews =
+      runCatching {
+        (json.parseToJsonElement(manifest.readText()) as? JsonObject)?.get("previews") as? JsonArray
+      }
+        .getOrNull() ?: return emptyList()
+    return previews.filterIsInstance<JsonObject>()
   }
 
   private sealed interface PreviewCard {

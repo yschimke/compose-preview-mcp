@@ -1432,7 +1432,13 @@ class DaemonMcpServer(
             // on an edit that needs the rest of the module, which says nothing about the next one.
             if (inProcess is SourceCompileOutcome.Failed && gradle is SourceCompileOutcome.Ok) {
               if (module?.all != null) {
-                daemon.allClients().firstOrNull()?.let(inProcessDeclined::add)
+                daemon.allClients().firstOrNull()?.let { client ->
+                  declineInProcess(
+                    daemon,
+                    client,
+                    "Gradle compiled an edit the in-process compile rejected: ${inProcess.reason}",
+                  )
+                }
               } else if (editsOnlyWarned.add(addr)) {
                 System.err.println(
                   "compose-preview-mcp: ${daemon.modulePath} published no source list in its " +
@@ -1614,7 +1620,11 @@ class DaemonMcpServer(
       )
     }
       .getOrElse {
-        inProcessDeclined.add(client)
+        declineInProcess(
+          daemon,
+          client,
+          "the compileSources request failed: ${it.message ?: it.javaClass.simpleName}",
+        )
         return null
       }
     val ms = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedAt)
@@ -1632,10 +1642,22 @@ class DaemonMcpServer(
           work,
         )
       else -> {
-        inProcessDeclined.add(client)
+        declineInProcess(daemon, client, "compileSources answered ${result.result}")
         null
       }
     }
+  }
+
+  /**
+   * Turns the in-process compile off for [client]'s module until the server restarts, and says so
+   * once on stderr: every later edit then waits for Gradle, with nothing else to explain why.
+   */
+  private fun declineInProcess(daemon: SupervisedDaemon, client: Any, reason: String) {
+    if (!inProcessDeclined.add(client)) return
+    System.err.println(
+      "compose-preview-mcp: ${daemon.modulePath} compiles through Gradle from now on, not in " +
+        "process, until the server restarts ($reason)",
+    )
   }
 
   /**

@@ -572,16 +572,53 @@ class SourceRecompileTest {
     render(fixture)
     val gradleBefore = compiles.size
 
-    edit(fixture, """@Preview fun Header() { Text("Via Gradle") }""")
-    assertThat(render(fixture).bytes).contains("Via Gradle")
-    assertThat(compiles).hasSize(gradleBefore + 1)
+    val stderr = stderrOf {
+      edit(fixture, """@Preview fun Header() { Text("Via Gradle") }""")
+      assertThat(render(fixture).bytes).contains("Via Gradle")
+      assertThat(compiles).hasSize(gradleBefore + 1)
 
-    edit(fixture, """@Preview fun Header() { Text("Via Gradle again") }""")
-    assertThat(render(fixture).bytes).contains("Via Gradle again")
-    assertThat(compiles).hasSize(gradleBefore + 2)
+      edit(fixture, """@Preview fun Header() { Text("Via Gradle again") }""")
+      assertThat(render(fixture).bytes).contains("Via Gradle again")
+      assertThat(compiles).hasSize(gradleBefore + 2)
+    }
     // Declined once, never asked again.
     assertThat(asked.get()).isEqualTo(1)
+    assertThat(declinedLines(stderr)).hasSize(1)
+    assertThat(declinedLines(stderr).single()).contains("compileSources answered FALLBACK")
   }
+
+  /** #228: a daemon whose `compileSources` call fails says why its module left the compiler. */
+  @Test
+  fun `a daemon whose compileSources call fails says once that its module compiles through Gradle`() {
+    lateinit var fixture: Fixture
+    start(fakeCompiler { fixture.classes })
+    fixture = fixture()
+    render(fixture)
+
+    val stderr = stderrOf {
+      edit(fixture, """@Preview fun Header() { Text("Via Gradle") }""")
+      assertThat(render(fixture).bytes).contains("Via Gradle")
+      edit(fixture, """@Preview fun Header() { Text("Via Gradle again") }""")
+      assertThat(render(fixture).bytes).contains("Via Gradle again")
+    }
+    assertThat(declinedLines(stderr)).hasSize(1)
+    assertThat(declinedLines(stderr).single()).contains("the compileSources request failed")
+  }
+
+  private fun stderrOf(block: () -> Unit): String {
+    val stderr = java.io.ByteArrayOutputStream()
+    val original = System.err
+    System.setErr(java.io.PrintStream(stderr, true))
+    try {
+      block()
+    } finally {
+      System.setErr(original)
+    }
+    return stderr.toString()
+  }
+
+  private fun declinedLines(stderr: String) =
+    stderr.lines().filter { "compiles through Gradle from now on" in it }
 
   private fun inProcessCompileError(asked: java.util.concurrent.atomic.AtomicInteger) =
     { sources: List<String> ->
@@ -643,14 +680,20 @@ class SourceRecompileTest {
     render(fixture)
     val askedBefore = asked.get()
 
-    edit(fixture, """@Preview fun Header() { Text("Gradle is right") }""")
-    val fresh = render(fixture)
-    assertThat(fresh.bytes).contains("Gradle is right")
-    assertThat(fresh.texts.none { it.startsWith("stale:") }).isTrue()
+    val stderr = stderrOf {
+      edit(fixture, """@Preview fun Header() { Text("Gradle is right") }""")
+      val fresh = render(fixture)
+      assertThat(fresh.bytes).contains("Gradle is right")
+      assertThat(fresh.texts.none { it.startsWith("stale:") }).isTrue()
 
-    edit(fixture, """@Preview fun Header() { Text("again") }""")
-    assertThat(render(fixture).bytes).contains("again")
+      edit(fixture, """@Preview fun Header() { Text("again") }""")
+      assertThat(render(fixture).bytes).contains("again")
+    }
     assertThat(asked.get()).isAtMost(askedBefore + 1)
+    // #228: said once, with the module and the in-process error Gradle did not reproduce.
+    assertThat(declinedLines(stderr)).hasSize(1)
+    assertThat(declinedLines(stderr).single()).contains(":app")
+    assertThat(declinedLines(stderr).single()).contains("Unresolved reference 'Txt'.")
   }
 
   /**

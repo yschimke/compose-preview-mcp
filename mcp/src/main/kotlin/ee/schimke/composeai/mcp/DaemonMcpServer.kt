@@ -5251,9 +5251,28 @@ class DaemonMcpServer(
         // content.
         val work = lastCycleWork[PreviewIdKey(uri.workspaceId, uri.modulePath, uri.previewFqn)]
         if (work == null || result.isError == true) result
-        else result.copy(meta = buildJsonObject { put("work", work.toJson()) })
+        else
+          result.copy(
+            meta =
+              buildJsonObject {
+                result.meta?.forEach { (k, v) -> put(k, v) }
+                put("work", work.toJson())
+              },
+          )
       }
       .getOrElse { errorCallToolResult("render_preview failed: ${it.message}") }
+  }
+
+  /**
+   * Downscaled PNG carried in `_meta` for the MCP App viewer when `content` omits inline image
+   * bytes (file-path and `observe="semantics"`/`"hash"` results). Hosts pass `_meta` to the viewer
+   * while keeping pixels out of model context.
+   */
+  private fun viewerPngMeta(pngBytes: ByteArray): JsonObject = buildJsonObject {
+    put(
+      VIEWER_PNG_META,
+      Base64.getEncoder().encodeToString(scaleToMaxEdge(pngBytes, INLINE_MAX_EDGE_PX)),
+    )
   }
 
   /**
@@ -5304,8 +5323,8 @@ class DaemonMcpServer(
         }
       }
     }
-    // The link lets an MCP App host show the render even though no bytes are inline; text-only
-    // clients keep the local path above.
+    // The link and `_meta` PNG let an MCP App host show the render even though no image block goes
+    // into model context; text-only clients keep the local path above.
     return CallToolResult(
       content =
         listOfNotNull(
@@ -5320,6 +5339,7 @@ class DaemonMcpServer(
             description = "The current preview resource; subscribe to refresh it after edits.",
           ),
         ),
+      meta = viewerPngMeta(pngBytes),
     )
   }
 
@@ -5792,7 +5812,10 @@ class DaemonMcpServer(
       }
       add(ContentBlock.Text(meta.toString()))
     }
-    return CallToolResult(content = blocks)
+    return CallToolResult(
+      content = blocks,
+      meta = if (observe == "png") null else viewerPngMeta(croppedBytes),
+    )
   }
 
   /**
@@ -6457,6 +6480,7 @@ class DaemonMcpServer(
             description = "The current preview resource; subscribe to refresh it after edits.",
           ),
         ),
+      meta = if (imageFallback) null else viewerPngMeta(pngBytes),
     )
   }
 
@@ -9306,6 +9330,9 @@ class DaemonMcpServer(
 
     /** Long edge of the inline image the model reads by default; `imageScale="full"` skips it. */
     private const val INLINE_MAX_EDGE_PX: Int = 768
+
+    /** `_meta` key carrying the viewer PNG when `content` has no inline image block. */
+    internal const val VIEWER_PNG_META: String = "composePreview/png"
 
     /** Long edge of each contact-sheet cell. */
     private const val CONTACT_SHEET_CELL_EDGE_PX: Int = 256

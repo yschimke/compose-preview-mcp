@@ -1391,6 +1391,62 @@ class DaemonMcpServerTest {
     assertThat(resp.textContents()).hasSize(1)
     // The same observation, typed, for a client that reads the declared outputSchema.
     assertThat(resp.raw["structuredContent"]).isEqualTo(parsed)
+    assertThat(
+        resp.raw["_meta"]
+          ?.jsonObject
+          ?.get(DaemonMcpServer.VIEWER_PNG_META)
+          ?.jsonPrimitive
+          ?.contentOrNull,
+      )
+      .isEqualTo(Base64.getEncoder().encodeToString(pngBytes))
+  }
+
+  @Test
+  fun `render_preview file result for claude-code attaches viewer png in _meta without inline image`() {
+    client.initialize(clientName = "claude-code")
+    val workspaceId = registerWorkspace(tmp.newFolder("workspace-claude"), "demo")
+    val daemon = warmDaemonFor(workspaceId, ":module")
+    val previewId = "com.example.CardPreview"
+    daemon.emitDiscovery(previewId, sourceFile = "src/main/kotlin/com/example/Card.kt")
+    client.expectNotification("notifications/resources/list_changed", 2_000)
+
+    val pngFile = tmp.newFile("claude-file-render.png")
+    val img = java.awt.image.BufferedImage(32, 24, java.awt.image.BufferedImage.TYPE_INT_ARGB)
+    javax.imageio.ImageIO.write(img, "png", pngFile)
+    val pngBytes = Files.readAllBytes(pngFile.toPath())
+    daemon.autoRenderPngPath = { id -> if (id == previewId) pngFile.absolutePath else null }
+
+    val uri = PreviewUri(workspaceId, ":module", previewId).toUri()
+    val fileResp =
+      client.callTool(
+        "render_preview",
+        buildJsonObject { put("uri", uri) },
+        timeoutMs = 10_000,
+      )
+    assertThat(fileResp.isError()).isFalse()
+    assertThat(fileResp.contentTypes()).doesNotContain("image")
+    val metaPng =
+      fileResp.raw["_meta"]
+        ?.jsonObject
+        ?.get(DaemonMcpServer.VIEWER_PNG_META)
+        ?.jsonPrimitive
+        ?.contentOrNull
+    assertThat(metaPng).isNotNull()
+    assertThat(Base64.getDecoder().decode(metaPng)).isEqualTo(pngBytes)
+
+    // Explicit observe="png" already sends ContentBlock.Image, so `_meta` must not duplicate it.
+    val inlineResp =
+      client.callTool(
+        "render_preview",
+        buildJsonObject {
+          put("uri", uri)
+          put("observe", "png")
+        },
+        timeoutMs = 10_000,
+      )
+    assertThat(inlineResp.isError()).isFalse()
+    assertThat(inlineResp.contentTypes()).contains("image")
+    assertThat(inlineResp.raw["_meta"]?.jsonObject?.get(DaemonMcpServer.VIEWER_PNG_META)).isNull()
   }
 
   @Test

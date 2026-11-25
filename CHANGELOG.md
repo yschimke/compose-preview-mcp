@@ -1,5 +1,24 @@
 # Changelog
 
+## [4.27.0](https://github.com/yschimke/compose-preview-mcp/compare/v4.26.0...v4.27.0) (2026-11-25)
+
+
+### Bug Fixes
+
+* **deps:** update dependency ee.schimke.composeai:compose-ai-tools-bom to v2.103.1 ([#251](https://github.com/yschimke/compose-preview-mcp/issues/251)) ([6c35365](https://github.com/yschimke/compose-preview-mcp/commit/6c35365286a3ec6550992f7feb4c16c11f868551))
+* **deps:** update dependency ee.schimke.composeai:compose-ai-tools-bom to v2.104.0 ([#255](https://github.com/yschimke/compose-preview-mcp/issues/255)) ([80c053e](https://github.com/yschimke/compose-preview-mcp/commit/80c053e2b9907523477b0d84b2d44459fab0ce5f))
+* **deps:** update dependency ee.schimke.composeai:compose-preview-contracts-bom to v3.47.0 ([#253](https://github.com/yschimke/compose-preview-mcp/issues/253)) ([550fbc2](https://github.com/yschimke/compose-preview-mcp/commit/550fbc2c9bc5352f099785e59d35139e9797b3db))
+* **deps:** update dependency ee.schimke.composeai:compose-preview-daemon-bom to v3.29.1 ([#252](https://github.com/yschimke/compose-preview-mcp/issues/252)) ([5ab3c9b](https://github.com/yschimke/compose-preview-mcp/commit/5ab3c9bacf1f1c355b20d2601aeb7ea324b561e6))
+* **mcp-app:** take the viewer and preview library from compose-preview-server v3.200.0 ([#238](https://github.com/yschimke/compose-preview-mcp/issues/238)) ([dba4200](https://github.com/yschimke/compose-preview-mcp/commit/dba420017f2437051e2080bad628b1f6fa9100b3))
+* **mcp:** log when a module stops using the in-process compile ([#248](https://github.com/yschimke/compose-preview-mcp/issues/248)) ([d4e7012](https://github.com/yschimke/compose-preview-mcp/commit/d4e7012f9cc655b20369a7550170d54d2de7c2c4))
+* **mcp:** pass the sandbox count explicitly so replicasPerDaemon = 0 runs one sandbox ([#247](https://github.com/yschimke/compose-preview-mcp/issues/247)) ([0301952](https://github.com/yschimke/compose-preview-mcp/commit/0301952b61c48bc7a4a98a9c86f82bfaf7ccdef1))
+* **mcp:** scan sources before starting daemons for an unlisted preview name ([#249](https://github.com/yschimke/compose-preview-mcp/issues/249)) ([d21654b](https://github.com/yschimke/compose-preview-mcp/commit/d21654b78605a21c2eee215575854b030cf7aa78))
+
+
+### Performance Improvements
+
+* **mcp:** cap coordinator heap and reap idle render daemons and simulators ([#256](https://github.com/yschimke/compose-preview-mcp/issues/256)) ([f641279](https://github.com/yschimke/compose-preview-mcp/commit/f64127997ca7db0179ce0d053f9d78df98f8b3c4))
+
 ## [4.26.0](https://github.com/yschimke/compose-preview-mcp/compare/v4.25.0...v4.26.0) (2026-11-24)
 
 

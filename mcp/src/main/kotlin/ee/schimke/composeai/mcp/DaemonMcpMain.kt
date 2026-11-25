@@ -65,6 +65,7 @@ object DaemonMcpMain {
         refreshDescriptor = { project, modulePath ->
           descriptorRefresher.refreshDescriptor(project.path, modulePath) { System.err.println(it) }
         },
+        daemonIdleTimeoutMs = parseDaemonIdleTimeoutMs(args),
       )
     val server =
       if (storybookProfile) {
@@ -285,6 +286,31 @@ object DaemonMcpMain {
       return default
     }
     return ms.takeIf { it > 0 }
+  }
+
+  /**
+   * `--daemon-idle-timeout-ms`, then `composeai.mcp.daemonIdleTimeoutMs`, then
+   * `COMPOSE_PREVIEW_DAEMON_IDLE_TIMEOUT_MS`, else
+   * [DaemonSupervisor.DEFAULT_DAEMON_IDLE_TIMEOUT_MS]. `0` disables idle daemon reaping.
+   */
+  internal fun parseDaemonIdleTimeoutMs(
+    args: Array<String> = emptyArray(),
+    raw: String? =
+      runCatching { option(args, "--daemon-idle-timeout-ms") }.getOrNull()
+        ?: System.getProperty("composeai.mcp.daemonIdleTimeoutMs")
+        ?: System.getenv("COMPOSE_PREVIEW_DAEMON_IDLE_TIMEOUT_MS"),
+  ): Long {
+    val default = DaemonSupervisor.DEFAULT_DAEMON_IDLE_TIMEOUT_MS
+    if (raw.isNullOrBlank()) return default
+    val ms = raw.trim().toLongOrNull()
+    if (ms == null || ms < 0L) {
+      System.err.println(
+        "compose-preview-mcp: ignoring invalid daemon idle timeout '$raw' (want non-negative " +
+          "milliseconds, 0 to disable); falling back to default ${default}ms",
+      )
+      return default
+    }
+    return ms
   }
 
   internal fun parseReplicasPerDaemon(

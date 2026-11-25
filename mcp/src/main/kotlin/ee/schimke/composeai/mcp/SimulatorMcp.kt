@@ -93,6 +93,12 @@ class SimulatorMcp(
    * `_meta`; 0 disables initial capture.
    */
   private val initialScreenshotTimeoutMs: Long = DEFAULT_INITIAL_SCREENSHOT_TIMEOUT_MS,
+  /**
+   * How long a running simulator may sit unused before being shut down (`0` = disabled). Defaults
+   * to 5 minutes (`composeai.mcp.simulatorIdleTimeoutMs` /
+   * `COMPOSE_PREVIEW_SIMULATOR_IDLE_TIMEOUT_MS`).
+   */
+  private val idleTimeoutMs: Long = defaultIdleTimeoutMs(),
 ) {
 
   private val simulators = ConcurrentHashMap<String, Simulator>()
@@ -104,6 +110,9 @@ class SimulatorMcp(
   private val nextId = AtomicLong(1)
   private val bridgeLock = Any()
   @Volatile private var bridgeServer: SimulatorBridgeServer? = null
+  private val idleReaperLock = Any()
+  @Volatile private var idleReaper: java.util.concurrent.ScheduledExecutorService? = null
+  @Volatile private var shutdownCalled = false
 
   internal val bridgePort: Int?
     get() = bridgeServer?.port
@@ -188,25 +197,82 @@ class SimulatorMcp(
     when (LEGACY_NAMES[name] ?: name) {
       OPEN -> open(args)
       LAUNCH -> launch(args)
-      COMMAND -> withContext(Dispatchers.IO) { command(args) }
-      SCREENSHOT -> withContext(Dispatchers.IO) { screenshot(args) }
-      WATCHFACE_SNAPSHOT -> withContext(Dispatchers.IO) { watchfaceSnapshot(args) }
-      LOGS -> withContext(Dispatchers.IO) { logs(args) }
-      RESTART -> withContext(Dispatchers.IO) { replace(RESTART, "restart", args) }
-      UPDATE -> withContext(Dispatchers.IO) { replace(UPDATE, "update", args) }
-      RELOAD -> withContext(Dispatchers.IO) { reload(args) }
-      ADB -> withContext(Dispatchers.IO) { adb(args) }
+      COMMAND -> withContext(Dispatchers.IO) { withActiveOp(args) { command(args) } }
+      SCREENSHOT -> withContext(Dispatchers.IO) { withActiveOp(args) { screenshot(args) } }
+      WATCHFACE_SNAPSHOT ->
+        withContext(Dispatchers.IO) { withActiveOp(args) { watchfaceSnapshot(args) } }
+      LOGS -> withContext(Dispatchers.IO) { withActiveOp(args) { logs(args) } }
+      RESTART ->
+        withContext(Dispatchers.IO) { withActiveOp(args) { replace(RESTART, "restart", args) } }
+      UPDATE ->
+        withContext(Dispatchers.IO) { withActiveOp(args) { replace(UPDATE, "update", args) } }
+      RELOAD -> withContext(Dispatchers.IO) { withActiveOp(args) { reload(args) } }
+      ADB -> withContext(Dispatchers.IO) { withActiveOp(args) { adb(args) } }
       STOP -> withContext(Dispatchers.IO) { stop(args) }
       else -> null
     }
 
+  private inline fun <T> withActiveOp(args: JsonObject, block: () -> T): T {
+    val sim = simulator(args)
+    sim?.beginOp()
+    return try {
+      block()
+    } finally {
+      sim?.endOp()
+    }
+  }
+
   fun shutdown() {
+    shutdownCalled = true
+    synchronized(idleReaperLock) {
+      idleReaper?.shutdownNow()
+      idleReaper = null
+    }
     simulators.values.forEach { it.close() }
     simulators.clear()
     synchronized(bridgeLock) {
       bridgeServer?.close()
       bridgeServer = null
     }
+  }
+
+  private fun ensureIdleReaperStarted() {
+    if (idleTimeoutMs <= 0L || shutdownCalled || idleReaper != null) return
+    synchronized(idleReaperLock) {
+      if (shutdownCalled || idleReaper != null) return
+      val periodMs = minOf(30_000L, maxOf(100L, idleTimeoutMs / 2))
+      val exec =
+        java.util.concurrent.Executors.newSingleThreadScheduledExecutor { r ->
+          Thread(r, "mcp-simulator-idle-reaper").apply { isDaemon = true }
+        }
+      exec.scheduleWithFixedDelay(
+        { runCatching { reapIdleSimulators() } },
+        periodMs,
+        periodMs,
+        TimeUnit.MILLISECONDS,
+      )
+      idleReaper = exec
+    }
+  }
+
+  internal fun reapIdleSimulators(nowNanos: Long = System.nanoTime()): Int {
+    if (idleTimeoutMs <= 0L) return 0
+    val thresholdNanos = TimeUnit.MILLISECONDS.toNanos(idleTimeoutMs)
+    var stopped = 0
+    for ((id, sim) in simulators.entries.toList()) {
+      if (sim.hasInFlightOps()) continue
+      val idleNanos = nowNanos - sim.lastUsedNanos
+      if (idleNanos >= thresholdNanos && !sim.hasInFlightOps() && simulators.remove(id, sim)) {
+        val idleSecs = TimeUnit.NANOSECONDS.toSeconds(idleNanos)
+        System.err.println("compose-preview-mcp: stopping idle simulator $id after ${idleSecs}s")
+        runCatching { sim.close() }
+        stopped++
+      }
+    }
+    if (stopped > 0) {
+      syncBridge()
+    }
+    return stopped
   }
 
   // -----------------------------------------------------------------------------------------------
@@ -465,9 +531,12 @@ class SimulatorMcp(
       withContext(Dispatchers.IO) { simulator.close() }
       return notStarted(simulator, "installing ${file?.name} failed: ${installed.string("error")}")
     }
+    simulator.touch()
     simulators[id] = simulator
     if (simulator.exited && simulators.remove(id, simulator)) {
       synchronized(exitedSimulators) { exitedSimulators[id] = simulator }
+    } else {
+      ensureIdleReaperStarted()
     }
     syncBridge()
     val events = simulator.drainEvents()
@@ -866,8 +935,10 @@ class SimulatorMcp(
 
   /** The named simulator, or the only one running. */
   private fun simulator(args: JsonObject): Simulator? {
-    val id = args.string("simulator") ?: return simulators.values.singleOrNull()
-    return simulators[id]
+    val id = args.string("simulator")
+    val found = if (id == null) simulators.values.singleOrNull() else simulators[id]
+    found?.touch()
+    return found
   }
 
   private fun noSimulator(): CallToolResult =
@@ -899,6 +970,24 @@ class SimulatorMcp(
   ) {
     val ready = CompletableFuture<JsonObject>()
     @Volatile var exited = false
+    @Volatile var lastUsedNanos: Long = System.nanoTime()
+    private val inFlightOps = java.util.concurrent.atomic.AtomicInteger(0)
+
+    fun touch() {
+      lastUsedNanos = System.nanoTime()
+    }
+
+    fun beginOp() {
+      inFlightOps.incrementAndGet()
+      touch()
+    }
+
+    fun endOp() {
+      touch()
+      inFlightOps.decrementAndGet()
+    }
+
+    fun hasInFlightOps(): Boolean = inFlightOps.get() > 0
 
     /** With `adb`: the CLI's `device` event (serial, ports). */
     val deviceInfo = CompletableFuture<JsonObject>()
@@ -1658,6 +1747,17 @@ class SimulatorMcp(
     const val RESULT_META_KEY: String = "compose-preview/simulator"
     internal const val VIEWER_ASSET: String = "simulator.html"
     internal const val DEFAULT_INITIAL_SCREENSHOT_TIMEOUT_MS: Long = 3_000L
+    const val DEFAULT_IDLE_TIMEOUT_MS: Long = 5L * 60L * 1000L
+
+    internal fun defaultIdleTimeoutMs(
+      raw: String? =
+        System.getProperty("composeai.mcp.simulatorIdleTimeoutMs")
+          ?: System.getenv("COMPOSE_PREVIEW_SIMULATOR_IDLE_TIMEOUT_MS"),
+    ): Long {
+      if (raw.isNullOrBlank()) return DEFAULT_IDLE_TIMEOUT_MS
+      val parsed = raw.trim().toLongOrNull()
+      return if (parsed != null && parsed >= 0L) parsed else DEFAULT_IDLE_TIMEOUT_MS
+    }
 
     /**
      * Visibility-only MCP App metadata (`ui.visibility = ["model", "app"]`, no `resourceUri`):

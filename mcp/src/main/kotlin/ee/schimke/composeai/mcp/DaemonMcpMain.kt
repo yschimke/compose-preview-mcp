@@ -290,8 +290,8 @@ object DaemonMcpMain {
 
   /**
    * `--daemon-idle-timeout-ms`, then `composeai.mcp.daemonIdleTimeoutMs`, then
-   * `COMPOSE_PREVIEW_DAEMON_IDLE_TIMEOUT_MS`, else [DaemonSupervisor.DEFAULT_DAEMON_IDLE_TIMEOUT_MS].
-   * `0` disables idle daemon reaping.
+   * `COMPOSE_PREVIEW_DAEMON_IDLE_TIMEOUT_MS`, else
+   * [DaemonSupervisor.DEFAULT_DAEMON_IDLE_TIMEOUT_MS]. `0` disables idle daemon reaping.
    */
   internal fun parseDaemonIdleTimeoutMs(
     args: Array<String> = emptyArray(),

@@ -95,7 +95,8 @@ class SimulatorMcp(
   private val initialScreenshotTimeoutMs: Long = DEFAULT_INITIAL_SCREENSHOT_TIMEOUT_MS,
   /**
    * How long a running simulator may sit unused before being shut down (`0` = disabled). Defaults
-   * to 5 minutes (`composeai.mcp.simulatorIdleTimeoutMs` / `COMPOSE_PREVIEW_SIMULATOR_IDLE_TIMEOUT_MS`).
+   * to 5 minutes (`composeai.mcp.simulatorIdleTimeoutMs` /
+   * `COMPOSE_PREVIEW_SIMULATOR_IDLE_TIMEOUT_MS`).
    */
   private val idleTimeoutMs: Long = defaultIdleTimeoutMs(),
 ) {

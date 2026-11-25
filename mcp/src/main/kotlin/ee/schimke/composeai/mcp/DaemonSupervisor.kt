@@ -278,8 +278,8 @@ class DaemonSupervisor(
   }
 
   /**
-   * Stops every live render daemon that has been unused for at least [daemonIdleTimeoutMs].
-   * Stopped daemons respawn lazily on their next render. Returns the number of daemons stopped.
+   * Stops every live render daemon that has been unused for at least [daemonIdleTimeoutMs]. Stopped
+   * daemons respawn lazily on their next render. Returns the number of daemons stopped.
    */
   internal fun reapIdleDaemons(nowNanos: Long = System.nanoTime()): Int {
     if (daemonIdleTimeoutMs <= 0L) return 0

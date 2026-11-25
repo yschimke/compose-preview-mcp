@@ -1540,7 +1540,7 @@ class SimulatorMcpTest {
   fun `reapIdleSimulators stops unused simulator after idle timeout`() {
     val idleMcp =
       SimulatorMcp(
-        start = { _, _ -> fakeProcess() },
+        start = { _, _ -> ProcessBuilder("bash", "-c", fake).start() },
         readyTimeoutMs = 10_000,
         commandTimeoutMs = 10_000,
         bridgeFile = null,

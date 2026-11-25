@@ -108,6 +108,18 @@ class DaemonSupervisor(
   /** When each `(workspaceId, modulePath)` daemon was last requested, for [reapIdleDaemons]. */
   private val daemonLastUsedNanos = ConcurrentHashMap<Pair<WorkspaceId, String>, Long>()
 
+  /** Per-`(workspaceId, modulePath)` lock coordinating acquisition with idle eviction. */
+  private val daemonLocks = ConcurrentHashMap<Pair<WorkspaceId, String>, Any>()
+
+  private fun daemonLockFor(key: Pair<WorkspaceId, String>): Any =
+    daemonLocks.computeIfAbsent(key) { Any() }
+
+  /**
+   * Optional predicate returning true when `(workspaceId, modulePath)` must stay alive despite idle
+   * time (for example, active preview watches or subscriptions).
+   */
+  @Volatile internal var isDaemonPinned: (WorkspaceId, String) -> Boolean = { _, _ -> false }
+
   private val idleReaperLock = Any()
   @Volatile private var idleReaper: java.util.concurrent.ScheduledExecutorService? = null
   @Volatile private var shutdownCalled = false
@@ -245,17 +257,20 @@ class DaemonSupervisor(
   fun daemonFor(workspaceId: WorkspaceId, modulePath: String): SupervisedDaemon {
     val project = project(workspaceId) ?: error("workspace not registered: $workspaceId")
     workspaceStore.touch(workspaceId.value)
-    val now = System.nanoTime()
-    lastUsedNanos[workspaceId] = now
-    daemonLastUsedNanos[workspaceId to modulePath] = now
-    project.daemons[modulePath]?.let {
-      return it
+    val key = workspaceId to modulePath
+    synchronized(daemonLockFor(key)) {
+      val now = System.nanoTime()
+      lastUsedNanos[workspaceId] = now
+      daemonLastUsedNanos[key] = now
+      project.daemons[modulePath]?.let {
+        return it
+      }
+      if (project.daemons.isEmpty()) retireIdleProjects(except = project)
+      val daemon = project.daemons.computeIfAbsent(modulePath) { spawn(project, modulePath) }
+      daemonLastUsedNanos[key] = System.nanoTime()
+      ensureIdleReaperStarted()
+      return daemon
     }
-    if (project.daemons.isEmpty()) retireIdleProjects(except = project)
-    val daemon = project.daemons.computeIfAbsent(modulePath) { spawn(project, modulePath) }
-    daemonLastUsedNanos[workspaceId to modulePath] = System.nanoTime()
-    ensureIdleReaperStarted()
-    return daemon
   }
 
   private fun ensureIdleReaperStarted() {
@@ -278,8 +293,9 @@ class DaemonSupervisor(
   }
 
   /**
-   * Stops every live render daemon that has been unused for at least [daemonIdleTimeoutMs]. Stopped
-   * daemons respawn lazily on their next render. Returns the number of daemons stopped.
+   * Stops every live render daemon that has been unused for at least [daemonIdleTimeoutMs] and is
+   * not pinned by active preview watches or subscriptions. Stopped daemons respawn lazily on their
+   * next render. Returns the number of daemons stopped.
    */
   internal fun reapIdleDaemons(nowNanos: Long = System.nanoTime()): Int {
     if (daemonIdleTimeoutMs <= 0L) return 0
@@ -287,17 +303,25 @@ class DaemonSupervisor(
     var stopped = 0
     for (project in projects.values) {
       for (modulePath in project.daemons.keys.toList()) {
-        val last = daemonLastUsedNanos[project.workspaceId to modulePath] ?: continue
-        val idleNanos = nowNanos - last
-        if (idleNanos >= thresholdNanos) {
-          val idleSecs = java.util.concurrent.TimeUnit.NANOSECONDS.toSeconds(idleNanos)
-          System.err.println(
-            "compose-preview-mcp: stopping idle daemon ${project.rootProjectName} $modulePath " +
-              "after ${idleSecs}s (will respawn on next render)",
-          )
-          if (forgetDaemon(project.workspaceId, modulePath)) {
-            stopped++
+        val key = project.workspaceId to modulePath
+        val removed =
+          synchronized(daemonLockFor(key)) {
+            if (!project.daemons.containsKey(modulePath)) return@synchronized null
+            if (isDaemonPinned(project.workspaceId, modulePath)) return@synchronized null
+            val last = daemonLastUsedNanos[key] ?: return@synchronized null
+            val idleNanos = nowNanos - last
+            if (idleNanos < thresholdNanos) return@synchronized null
+            val idleSecs = java.util.concurrent.TimeUnit.NANOSECONDS.toSeconds(idleNanos)
+            System.err.println(
+              "compose-preview-mcp: stopping idle daemon ${project.rootProjectName} $modulePath " +
+                "after ${idleSecs}s (will respawn on next render)",
+            )
+            daemonLastUsedNanos.remove(key)
+            project.daemons.remove(modulePath)
           }
+        if (removed != null) {
+          runCatching { removed.shutdown() }
+          stopped++
         }
       }
     }

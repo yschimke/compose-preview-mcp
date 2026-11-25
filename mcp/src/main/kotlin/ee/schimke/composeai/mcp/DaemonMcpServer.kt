@@ -848,6 +848,9 @@ class DaemonMcpServer(
     }
 
   init {
+    supervisor.isDaemonPinned = { wsId, modulePath ->
+      subscriptions.hasActiveInterestsFor(wsId, modulePath)
+    }
     val router = supervisor.router()
     router.on("discoveryUpdated") { daemon, params -> onDiscoveryUpdated(daemon, params) }
     router.on("renderFinished") { daemon, params -> onRenderFinished(daemon, params) }

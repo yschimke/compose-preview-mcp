@@ -430,8 +430,14 @@ class DaemonSupervisorTest {
       val first = supervisor.daemonFor(id, ":app")
       assertThat(supervisor.reapIdleDaemons(System.nanoTime())).isEqualTo(0)
 
-      // Advancing clock past 5s reaps the idle daemon without unregistering the workspace.
+      // Pinned daemons (e.g. active watches/subscriptions) are never reaped while pinned.
       val future = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(6)
+      supervisor.isDaemonPinned = { wsId, module -> wsId == id && module == ":app" }
+      assertThat(supervisor.reapIdleDaemons(future)).isEqualTo(0)
+      assertThat(supervisor.project(id)?.daemons).containsKey(":app")
+
+      // Once unpinned, advancing past 5s reaps the idle daemon without unregistering the workspace.
+      supervisor.isDaemonPinned = { _, _ -> false }
       assertThat(supervisor.reapIdleDaemons(future)).isEqualTo(1)
       assertThat(supervisor.project(id)?.daemons).isEmpty()
 

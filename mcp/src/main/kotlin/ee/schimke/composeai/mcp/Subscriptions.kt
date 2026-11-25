@@ -196,6 +196,33 @@ class Subscriptions {
     }
     return out
   }
+
+  /**
+   * True when any session has an active watch, resource subscription, or data-product subscription
+   * covering [workspaceId] + [modulePath], so the idle daemon reaper must keep that daemon live.
+   */
+  fun hasActiveInterestsFor(workspaceId: WorkspaceId, modulePath: String): Boolean {
+    for (entries in watches.values) {
+      val matches =
+        synchronized(entries) {
+          entries.any {
+            it.workspaceId == workspaceId && (it.modulePath == null || it.modulePath == modulePath)
+          }
+        }
+      if (matches) return true
+    }
+    for ((uri, sessions) in byUri) {
+      if (sessions.isEmpty()) continue
+      val parsed = PreviewUri.parseOrNull(uri) ?: continue
+      if (parsed.workspaceId == workspaceId && parsed.modulePath == modulePath) return true
+    }
+    for ((key, sessions) in byDataKey) {
+      if (sessions.isEmpty()) continue
+      val parsed = PreviewUri.parseOrNull(key.uri) ?: continue
+      if (parsed.workspaceId == workspaceId && parsed.modulePath == modulePath) return true
+    }
+    return false
+  }
 }
 
 /** Refcount key for `subscribe_preview_data`, returned to callers on disconnect. */

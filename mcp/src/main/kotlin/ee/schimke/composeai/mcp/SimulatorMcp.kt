@@ -197,17 +197,30 @@ class SimulatorMcp(
     when (LEGACY_NAMES[name] ?: name) {
       OPEN -> open(args)
       LAUNCH -> launch(args)
-      COMMAND -> withContext(Dispatchers.IO) { command(args) }
-      SCREENSHOT -> withContext(Dispatchers.IO) { screenshot(args) }
-      WATCHFACE_SNAPSHOT -> withContext(Dispatchers.IO) { watchfaceSnapshot(args) }
-      LOGS -> withContext(Dispatchers.IO) { logs(args) }
-      RESTART -> withContext(Dispatchers.IO) { replace(RESTART, "restart", args) }
-      UPDATE -> withContext(Dispatchers.IO) { replace(UPDATE, "update", args) }
-      RELOAD -> withContext(Dispatchers.IO) { reload(args) }
-      ADB -> withContext(Dispatchers.IO) { adb(args) }
+      COMMAND -> withContext(Dispatchers.IO) { withActiveOp(args) { command(args) } }
+      SCREENSHOT -> withContext(Dispatchers.IO) { withActiveOp(args) { screenshot(args) } }
+      WATCHFACE_SNAPSHOT ->
+        withContext(Dispatchers.IO) { withActiveOp(args) { watchfaceSnapshot(args) } }
+      LOGS -> withContext(Dispatchers.IO) { withActiveOp(args) { logs(args) } }
+      RESTART ->
+        withContext(Dispatchers.IO) { withActiveOp(args) { replace(RESTART, "restart", args) } }
+      UPDATE ->
+        withContext(Dispatchers.IO) { withActiveOp(args) { replace(UPDATE, "update", args) } }
+      RELOAD -> withContext(Dispatchers.IO) { withActiveOp(args) { reload(args) } }
+      ADB -> withContext(Dispatchers.IO) { withActiveOp(args) { adb(args) } }
       STOP -> withContext(Dispatchers.IO) { stop(args) }
       else -> null
     }
+
+  private inline fun <T> withActiveOp(args: JsonObject, block: () -> T): T {
+    val sim = simulator(args)
+    sim?.beginOp()
+    return try {
+      block()
+    } finally {
+      sim?.endOp()
+    }
+  }
 
   fun shutdown() {
     shutdownCalled = true
@@ -247,8 +260,9 @@ class SimulatorMcp(
     val thresholdNanos = TimeUnit.MILLISECONDS.toNanos(idleTimeoutMs)
     var stopped = 0
     for ((id, sim) in simulators.entries.toList()) {
+      if (sim.hasInFlightOps()) continue
       val idleNanos = nowNanos - sim.lastUsedNanos
-      if (idleNanos >= thresholdNanos && simulators.remove(id, sim)) {
+      if (idleNanos >= thresholdNanos && !sim.hasInFlightOps() && simulators.remove(id, sim)) {
         val idleSecs = TimeUnit.NANOSECONDS.toSeconds(idleNanos)
         System.err.println("compose-preview-mcp: stopping idle simulator $id after ${idleSecs}s")
         runCatching { sim.close() }
@@ -957,10 +971,23 @@ class SimulatorMcp(
     val ready = CompletableFuture<JsonObject>()
     @Volatile var exited = false
     @Volatile var lastUsedNanos: Long = System.nanoTime()
+    private val inFlightOps = java.util.concurrent.atomic.AtomicInteger(0)
 
     fun touch() {
       lastUsedNanos = System.nanoTime()
     }
+
+    fun beginOp() {
+      inFlightOps.incrementAndGet()
+      touch()
+    }
+
+    fun endOp() {
+      touch()
+      inFlightOps.decrementAndGet()
+    }
+
+    fun hasInFlightOps(): Boolean = inFlightOps.get() > 0
 
     /** With `adb`: the CLI's `device` event (serial, ports). */
     val deviceInfo = CompletableFuture<JsonObject>()

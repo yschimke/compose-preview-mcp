@@ -431,11 +431,18 @@ class DaemonSupervisor(
     val baseDescriptor = launchableDescriptor(project, modulePath)
     // Inject `composeai.daemon.sandboxCount = 1 + replicasPerDaemon` (SANDBOX-POOL.md) into a copy
     // of the descriptor's systemProperties; the descriptor is cached and shared across `daemonFor`
-    // calls.
+    // calls. Always set, never `withSandboxCount`: it omits a count of 1, and a daemon given no
+    // count picks its own default, a pool of 5 on Android (#237).
     val descriptor =
-      baseDescriptor.withSandboxCount(1 + replicasPerDaemon).let {
-        if (replicasPerDaemon > 0) it.withSystemProperty(ON_DEMAND_WORKER_BOOT_PROP, "true") else it
-      }
+      baseDescriptor
+        .withSystemProperty(
+          DaemonLaunchDescriptor.SANDBOX_COUNT_PROP,
+          (1 + replicasPerDaemon).toString(),
+        )
+        .let {
+          if (replicasPerDaemon > 0) it.withSystemProperty(ON_DEMAND_WORKER_BOOT_PROP, "true")
+          else it
+        }
     val supervised = SupervisedDaemon(workspaceId = project.workspaceId, modulePath = modulePath)
     supervised.launchDescriptor = baseDescriptor
     val descriptorWorkingDirectory = File(descriptor.workingDirectory)

@@ -1887,23 +1887,7 @@ class DaemonMcpServerTest {
   fun `a preview lookup in a multi-module build starts only the module that lists it`() {
     // WearOAuth: one build, three modules. Rendering a preview in one started a daemon (and its
     // sandbox pool) for every module (compose-ag-plugin#64).
-    val project = tmp.newFolder("WearOAuth")
-    File(project, "settings.gradle").writeText("include(\":oauth-pkce\", \":oauth-device-grant\")")
-    for ((module, preview) in
-      listOf(":oauth-pkce" to "PkcePreview", ":oauth-device-grant" to "DeviceGrantPreview")) {
-      val dir = File(project, "${module.drop(1)}/build/compose-previews").apply { mkdirs() }
-      File(dir, "daemon-launch.json")
-        .writeText(
-          """{"schemaVersion":2,"modulePath":"$module","variant":"debug","enabled":true,""" +
-            """"mainClass":"x","classpath":[],"jvmArgs":[],"systemProperties":{},""" +
-            """"workingDirectory":"${dir.parentFile.parent}","manifestPath":"previews.json"}""",
-        )
-      File(dir, "previews.json")
-        .writeText(
-          """{"previews":[{"id":"com.example.${preview}_Devices - Small Round",""" +
-            """"className":"com.example","functionName":"$preview"}]}""",
-        )
-    }
+    val project = wearOAuthBuild()
     val desktop = DaemonMcpServer(supervisor, workingDirectory = null)
     restartSession(desktop)
     client.initialize()
@@ -1918,6 +1902,148 @@ class DaemonMcpServerTest {
 
     assertThat(factory.daemons.keys.map { it.second }).containsExactly(":oauth-pkce")
     desktop.shutdown()
+  }
+
+  @Test
+  fun `a misspelt preview name in a multi-module build starts no daemon`() {
+    // #246: no previews.json listed the name, so every module's daemon started before the source
+    // scan found nothing.
+    val project = wearOAuthBuild()
+    val desktop = DaemonMcpServer(supervisor, workingDirectory = null)
+    restartSession(desktop)
+    client.initialize()
+
+    val missing =
+      client.callTool(
+        "render_preview",
+        buildJsonObject {
+          put("preview", "PkcePreviw")
+          put("project", project.absolutePath)
+        },
+      )
+
+    assertThat(factory.spawnHistory).isEmpty()
+    assertThat(missing.firstTextContent()).contains("no preview matches 'PkcePreviw'")
+    assertThat(missing.firstTextContent()).contains("2 previews in 2 modules")
+    assertThat(
+        missing.raw["structuredContent"]!!.jsonObject["suggestions"]!!.jsonArray.map {
+          it.jsonPrimitive.content
+        },
+      )
+      .contains("PkcePreview")
+    desktop.shutdown()
+  }
+
+  @Test
+  fun `a preview no previews json lists yet starts only the module declaring it`() {
+    // #246: a preview written since the last discovery started every module's daemon before the
+    // rediscovery found it in one.
+    val project = wearOAuthBuild()
+    File(project, "gradlew").writeText("#!/bin/sh\n")
+    File(project, "oauth-pkce/src/main/kotlin/Pkce.kt")
+      .apply { parentFile.mkdirs() }
+      .writeText("@Preview\n@Composable\nfun PkceWidePreview() {}\n")
+    val manifest = File(project, "oauth-pkce/build/compose-previews/previews.json")
+    assertThat(manifest.setLastModified(System.currentTimeMillis() - 60_000)).isTrue()
+    val png = tmp.newFile("wide.png").also { writeSolidPng(it, 0xff00ffff.toInt()) }
+    factory.daemonConfigurer = {
+      it.advertisedManifestPath = manifest.absolutePath
+      it.autoRenderPngPath = { png.absolutePath }
+    }
+    val discoveries = java.util.concurrent.atomic.AtomicInteger()
+    val runner = GradleTaskRunner { _, _, arguments, _ ->
+      if (
+        ProjectBootstrap.DISCOVER_TASK !in arguments || "composePreviewDaemonStart" in arguments
+      ) {
+        return@GradleTaskRunner GradleTaskRunner.Result(1, "not under test")
+      }
+      discoveries.incrementAndGet()
+      manifest.writeText(
+        """{"previews":[{"id":"com.example.PkcePreview","className":"com.example",""" +
+          """"functionName":"PkcePreview"},{"id":"com.example.PkceWidePreview",""" +
+          """"className":"com.example","functionName":"PkceWidePreview"}]}""",
+      )
+      GradleTaskRunner.Result(0, "BUILD SUCCESSFUL")
+    }
+    val desktop =
+      DaemonMcpServer(
+        supervisor,
+        workingDirectory = null,
+        projectBootstrap =
+          ProjectBootstrap(
+            initScripts = InitScripts(environment = emptyMap(), userHome = tmp.newFolder("home")),
+            runner = runner,
+          ),
+      )
+    restartSession(desktop)
+    client.initialize()
+
+    val resolved =
+      client.callTool(
+        "render_preview",
+        buildJsonObject {
+          put("preview", "PkceWidePreview")
+          put("project", project.absolutePath)
+          put("observe", "hash")
+        },
+        timeoutMs = 10_000,
+      )
+
+    assertThat(resolved.firstTextContent()).doesNotContain("no preview matches")
+    assertThat(discoveries.get()).isEqualTo(1)
+    assertThat(factory.daemons.keys.map { it.second }).containsExactly(":oauth-pkce")
+    desktop.shutdown()
+  }
+
+  @Test
+  fun `a preview in a module without a launch descriptor starts no other module`() {
+    // #246: a module whose daemon-launch.json is missing was never checked, so each of its previews
+    // started every other module's daemon.
+    val project = wearOAuthBuild(":oauth-shared" to "SharedPreview")
+    File(project, "oauth-device-grant/build/compose-previews/daemon-launch.json").delete()
+    File(project, "oauth-device-grant/src/main/kotlin/DeviceGrant.kt")
+      .apply { parentFile.mkdirs() }
+      .writeText("@Preview\n@Composable\nfun DeviceGrantPreview() {}\n")
+    val desktop = DaemonMcpServer(supervisor, workingDirectory = null)
+    restartSession(desktop)
+    client.initialize()
+
+    client.callTool(
+      "render_preview",
+      buildJsonObject {
+        put("preview", "DeviceGrantPreview")
+        put("project", project.absolutePath)
+      },
+    )
+
+    assertThat(factory.spawnHistory).isEmpty()
+    desktop.shutdown()
+  }
+
+  /**
+   * WearOAuth: `:oauth-pkce`, `:oauth-device-grant` and any [more] modules, each with a launch
+   * descriptor and a `previews.json` listing its one preview (`PkcePreview`, `DeviceGrantPreview`).
+   */
+  private fun wearOAuthBuild(vararg more: Pair<String, String>): File {
+    val project = tmp.newFolder("WearOAuth")
+    File(project, "settings.gradle").writeText("include(\":oauth-pkce\", \":oauth-device-grant\")")
+    for ((module, preview) in
+      listOf(":oauth-pkce" to "PkcePreview", ":oauth-device-grant" to "DeviceGrantPreview") +
+        more) {
+      val dir = File(project, "${module.drop(1)}/build/compose-previews").apply { mkdirs() }
+      File(dir, "daemon-launch.json")
+        .writeText(
+          """{"schemaVersion":2,"modulePath":"$module","variant":"debug","enabled":true,""" +
+            """"mainClass":"x","classpath":[],"jvmArgs":[],"systemProperties":{},""" +
+            """"workingDirectory":"${dir.parentFile.parent}","manifestPath":"previews.json"}""",
+        )
+      File(dir, "previews.json")
+        .writeText(
+          """{"previews":[{"id":"com.example.${preview}_Devices - Small Round",""" +
+            """"className":"com.example","functionName":"$preview"}]}""",
+        )
+    }
+    return project
   }
 
   @Test

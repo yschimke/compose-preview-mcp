@@ -413,4 +413,45 @@ class DaemonSupervisorTest {
           .trimIndent(),
       )
   }
+
+  @Test
+  fun `reapIdleDaemons stops unused daemons and respawns them lazily on next request`() {
+    val root = createTempDirectory("cp-supervisor-idle").toFile()
+    val project = File(root, "ComposeStarter").apply { mkdirs() }
+    val factory = FakeDaemonClientFactory()
+    val supervisor =
+      DaemonSupervisor(
+        descriptorProvider = FakeDescriptorProvider(),
+        clientFactory = factory,
+        daemonIdleTimeoutMs = 5_000L,
+      )
+    try {
+      val id = supervisor.registerProject(project).workspaceId
+      val first = supervisor.daemonFor(id, ":app")
+      assertThat(supervisor.reapIdleDaemons(System.nanoTime())).isEqualTo(0)
+
+      // Advancing clock past 5s reaps the idle daemon without unregistering the workspace.
+      val future = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(6)
+      assertThat(supervisor.reapIdleDaemons(future)).isEqualTo(1)
+      assertThat(supervisor.project(id)?.daemons).isEmpty()
+
+      // Next request respawns cleanly.
+      val second = supervisor.daemonFor(id, ":app")
+      assertThat(second).isNotSameInstanceAs(first)
+    } finally {
+      supervisor.shutdown()
+    }
+  }
+
+  @Test
+  fun `parseDaemonIdleTimeoutMs honors default, zero disable, and rejects invalid values`() {
+    assertThat(DaemonMcpMain.parseDaemonIdleTimeoutMs(raw = null))
+      .isEqualTo(DaemonSupervisor.DEFAULT_DAEMON_IDLE_TIMEOUT_MS)
+    assertThat(DaemonMcpMain.parseDaemonIdleTimeoutMs(raw = "0")).isEqualTo(0L)
+    assertThat(DaemonMcpMain.parseDaemonIdleTimeoutMs(raw = "120000")).isEqualTo(120_000L)
+    assertThat(DaemonMcpMain.parseDaemonIdleTimeoutMs(raw = "-5"))
+      .isEqualTo(DaemonSupervisor.DEFAULT_DAEMON_IDLE_TIMEOUT_MS)
+    assertThat(DaemonMcpMain.parseDaemonIdleTimeoutMs(raw = "not-a-number"))
+      .isEqualTo(DaemonSupervisor.DEFAULT_DAEMON_IDLE_TIMEOUT_MS)
+  }
 }

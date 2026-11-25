@@ -46,6 +46,10 @@ base { archivesName.set(publishedArtifactId) }
 application {
   applicationName = "compose-preview-mcp"
   mainClass.set("ee.schimke.composeai.mcp.DaemonMcpMain")
+  // The MCP server is a lightweight coordinator (heavy rendering runs in separate daemon
+  // subprocesses). Without an explicit cap the JVM reserves 25% of host RAM per session.
+  applicationDefaultJvmArgs =
+    listOf("-Xmx384m", "-XX:MaxHeapFreeRatio=30", "-XX:MinHeapFreeRatio=10")
 }
 
 // The version reported in `initialize`'s `serverInfo.version`, generated into a resource read by

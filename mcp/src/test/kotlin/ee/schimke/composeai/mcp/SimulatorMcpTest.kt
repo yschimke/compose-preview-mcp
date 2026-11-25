@@ -1535,4 +1535,34 @@ class SimulatorMcpTest {
       crashing.shutdown()
     }
   }
+
+  @Test
+  fun `reapIdleSimulators stops unused simulator after idle timeout`() {
+    val idleMcp =
+      SimulatorMcp(
+        start = { _, _ -> fakeProcess() },
+        readyTimeoutMs = 10_000,
+        commandTimeoutMs = 10_000,
+        bridgeFile = null,
+        idleTimeoutMs = 5_000,
+      )
+    try {
+      val launch = runBlocking {
+        idleMcp.handle(SimulatorMcp.LAUNCH, buildJsonObject { put("apk", apk().path) })!!
+      }
+      assertThat(launch.isError).isNull()
+      assertThat(idleMcp.reapIdleSimulators(System.nanoTime())).isEqualTo(0)
+
+      val future = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(6)
+      assertThat(idleMcp.reapIdleSimulators(future)).isEqualTo(1)
+
+      val after = runBlocking {
+        idleMcp.handle(SimulatorMcp.COMMAND, buildJsonObject { put("cmd", "ping") })!!
+      }
+      assertThat((after.content.first() as ContentBlock.Text).text)
+        .contains("No simulator is running")
+    } finally {
+      idleMcp.shutdown()
+    }
+  }
 }

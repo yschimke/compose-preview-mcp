@@ -68,6 +68,17 @@ class SourceTree(
      * `userClassDirs`): the compilation it renders, not the module's other variants or targets.
      */
     val classOutputs: List<File> = emptyList(),
+    /**
+     * The module's `daemon-launch.json` file, when known. Build-file freshness on the first walk
+     * and rescans is judged against its timestamp rather than [classOutputs], which a compile
+     * without `composePreviewDaemonStart` rewrites while leaving the descriptor behind (#258).
+     */
+    val descriptorFile: File? = null,
+    /**
+     * Effective freshness timestamp (ms) of [descriptorFile]: its own mtime, or a later timestamp
+     * confirmed up-to-date by `composePreviewDaemonStart`. Defaults to [descriptorFile]'s mtime.
+     */
+    val descriptorFreshAtMs: Long? = descriptorFile?.takeIf(File::isFile)?.lastModified(),
   )
 
   /**
@@ -159,6 +170,12 @@ class SourceTree(
 
   /** Each published module's [DeclaredModule.outputs] and [DeclaredModule.classOutputs]. */
   private val declaredOutputs = LinkedHashMap<String, Pair<List<File>, List<File>>>()
+
+  /**
+   * Each published module's [DeclaredModule.descriptorFreshAtMs]: when its launch descriptor was
+   * last written (or confirmed up-to-date), for judging build-file freshness (#258).
+   */
+  private val declaredDescriptorFreshAt = LinkedHashMap<String, Long?>()
 
   /** Root directories whose files all count as sources: published resource directories. */
   private val resourceRoots = mutableListOf<String>()
@@ -329,7 +346,11 @@ class SourceTree(
   fun kotlinSourcesOf(key: String): List<File>? {
     if (moduleRoots.none { (_, module) -> module.key == key && module.published }) return null
     return files.keys
-      .filter { it.extension == "kt" && modulesOfPath(it.path).any { module -> module.key == key } }
+      .filter {
+        it.extension == "kt" &&
+          it.path !in buildFileOwners &&
+          modulesOfPath(it.path).any { module -> module.key == key }
+      }
       .sorted()
   }
 
@@ -367,16 +388,26 @@ class SourceTree(
   /**
    * Reads [declared] again and registers every watch root not yet watched: a module whose launch
    * descriptor appeared since the last scan, or a published directory that didn't exist then. As on
-   * the first walk, a file newer than every class output is reported to [onChanged]; one older is
-   * already compiled. Returns how many directories it listed.
+   * the first walk, a source newer than every class output (or a build file newer than its module's
+   * launch descriptor) is reported to [onChanged]; one older is already built. Returns how many
+   * directories it listed.
    */
   private fun rescanModules(onChanged: (File) -> Unit): Int {
     modulesScannedAt = System.nanoTime()
+    val previousOwners = buildFileOwners.mapValues { (_, owners) ->
+      owners.mapTo(HashSet()) { it.key }
+    }
     val roots = watchRoots()
     prune()
     val fresh = roots.filter { it !in dirs }
     val freshBuildFiles = buildFileOwners.keys.map(::File).filter { it !in files && it.isFile }
-    if (fresh.isEmpty() && freshBuildFiles.isEmpty()) return 0
+    val newlyOwnedBuildFiles =
+      buildFileOwners.entries.mapNotNull { (path, owners) ->
+        val before = previousOwners[path] ?: return@mapNotNull null
+        if (owners.any { it.key !in before }) File(path).takeIf { it in files && it.isFile }
+        else null
+      }
+    if (fresh.isEmpty() && freshBuildFiles.isEmpty() && newlyOwnedBuildFiles.isEmpty()) return 0
     val built = builtAt()
     val report = { file: File ->
       if (built(file)?.let { file.lastModified() > it } == true) onChanged(file)
@@ -384,6 +415,7 @@ class SourceTree(
     var listed = 0
     fresh.forEach { dir -> listed += register(dir, report) }
     registerBuildFiles(report)
+    newlyOwnedBuildFiles.forEach(report)
     return listed
   }
 
@@ -450,6 +482,7 @@ class SourceTree(
       publishedModules + conventionRoots.map { it.parentFile.absoluteFile.normalize() }
     buildFileOwners.clear()
     declaredOutputs.clear()
+    declaredDescriptorFreshAt.clear()
     published.forEach { declared ->
       val dir = declared.moduleDir.absoluteFile.normalize()
       val nested = moduleDirs.filter { it != dir && it.startsWith(dir) }
@@ -463,7 +496,9 @@ class SourceTree(
           declared.classOutputs
             .map { it.absoluteFile.normalize() }
             .filter { output -> output.startsWith(dir) && nested.none { output.startsWith(it) } }
-      declaredOutputs[declared.modulePath ?: dir.path] = declared.outputs to classOutputs
+      val key = declared.modulePath ?: dir.path
+      declaredOutputs[key] = declared.outputs to classOutputs
+      declaredDescriptorFreshAt[key] = declared.descriptorFreshAtMs?.takeIf { it > 0L }
     }
     resourceRoots.clear()
     published
@@ -524,12 +559,17 @@ class SourceTree(
   /**
    * When the build last built each file, as a function of the file: the oldest of its owning
    * modules' last builds, so an edit newer than any owner's last build counts as unbuilt, and one
-   * module's later build doesn't hide another's unbuilt edit. A published module's last build is
-   * the newest of its [DeclaredModule.outputs] and [DeclaredModule.classOutputs]: the preview
-   * manifest is written only by discovery, and a compile or IDE build since then leaves it behind
-   * its classes. Only the compilation the daemon loads counts: a release or other-target build says
-   * nothing about a debug-only edit. A file no published module covers falls back to the newest
-   * Gradle class output the `build/` convention finds. `null` when none of them says.
+   * module's later build doesn't hide another's unbuilt edit.
+   *
+   * For a build file, freshness is judged against its owning module's launch descriptor timestamp
+   * ([DeclaredModule.descriptorFreshAtMs]) when known, not its class outputs: a Gradle compile
+   * without `composePreviewDaemonStart` rewrites classes while leaving `daemon-launch.json` stale
+   * (#258). For a source or resource file, a published module's last build is the newest of its
+   * [DeclaredModule.outputs] and [DeclaredModule.classOutputs]: the preview manifest is written
+   * only by discovery, and a compile or IDE build since then leaves it behind its classes. Only the
+   * compilation the daemon loads counts: a release or other-target build says nothing about a
+   * debug-only edit. A file no published module covers falls back to the newest Gradle class output
+   * the `build/` convention finds. `null` when none of them says.
    */
   private fun builtAt(): (File) -> Long? {
     val convention by lazy { newestClassOutput() }
@@ -547,7 +587,17 @@ class SourceTree(
       byModule[module.key] = built
       return built
     }
-    return { file -> modulesOfPath(file.path).mapNotNull(::built).minOrNull() ?: convention }
+    return { file ->
+      val path = file.absoluteFile.normalize().path
+      val owners = modulesOfPath(path)
+      if (path in buildFileOwners) {
+        owners
+          .mapNotNull { module -> declaredDescriptorFreshAt[module.key] ?: built(module) }
+          .minOrNull() ?: convention
+      } else {
+        owners.mapNotNull(::built).minOrNull() ?: convention
+      }
+    }
   }
 
   private fun newestClassOutput(): Long? =

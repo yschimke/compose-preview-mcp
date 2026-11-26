@@ -111,11 +111,11 @@ class ProjectBootstrap(
 
   /**
    * Rewrites [modulePath]'s daemon launch descriptor (`./gradlew
-   * <module>:composePreviewDaemonStart`) when the one on disk names classpath entries that no
-   * longer exist: a cleaned Gradle transforms cache, a moved `~/.m2`. The daemon would otherwise
-   * start on it and die before `initialize` (`ClassNotFoundException: …DaemonMain`). Only a Gradle
-   * build is refreshed this way; a Bazel or bundle workspace returns null, as does a build without
-   * a wrapper.
+   * <module>:composePreviewDaemonStart`) when the one on disk is stale — either because it names
+   * classpath entries that no longer exist (a cleaned Gradle transforms cache, a moved `~/.m2`) or
+   * because a watched build file is newer than the descriptor itself (#258). Only a Gradle build is
+   * refreshed this way; a Bazel or bundle workspace returns null, as does a build without a
+   * wrapper.
    */
   fun refreshDescriptor(
     projectRoot: File,
@@ -147,6 +147,55 @@ class ProjectBootstrap(
         if (line.startsWith("> Task ")) progress(line)
       }
     }
+  }
+
+  /**
+   * Structured result variant of [refreshDescriptor] so callers can distinguish a successful
+   * refresh (including an `UP-TO-DATE` Gradle run) from a build failure or an unavailable wrapper.
+   */
+  fun refreshDescriptorOutcome(
+    projectRoot: File,
+    modulePath: String,
+    progress: (String) -> Unit = {},
+  ): DescriptorRefreshOutcome {
+    if (BundleProjects.isBundleWorkspace(projectRoot)) {
+      return DescriptorRefreshOutcome.Unavailable("preview bundle has no Gradle build")
+    }
+    if (ProjectDiscovery.isBazelWorkspace(projectRoot)) {
+      return DescriptorRefreshOutcome.Unavailable("Bazel workspace")
+    }
+    val windows = System.getProperty("os.name").orEmpty().startsWith("Windows")
+    val wrapper = File(projectRoot, if (windows) "gradlew.bat" else "gradlew")
+    if (!wrapper.isFile) {
+      return DescriptorRefreshOutcome.Unavailable("no Gradle wrapper at ${wrapper.path}")
+    }
+    val result =
+      runCatching { refreshDescriptor(projectRoot, modulePath, progress) }
+        .getOrElse {
+          return DescriptorRefreshOutcome.Failed(it.message ?: it.javaClass.simpleName)
+        } ?: return DescriptorRefreshOutcome.Unavailable("no Gradle wrapper at ${wrapper.path}")
+    return when {
+      result.timedOut -> DescriptorRefreshOutcome.Failed("timed out")
+      result.exitCode != 0 ->
+        DescriptorRefreshOutcome.Failed(GradleSourceCompiler.summarizeGradleFailure(result.output))
+      else -> DescriptorRefreshOutcome.Refreshed
+    }
+  }
+
+  /**
+   * Refreshes [modulePath]'s launch descriptor when [descriptorFile] is older than any build file
+   * watched by [descriptor] (or workspace convention-plugin build files). Returns `null` when the
+   * descriptor is already current, avoiding an unnecessary Gradle run.
+   */
+  fun refreshIfStale(
+    projectRoot: File,
+    modulePath: String,
+    descriptorFile: File,
+    descriptor: ee.schimke.composeai.daemon.protocol.DaemonLaunchDescriptor,
+    progress: (String) -> Unit = {},
+  ): DescriptorRefreshOutcome? {
+    DescriptorFreshness.newerBuildFile(projectRoot, descriptor, descriptorFile) ?: return null
+    return refreshDescriptorOutcome(projectRoot, modulePath, progress)
   }
 
   /**

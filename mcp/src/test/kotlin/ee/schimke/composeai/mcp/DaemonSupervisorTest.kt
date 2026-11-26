@@ -70,6 +70,7 @@ class DaemonSupervisorTest {
         refreshDescriptor = { _, module ->
           refreshed += module
           provider.classpaths[module] = listOf(present.path)
+          DescriptorRefreshOutcome.Refreshed
         },
       )
     val project = supervisor.registerProject(root)
@@ -92,7 +93,7 @@ class DaemonSupervisorTest {
       DaemonSupervisor(
         descriptorProvider = provider,
         clientFactory = factory,
-        refreshDescriptor = { _, _ -> },
+        refreshDescriptor = { _, _ -> DescriptorRefreshOutcome.Refreshed },
       )
     val project = supervisor.registerProject(root)
 
@@ -478,5 +479,191 @@ class DaemonSupervisorTest {
       .isEqualTo(DaemonSupervisor.DEFAULT_DAEMON_IDLE_TIMEOUT_MS)
     assertThat(DaemonMcpMain.parseDaemonIdleTimeoutMs(raw = "not-a-number"))
       .isEqualTo(DaemonSupervisor.DEFAULT_DAEMON_IDLE_TIMEOUT_MS)
+  }
+
+  private fun writeDiskDescriptor(
+    moduleDir: File,
+    modulePath: String = ":app",
+    jvmArgs: List<String> = listOf("-Xmx1024m"),
+    buildFiles: List<File> = emptyList(),
+  ): File =
+    File(moduleDir, "build/compose-previews/daemon-launch.json").apply {
+      parentFile.mkdirs()
+      val jvmArgsJson = jvmArgs.joinToString(",") { "\"$it\"" }
+      val buildFilesJson = buildFiles.joinToString(",") { "\"${it.absolutePath}\"" }
+      writeText(
+        """
+        {
+          "schemaVersion": 2,
+          "modulePath": "$modulePath",
+          "variant": "debug",
+          "enabled": true,
+          "mainClass": "ee.schimke.composeai.daemon.DaemonMain",
+          "classpath": [],
+          "jvmArgs": [$jvmArgsJson],
+          "systemProperties": {},
+          "workingDirectory": "${moduleDir.absolutePath}",
+          "manifestPath": "${File(moduleDir, "build/compose-previews/previews.json").absolutePath}",
+          "sourceWatch": {
+            "sourceDirs": ["${File(moduleDir, "src/main/kotlin").absolutePath}"],
+            "buildFiles": [$buildFilesJson]
+          }
+        }
+        """
+          .trimIndent(),
+      )
+    }
+
+  @Test
+  fun `a descriptor older than a watched build file is refreshed before spawn even when classes are newer`() {
+    val root = createTempDirectory("cp-stale-build-spawn").toFile()
+    File(root, "settings.gradle.kts").writeText("rootProject.name = \"sample\"\n")
+    val app = File(root, "app").apply { mkdirs() }
+    val buildFile = File(app, "build.gradle.kts").apply { writeText("plugins {}\n") }
+    val descriptorFile = writeDiskDescriptor(app, ":app", listOf("-Xmx1024m"), listOf(buildFile))
+    val classFile =
+      File(app, "build/tmp/kotlin-classes/debug/MainKt.class").apply {
+        parentFile.mkdirs()
+        writeText("")
+      }
+    val now = System.currentTimeMillis()
+    descriptorFile.setLastModified(now - 60_000)
+    buildFile.setLastModified(now - 30_000)
+    classFile.setLastModified(now)
+
+    val factory = FakeDaemonClientFactory()
+    val refreshed = mutableListOf<String>()
+    val supervisor =
+      DaemonSupervisor(
+        descriptorProvider = DescriptorProvider.readingFromDisk(),
+        clientFactory = factory,
+        refreshDescriptor = { _, module ->
+          refreshed += module
+          val updated = writeDiskDescriptor(app, module, listOf("-Xmx2048m"), listOf(buildFile))
+          updated.setLastModified(now + 10_000)
+          DescriptorRefreshOutcome.Refreshed
+        },
+      )
+    try {
+      val project = supervisor.registerProject(root)
+      supervisor.daemonFor(project.workspaceId, ":app")
+
+      assertThat(refreshed).containsExactly(":app")
+      assertThat(factory.spawnDescriptors.single().jvmArgs).containsExactly("-Xmx2048m")
+      assertThat(supervisor.staleDescriptor(project.workspaceId, ":app")).isNull()
+    } finally {
+      supervisor.shutdown()
+    }
+  }
+
+  @Test
+  fun `a descriptor newer than all watched build files does not refresh before spawn`() {
+    val root = createTempDirectory("cp-fresh-build-spawn").toFile()
+    File(root, "settings.gradle.kts").writeText("rootProject.name = \"sample\"\n")
+    val app = File(root, "app").apply { mkdirs() }
+    val buildFile = File(app, "build.gradle.kts").apply { writeText("plugins {}\n") }
+    val descriptorFile = writeDiskDescriptor(app, ":app", listOf("-Xmx2048m"), listOf(buildFile))
+    val now = System.currentTimeMillis()
+    buildFile.setLastModified(now - 60_000)
+    descriptorFile.setLastModified(now)
+
+    val factory = FakeDaemonClientFactory()
+    val supervisor =
+      DaemonSupervisor(
+        descriptorProvider = DescriptorProvider.readingFromDisk(),
+        clientFactory = factory,
+        refreshDescriptor = { _, _ -> error("must not refresh a fresh descriptor") },
+      )
+    try {
+      val project = supervisor.registerProject(root)
+      supervisor.daemonFor(project.workspaceId, ":app")
+
+      assertThat(factory.spawnHistory).hasSize(1)
+      assertThat(supervisor.staleDescriptor(project.workspaceId, ":app")).isNull()
+    } finally {
+      supervisor.shutdown()
+    }
+  }
+
+  @Test
+  fun `a stale descriptor still spawns and records a warning when refresh is unavailable or fails`() {
+    val root = createTempDirectory("cp-stale-build-warn").toFile()
+    File(root, "settings.gradle.kts").writeText("rootProject.name = \"sample\"\n")
+    val app = File(root, "app").apply { mkdirs() }
+    val catalog =
+      File(root, "gradle/libs.versions.toml").apply {
+        parentFile.mkdirs()
+        writeText("[versions]\n")
+      }
+    val descriptorFile = writeDiskDescriptor(app, ":app", listOf("-Xmx1024m"), listOf(catalog))
+    val now = System.currentTimeMillis()
+    descriptorFile.setLastModified(now - 60_000)
+    catalog.setLastModified(now)
+
+    val factory = FakeDaemonClientFactory()
+    val supervisor =
+      DaemonSupervisor(
+        descriptorProvider = DescriptorProvider.readingFromDisk(),
+        clientFactory = factory,
+        refreshDescriptor = { _, _ -> DescriptorRefreshOutcome.Failed("SDK location not found") },
+      )
+    try {
+      val project = supervisor.registerProject(root)
+      supervisor.daemonFor(project.workspaceId, ":app")
+
+      assertThat(factory.spawnHistory).hasSize(1)
+      val note = supervisor.staleDescriptor(project.workspaceId, ":app")
+      assertThat(note).isNotNull()
+      assertThat(note!!.message).contains("gradle/libs.versions.toml")
+      assertThat(note.message).contains(":app:composePreviewDaemonStart")
+      assertThat(note.message).contains("SDK location not found")
+      assertThat(supervisor.staleDescriptors(project)).containsExactly(note)
+
+      // Once the user rewrites the descriptor externally, the warning clears automatically.
+      val refreshed = writeDiskDescriptor(app, ":app", listOf("-Xmx2048m"), listOf(catalog))
+      refreshed.setLastModified(now + 10_000)
+      assertThat(supervisor.staleDescriptor(project.workspaceId, ":app")).isNull()
+      assertThat(supervisor.staleDescriptors(project)).isEmpty()
+    } finally {
+      supervisor.shutdown()
+    }
+  }
+
+  @Test
+  fun `an up-to-date refresh that leaves descriptor mtime unchanged clears staleness without re-running`() {
+    val root = createTempDirectory("cp-uptodate-refresh").toFile()
+    File(root, "settings.gradle.kts").writeText("rootProject.name = \"sample\"\n")
+    val app = File(root, "app").apply { mkdirs() }
+    val buildFile = File(app, "build.gradle.kts").apply { writeText("// comment edit\n") }
+    val descriptorFile = writeDiskDescriptor(app, ":app", listOf("-Xmx2048m"), listOf(buildFile))
+    val now = System.currentTimeMillis()
+    descriptorFile.setLastModified(now - 60_000)
+    buildFile.setLastModified(now)
+
+    val factory = FakeDaemonClientFactory()
+    var refreshCalls = 0
+    val supervisor =
+      DaemonSupervisor(
+        descriptorProvider = DescriptorProvider.readingFromDisk(),
+        clientFactory = factory,
+        refreshDescriptor = { _, _ ->
+          refreshCalls++
+          // Simulates Gradle UP-TO-DATE: exit 0 without rewriting daemon-launch.json.
+          DescriptorRefreshOutcome.Refreshed
+        },
+      )
+    try {
+      val project = supervisor.registerProject(root)
+      supervisor.daemonFor(project.workspaceId, ":app")
+      assertThat(refreshCalls).isEqualTo(1)
+      assertThat(supervisor.staleDescriptor(project.workspaceId, ":app")).isNull()
+
+      // Respawning while the build file has not changed again must not re-run Gradle.
+      supervisor.forgetDaemon(project.workspaceId, ":app")
+      supervisor.daemonFor(project.workspaceId, ":app")
+      assertThat(refreshCalls).isEqualTo(1)
+    } finally {
+      supervisor.shutdown()
+    }
   }
 }

@@ -441,4 +441,98 @@ class SourceTreeTest {
     assertThat(tree.refresh().changed.map { it.canonicalFile })
       .containsExactly(screen.canonicalFile)
   }
+
+  /**
+   * #258: a Gradle compile without `composePreviewDaemonStart` rewrites class outputs while leaving
+   * `daemon-launch.json` older than a build-file edit. Build-file freshness must compare against
+   * the descriptor's own mtime, not class outputs.
+   */
+  @Test
+  fun `a build file newer than the launch descriptor is reported even when class outputs are newer`() {
+    val root = createTempDirectory("cp-source-tree-stale-descriptor").toFile()
+    val app = File(root, "app")
+    val source = File(app, "src/main/kotlin/Main.kt").edit("fun main() {}")
+    val buildFile = File(app, "build.gradle.kts").edit("plugins {}")
+    val descriptor = File(app, "build/compose-previews/daemon-launch.json").edit("{}")
+    val classes = File(app, "build/tmp/kotlin-classes/debug/MainKt.class").edit("")
+    val now = System.currentTimeMillis()
+    source.setLastModified(now - 120_000)
+    descriptor.setLastModified(now - 90_000)
+    buildFile.setLastModified(now - 60_000)
+    classes.setLastModified(now)
+    val tree =
+      SourceTree(root, budgetMs = 10_000) {
+        listOf(
+          SourceTree.DeclaredModule(
+            app,
+            listOf(source.parentFile),
+            emptyList(),
+            ":app",
+            buildFiles = listOf(buildFile),
+            classOutputs = listOf(classes.parentFile),
+            descriptorFile = descriptor,
+          ),
+        )
+      }
+
+    assertThat(tree.refresh().changed.map { it.canonicalFile })
+      .containsExactly(buildFile.canonicalFile)
+  }
+
+  @Test
+  fun `a build file older than the launch descriptor is not reported even when class outputs are older`() {
+    val root = createTempDirectory("cp-source-tree-fresh-descriptor").toFile()
+    val app = File(root, "app")
+    val source = File(app, "src/main/kotlin/Main.kt").edit("fun main() {}")
+    val buildFile = File(app, "build.gradle.kts").edit("plugins {}")
+    val descriptor = File(app, "build/compose-previews/daemon-launch.json").edit("{}")
+    val classes = File(app, "build/tmp/kotlin-classes/debug/MainKt.class").edit("")
+    val now = System.currentTimeMillis()
+    source.setLastModified(now - 120_000)
+    classes.setLastModified(now - 90_000)
+    buildFile.setLastModified(now - 60_000)
+    descriptor.setLastModified(now)
+    val tree =
+      SourceTree(root, budgetMs = 10_000) {
+        listOf(
+          SourceTree.DeclaredModule(
+            app,
+            listOf(source.parentFile),
+            emptyList(),
+            ":app",
+            buildFiles = listOf(buildFile),
+            classOutputs = listOf(classes.parentFile),
+            descriptorFile = descriptor,
+          ),
+        )
+      }
+
+    assertThat(tree.refresh().changed).isEmpty()
+  }
+
+  @Test
+  fun `kotlin convention plugin build files are excluded from a module's kotlinSourcesOf`() {
+    val root = createTempDirectory("cp-source-tree-convention-kt").toFile()
+    val app = File(root, "app")
+    val source = File(app, "src/main/kotlin/Main.kt").edit("fun main() {}")
+    val convention = File(root, "build-logic/src/main/kotlin/ConventionPlugin.kt").edit("class P")
+    val tree =
+      SourceTree(root, budgetMs = 10_000) {
+        listOf(
+          SourceTree.DeclaredModule(
+            app,
+            listOf(source.parentFile),
+            emptyList(),
+            ":app",
+            buildFiles = listOf(convention),
+          ),
+        )
+      }
+    tree.refresh()
+
+    assertThat(tree.isBuildFile(convention)).isTrue()
+    assertThat(tree.modulesOf(convention)).containsExactly(":app")
+    assertThat(tree.kotlinSourcesOf(":app")!!.map { it.canonicalFile })
+      .containsExactly(source.canonicalFile)
+  }
 }

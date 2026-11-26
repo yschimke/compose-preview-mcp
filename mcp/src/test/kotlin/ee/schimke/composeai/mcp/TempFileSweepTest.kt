@@ -3,6 +3,7 @@ package ee.schimke.composeai.mcp
 import com.google.common.truth.Truth.assertThat
 import java.io.File
 import java.nio.file.Files
+import java.nio.file.LinkOption
 import java.util.concurrent.TimeUnit
 import kotlin.io.path.createTempDirectory
 import org.junit.Test
@@ -184,5 +185,51 @@ class TempFileSweepTest {
 
     assertThat(result).isEqualTo(TempFileSweep.SweepResult(deletedFiles = 0, deletedDirs = 0))
     assertThat(secret.exists()).isTrue()
+  }
+
+  @Test
+  fun `nested symbolic links inside stale directories are unlinked without touching targets`() {
+    val tmp = createTempDirectory("cp-sweep-nested-symlink").toFile()
+    val outsideCache = createTempDirectory("cp-sweep-outside-cache").toFile()
+    val outsideRoborazzi = createTempDirectory("cp-sweep-outside-roborazzi").toFile()
+    val cacheKeep = File(outsideCache, "keep.txt").apply { writeText("keep-cache") }
+    val roborazziKeep = File(outsideRoborazzi, "keep.txt").apply { writeText("keep-roborazzi") }
+
+    val deadCacheDir =
+      File(tmp, "compose-preview-mcp-dead").apply {
+        mkdirs()
+        TempFileSweep.writePidMarker(this, pid = 11111L)
+        File(this, "render.png").writeText("png")
+      }
+    val cacheLink = File(deadCacheDir, "nested-link")
+    Files.createSymbolicLink(cacheLink.toPath(), outsideCache.toPath())
+
+    val staleRoborazziDir = File(tmp, "composeai-roborazzi-results-stale").apply { mkdirs() }
+    val roborazziSubDir = File(staleRoborazziDir, "nested").apply { mkdirs() }
+    val roborazziLink = File(roborazziSubDir, "nested-link")
+    Files.createSymbolicLink(roborazziLink.toPath(), outsideRoborazzi.toPath())
+
+    val nowMs = System.currentTimeMillis() + TimeUnit.MINUTES.toMillis(5)
+    // Make external target newer than nowMs's grace window to also verify mtime traversal
+    // does not follow nested symbolic links.
+    roborazziKeep.setLastModified(nowMs)
+
+    val result =
+      TempFileSweep.sweepStaleTempEntries(
+        tmpDir = tmp,
+        nowMs = nowMs,
+        isPidAlive = { false },
+        liveProcessCommands = { emptyList() },
+      )
+
+    assertThat(result).isEqualTo(TempFileSweep.SweepResult(deletedFiles = 0, deletedDirs = 2))
+    assertThat(Files.exists(deadCacheDir.toPath(), LinkOption.NOFOLLOW_LINKS)).isFalse()
+    assertThat(Files.exists(cacheLink.toPath(), LinkOption.NOFOLLOW_LINKS)).isFalse()
+    assertThat(Files.exists(staleRoborazziDir.toPath(), LinkOption.NOFOLLOW_LINKS)).isFalse()
+    assertThat(Files.exists(roborazziLink.toPath(), LinkOption.NOFOLLOW_LINKS)).isFalse()
+    assertThat(cacheKeep.exists()).isTrue()
+    assertThat(cacheKeep.readText()).isEqualTo("keep-cache")
+    assertThat(roborazziKeep.exists()).isTrue()
+    assertThat(roborazziKeep.readText()).isEqualTo("keep-roborazzi")
   }
 }

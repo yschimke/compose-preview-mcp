@@ -1,7 +1,13 @@
 package ee.schimke.composeai.mcp
 
 import java.io.File
+import java.io.IOException
+import java.nio.file.FileVisitResult
 import java.nio.file.Files
+import java.nio.file.LinkOption
+import java.nio.file.Path
+import java.nio.file.SimpleFileVisitor
+import java.nio.file.attribute.BasicFileAttributes
 import java.util.concurrent.TimeUnit
 
 /**
@@ -19,7 +25,7 @@ import java.util.concurrent.TimeUnit
  * - `composeai-roborazzi-results*` directories are deleted only when no live render daemon process
  *   is running and the directory is older than [argfileGraceMs], or when older than
  *   [legacyMaxAgeMs].
- * - Symbolic links are never followed or deleted.
+ * - Top-level symbolic links are skipped; recursive deletion never follows nested symbolic links.
  */
 internal object TempFileSweep {
 
@@ -93,7 +99,7 @@ internal object TempFileSweep {
       when {
         name.startsWith(MCP_CACHE_PREFIX) && entry.isDirectory -> {
           if (shouldDeleteMcpCacheDir(entry, nowMs, legacyMaxAgeMs, isPidAlive)) {
-            if (runCatching { entry.deleteRecursively() }.getOrDefault(false)) deletedDirs++
+            if (runCatching { deleteRecursivelyNoFollow(entry) }.getOrDefault(false)) deletedDirs++
           }
         }
         isArgfileName(name) && entry.isFile -> {
@@ -103,7 +109,7 @@ internal object TempFileSweep {
         }
         name.startsWith(ROBORAZZI_RESULTS_PREFIX) && entry.isDirectory -> {
           if (shouldDeleteRoborazziDir(entry, nowMs, argfileGraceMs, legacyMaxAgeMs, commands())) {
-            if (runCatching { entry.deleteRecursively() }.getOrDefault(false)) deletedDirs++
+            if (runCatching { deleteRecursivelyNoFollow(entry) }.getOrDefault(false)) deletedDirs++
           }
         }
       }
@@ -164,13 +170,95 @@ internal object TempFileSweep {
   private fun ageMs(modifiedMs: Long, nowMs: Long): Long =
     if (modifiedMs <= 0L) 0L else (nowMs - modifiedMs).coerceAtLeast(0L)
 
+  private fun deleteRecursivelyNoFollow(dir: File): Boolean {
+    val root = dir.toPath()
+    if (Files.isSymbolicLink(root) || !Files.exists(root, LinkOption.NOFOLLOW_LINKS)) return false
+    var allDeleted = true
+    Files.walkFileTree(
+      root,
+      object : SimpleFileVisitor<Path>() {
+        override fun preVisitDirectory(
+          subDir: Path,
+          attrs: BasicFileAttributes,
+        ): FileVisitResult {
+          if (attrs.isSymbolicLink || attrs.isOther) {
+            if (subDir == root) {
+              allDeleted = false
+              return FileVisitResult.TERMINATE
+            }
+            if (!runCatching { Files.deleteIfExists(subDir) }.isSuccess) {
+              allDeleted = false
+            }
+            return FileVisitResult.SKIP_SUBTREE
+          }
+          return FileVisitResult.CONTINUE
+        }
+
+        override fun visitFile(file: Path, attrs: BasicFileAttributes): FileVisitResult {
+          if (file == root && attrs.isSymbolicLink) {
+            allDeleted = false
+            return FileVisitResult.TERMINATE
+          }
+          if (!runCatching { Files.deleteIfExists(file) }.isSuccess) {
+            allDeleted = false
+          }
+          return FileVisitResult.CONTINUE
+        }
+
+        override fun visitFileFailed(file: Path, exc: IOException): FileVisitResult {
+          if (file == root && Files.isSymbolicLink(file)) {
+            allDeleted = false
+            return FileVisitResult.TERMINATE
+          }
+          if (!runCatching { Files.deleteIfExists(file) }.isSuccess) {
+            allDeleted = false
+          }
+          return FileVisitResult.CONTINUE
+        }
+
+        override fun postVisitDirectory(subDir: Path, exc: IOException?): FileVisitResult {
+          if (exc != null) allDeleted = false
+          if (!runCatching { Files.deleteIfExists(subDir) }.isSuccess) {
+            allDeleted = false
+          }
+          return FileVisitResult.CONTINUE
+        }
+      },
+    )
+    return allDeleted && !Files.exists(root, LinkOption.NOFOLLOW_LINKS)
+  }
+
   private fun newestModifiedIn(dir: File): Long {
-    var newest = dir.lastModified()
+    var newest = runCatching {
+      Files.getLastModifiedTime(dir.toPath(), LinkOption.NOFOLLOW_LINKS).toMillis()
+    }
+      .getOrElse { dir.lastModified() }
     runCatching {
-      dir.walkTopDown().maxDepth(4).forEach { file ->
-        val mtime = file.lastModified()
-        if (mtime > newest) newest = mtime
-      }
+      Files.walkFileTree(
+        dir.toPath(),
+        emptySet(),
+        4,
+        object : SimpleFileVisitor<Path>() {
+          override fun preVisitDirectory(
+            subDir: Path,
+            attrs: BasicFileAttributes,
+          ): FileVisitResult {
+            if (attrs.isSymbolicLink || attrs.isOther) return FileVisitResult.SKIP_SUBTREE
+            val mtime = attrs.lastModifiedTime().toMillis()
+            if (mtime > newest) newest = mtime
+            return FileVisitResult.CONTINUE
+          }
+
+          override fun visitFile(file: Path, attrs: BasicFileAttributes): FileVisitResult {
+            val mtime = attrs.lastModifiedTime().toMillis()
+            if (mtime > newest) newest = mtime
+            return FileVisitResult.CONTINUE
+          }
+
+          override fun visitFileFailed(file: Path, exc: IOException): FileVisitResult =
+            FileVisitResult.CONTINUE
+        },
+      )
     }
     return newest
   }

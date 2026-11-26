@@ -1011,6 +1011,154 @@ class SourceRecompileTest {
     assertThat(changes.single()["path"]!!.jsonPrimitive.content).isEqualTo(build.absolutePath)
   }
 
+  /**
+   * #258: when refreshing a stale launch descriptor is unavailable (or fails), the daemon still
+   * renders, and both `status` and `render_preview` surface the newer build file and suggest
+   * `composePreviewDaemonStart`.
+   */
+  @Test
+  fun `a stale launch descriptor whose refresh cannot run surfaces in status and render notes`() {
+    val root = tmp.newFolder("stale-status-render")
+    File(root, "settings.gradle.kts").writeText("rootProject.name = \"stale\"\n")
+    val app = File(root, "app").apply { mkdirs() }
+    val source =
+      File(app, "src/main/kotlin/com/example/MainActivity.kt").apply {
+        parentFile.mkdirs()
+        writeText("@Preview fun Header() {}")
+      }
+    val buildFile = File(app, "build.gradle.kts").apply { writeText("plugins {}\n") }
+    publishSourceDir(app, ":app", source.parentFile, buildFiles = listOf(buildFile))
+    val descriptorFile = File(app, "build/compose-previews/daemon-launch.json")
+    val now = System.currentTimeMillis()
+    descriptorFile.setLastModified(now - 60_000)
+    buildFile.setLastModified(now)
+    val png = tmp.newFile("stale-render.png").apply { writeText("rendered") }
+
+    val diskFactory = FakeDaemonClientFactory()
+    val diskSupervisor =
+      DaemonSupervisor(
+        descriptorProvider = DescriptorProvider.readingFromDisk(),
+        clientFactory = diskFactory,
+        refreshDescriptor = { _, _ -> DescriptorRefreshOutcome.Unavailable("no Gradle wrapper") },
+      )
+    val diskServer =
+      DaemonMcpServer(
+        diskSupervisor,
+        workingDirectory = null,
+        sourcePollIntervalMs = 0,
+        samplingIntervalMs = 0,
+        sourceCompiler = null,
+      )
+    val (c2s, sFromC) = pipedPair()
+    val (s2c, cFromS) = pipedPair()
+    val diskSession = diskServer.newSession(input = sFromC, output = s2c)
+    diskSession.start()
+    val diskClient = McpTestClient(input = cFromS, output = c2s)
+    try {
+      diskClient.initialize()
+      val wsId = diskSupervisor.registerProject(root).workspaceId
+      diskSupervisor.daemonFor(wsId, ":app")
+      val fakeDaemon = diskFactory.daemons.getValue(wsId to ":app")
+      fakeDaemon.emitDiscovery(
+        PREVIEW_ID,
+        sourceFile = "app/src/main/kotlin/com/example/MainActivity.kt",
+      )
+      diskClient.expectNotification("notifications/resources/list_changed", 2_000)
+      fakeDaemon.autoRenderPngPath = { png.absolutePath }
+
+      val statusPayload =
+        json.parseToJsonElement(diskClient.callTool("status").firstTextContent()).jsonObject
+      val projectJson = statusPayload["projects"]!!.jsonArray.single().jsonObject
+      val staleDescriptors = projectJson["staleDescriptors"]!!.jsonArray
+      assertThat(staleDescriptors).hasSize(1)
+      val staleEntry = staleDescriptors.single().jsonObject
+      assertThat(staleEntry["module"]!!.jsonPrimitive.content).isEqualTo(":app")
+      assertThat(staleEntry["message"]!!.jsonPrimitive.content).contains("app/build.gradle.kts")
+      assertThat(staleEntry["message"]!!.jsonPrimitive.content)
+        .contains(":app:composePreviewDaemonStart")
+      assertThat(
+          projectJson["daemons"]!!
+            .jsonArray
+            .single()
+            .jsonObject["staleDescriptor"]!!
+            .jsonPrimitive
+            .content,
+        )
+        .contains(":app:composePreviewDaemonStart")
+
+      val renderResult =
+        diskClient.callTool(
+          "render_preview",
+          buildJsonObject {
+            put("uri", PreviewUri(wsId, ":app", PREVIEW_ID).toUri())
+            put("inline", false)
+          },
+          timeoutMs = 10_000,
+        )
+      val renderPayload = json.parseToJsonElement(renderResult.firstTextContent()).jsonObject
+      val staleField = renderPayload["stale"]?.jsonPrimitive?.contentOrNull
+      assertThat(staleField).contains("app/build.gradle.kts")
+      assertThat(staleField).contains(":app:composePreviewDaemonStart")
+      assertThat(renderResult.textContents().any { it.contains(":app:composePreviewDaemonStart") })
+        .isTrue()
+    } finally {
+      runCatching { diskClient.close() }
+      runCatching { diskSession.close() }
+      runCatching { diskServer.shutdown() }
+      runCatching { diskSupervisor.shutdown() }
+    }
+  }
+
+  /**
+   * #258: a Kotlin convention plugin under `includeBuild("build-logic")` ends with `.kt`, so it
+   * must bypass in-process compilation and trigger `compileAndRelaunch` + daemon restart.
+   */
+  @Test
+  fun `a kotlin convention plugin edit under build-logic bypasses in-process compile and relaunches`() {
+    lateinit var fixture: Fixture
+    val relaunched = CopyOnWriteArrayList<List<File>>()
+    val added = File.createTempFile("convention-dep", ".jar").apply { deleteOnExit() }
+    start(relaunchingCompiler(relaunched) { listOf(added.absolutePath) })
+    fixture = fixture()
+    val root = supervisor.project(fixture.workspaceId)!!.path
+    File(root, "settings.gradle.kts")
+      .writeText("pluginManagement { includeBuild(\"build-logic\") }\n")
+    val convention =
+      File(root, "build-logic/src/main/kotlin/PreviewConvention.kt").apply {
+        parentFile.mkdirs()
+        writeText("class PreviewConvention { val maxHeapMb = 1024 }\n")
+      }
+    val app = File(root, "app")
+    val buildFile = File(app, "build.gradle.kts")
+    publishSourceDir(app, ":app", File(app, "src/main/kotlin"), buildFiles = listOf(buildFile))
+    val now = System.currentTimeMillis()
+    convention.setLastModified(now - 60_000)
+    buildFile.setLastModified(now - 60_000)
+    File(app, "build/compose-previews/daemon-launch.json").setLastModified(now)
+
+    val inProcessCalls = CopyOnWriteArrayList<List<String>>()
+    daemon.onCompileSources = { sources ->
+      inProcessCalls += sources
+      CompileSourcesResult(result = CompileResultKind.OK, durationMs = 1)
+    }
+    factory.daemonConfigurer = { replacement ->
+      replacement.autoRenderPngPath = { fixture.classes.absolutePath }
+    }
+    render(fixture)
+    inProcessCalls.clear()
+    relaunched.clear()
+
+    convention.writeText("class PreviewConvention { val maxHeapMb = 2048 }\n")
+    convention.setLastModified(now + 10_000)
+    fixture.classes.writeText("after convention plugin edit")
+
+    assertThat(render(fixture).bytes).isEqualTo("after convention plugin edit")
+    assertThat(inProcessCalls).isEmpty()
+    assertThat(relaunched.single().map { it.canonicalFile })
+      .containsExactly(convention.canonicalFile)
+    assertThat(factory.spawnHistory).hasSize(2)
+  }
+
   /** #76: the descriptor rewrite rides along with the compile, in the same Gradle invocation. */
   @Test
   fun `gradle compiler rewrites the launch descriptor when asked to relaunch`() {

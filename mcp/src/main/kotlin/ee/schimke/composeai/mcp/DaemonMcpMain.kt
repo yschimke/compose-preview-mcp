@@ -63,7 +63,9 @@ object DaemonMcpMain {
           System.getProperty("composeai.mcp.maxActiveProjects")?.toIntOrNull()?.coerceAtLeast(0)
             ?: DaemonSupervisor.DEFAULT_MAX_ACTIVE_PROJECTS,
         refreshDescriptor = { project, modulePath ->
-          descriptorRefresher.refreshDescriptor(project.path, modulePath) { System.err.println(it) }
+          descriptorRefresher.refreshDescriptorOutcome(project.path, modulePath) {
+            System.err.println(it)
+          }
         },
         daemonIdleTimeoutMs = parseDaemonIdleTimeoutMs(args),
       )
@@ -77,6 +79,7 @@ object DaemonMcpMain {
           serverInfo = Implementation(name = "compose-preview-storybook", version = MCP_VERSION),
           profile = McpToolProfile.STORYBOOK,
           sourceCompiler = BuildSystemSourceCompiler(),
+          projectBootstrap = descriptorRefresher,
         )
       } else {
         DaemonMcpServer(
@@ -88,6 +91,7 @@ object DaemonMcpMain {
               scope = System.getenv(ActiveDesignRoots.SCOPE_ENV),
             ),
           sourceCompiler = BuildSystemSourceCompiler(),
+          projectBootstrap = descriptorRefresher,
         )
       }
 

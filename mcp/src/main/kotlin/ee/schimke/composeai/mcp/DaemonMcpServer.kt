@@ -1412,6 +1412,9 @@ class DaemonMcpServer(
       // its launch descriptor, and restarted from it below.
       val tree = sourceTrees[daemon.workspaceId]
       val buildChanged = tree != null && sources.any { tree.isBuildFile(File(it)) }
+      val changedBuildFiles =
+        if (tree != null && buildChanged) sources.map(::File).filter { tree.isBuildFile(it) }
+        else emptyList()
       val root = supervisor.project(daemon.workspaceId)?.path
       val outcome =
         if (root == null) {
@@ -1420,7 +1423,9 @@ class DaemonMcpServer(
           )
         } else {
           val module = moduleSourcesOf(daemon, sources)
-          val inProcess = compileInProcess(daemon, sources, module)
+          // Build files (including Kotlin convention plugins in buildSrc / includeBuild) must go
+          // through compileAndRelaunch so the launch descriptor is rewritten.
+          val inProcess = if (buildChanged) null else compileInProcess(daemon, sources, module)
           if (inProcess is SourceCompileOutcome.Ok) inProcess
           else {
             val gradle = runCatching {
@@ -1468,15 +1473,56 @@ class DaemonMcpServer(
       }
       when (outcome) {
         is SourceCompileOutcome.Ok -> staleNotes.remove(addr)
-        is SourceCompileOutcome.Failed -> staleNotes[addr] = StaleNote(sources, outcome.reason)
-        is SourceCompileOutcome.Unavailable ->
-          staleNotes[addr] =
-            StaleNote(
-              sources,
+        is SourceCompileOutcome.Failed -> {
+          val reason =
+            if (buildChanged && root != null) {
+              val newestBuild = changedBuildFiles.maxByOrNull { it.lastModified() }
+              val task =
+                "${daemon.modulePath.trimEnd(':')}:${GradleSourceCompiler.DAEMON_START_TASK}"
+              if (newestBuild != null) {
+                supervisor.recordStaleDescriptor(
+                  daemon.workspaceId,
+                  daemon.modulePath,
+                  DescriptorFreshness.staleNote(
+                    projectRoot = root,
+                    modulePath = daemon.modulePath,
+                    newerBuildFile = newestBuild,
+                    descriptorModifiedMs = 0L,
+                    reason = "refresh failed: ${outcome.reason}",
+                  ),
+                )
+              }
+              "${outcome.reason}; launch descriptor for ${daemon.modulePath} may be stale — " +
+                "run `./gradlew $task` to refresh it"
+            } else outcome.reason
+          staleNotes[addr] = StaleNote(sources, reason)
+        }
+        is SourceCompileOutcome.Unavailable -> {
+          val reason =
+            if (buildChanged && root != null) {
+              val newestBuild = changedBuildFiles.maxByOrNull { it.lastModified() }
+              if (newestBuild != null) {
+                val note =
+                  DescriptorFreshness.staleNote(
+                    projectRoot = root,
+                    modulePath = daemon.modulePath,
+                    newerBuildFile = newestBuild,
+                    descriptorModifiedMs = 0L,
+                    reason = outcome.reason,
+                  )
+                supervisor.recordStaleDescriptor(daemon.workspaceId, daemon.modulePath, note)
+                note.message
+              } else {
+                "could not refresh launch descriptor for ${daemon.modulePath} (${outcome.reason}); " +
+                  "run `./gradlew ${daemon.modulePath.trimEnd(':')}:${GradleSourceCompiler.DAEMON_START_TASK}`"
+              }
+            } else {
               "could not recompile ${daemon.modulePath} (${outcome.reason}); build it " +
                 "(`${daemon.modulePath.trimEnd(':')}:${GradleSourceCompiler.TASK}`) and call " +
-                "notify_file_changed",
-            )
+                "notify_file_changed"
+            }
+          staleNotes[addr] = StaleNote(sources, reason)
+        }
       }
       // Never after a failed compile: the daemon would swap onto a half-written class directory and
       // drop the broken file's previews from discovery. Keeping the last good classloader renders
@@ -1489,9 +1535,15 @@ class DaemonMcpServer(
       // Only a changed launch (a new dependency, JVM argument or system property) needs a new
       // process, which costs a cold start (seconds on Android); any other build file edit swaps
       // the classloader onto the rebuilt classes like a source edit.
-      if (buildChanged && outcome is SourceCompileOutcome.Ok && supervisor.launchChanged(daemon)) {
-        relaunchDaemon(daemon)
-        return outcome
+      if (buildChanged && outcome is SourceCompileOutcome.Ok) {
+        val maxBuildMtime = changedBuildFiles.maxOfOrNull { it.lastModified() } ?: 0L
+        if (supervisor.launchChanged(daemon)) {
+          relaunchDaemon(daemon)
+          return outcome
+        }
+        if (maxBuildMtime > 0L) {
+          supervisor.markBuildFilesVerified(daemon.workspaceId, daemon.modulePath, maxBuildMtime)
+        }
       }
       // A build file whose rebuild could not run at all is left to the daemon's own classpath
       // fingerprint check, in case it was built outside.
@@ -1674,7 +1726,7 @@ class DaemonMcpServer(
     val addr = DaemonAddr(daemon.workspaceId, daemon.modulePath)
     val tree =
       sourceTrees.computeIfAbsent(daemon.workspaceId) {
-        SourceTree(root, declared = { declaredModules(root) })
+        SourceTree(root, declared = { declaredModules(daemon.workspaceId, root) })
       }
     val refresh = runCatching {
       tree.refresh(if (focused) sourceFocus[daemon.workspaceId] else null)
@@ -1732,18 +1784,23 @@ class DaemonMcpServer(
    * The modules under [root] whose launch descriptor publishes a `sourceWatch`: where the build
    * says each is built from, which [SourceTree] watches in place of the `src/` convention.
    */
-  private fun declaredModules(root: File): List<SourceTree.DeclaredModule> =
+  private fun declaredModules(
+    workspaceId: WorkspaceId,
+    root: File,
+  ): List<SourceTree.DeclaredModule> =
     DescriptorProvider.indexDescriptorsByModulePath(root).values.mapNotNull { file ->
       val descriptor =
         runCatching { DaemonLaunchDescriptor.parse(file.readText()) }.getOrNull()
           ?: return@mapNotNull null
       val watch = descriptor.sourceWatch ?: return@mapNotNull null
+      val verified = supervisor.verifiedBuildFileMtime(workspaceId, descriptor.modulePath)
+      val descriptorFreshAt = maxOf(file.lastModified(), verified).takeIf { it > 0L }
       SourceTree.DeclaredModule(
         moduleDir = File(descriptor.workingDirectory),
         sourceDirs = watch.sourceDirs.map(::File),
         resourceDirs = watch.resourceDirs.map(::File),
         modulePath = descriptor.modulePath,
-        buildFiles = watch.buildFiles.map(::File),
+        buildFiles = DescriptorFreshness.watchedBuildFiles(root, descriptor),
         outputs = listOf(descriptor.manifestPath).filter { it.isNotEmpty() }.map(::File),
         classOutputs =
           descriptor.systemProperties[DaemonSupervisor.USER_CLASS_DIRS_PROP]
@@ -1751,6 +1808,8 @@ class DaemonMcpServer(
             .split(File.pathSeparator)
             .filter { it.isNotEmpty() }
             .map(::File),
+        descriptorFile = file,
+        descriptorFreshAtMs = descriptorFreshAt,
       )
     }
 
@@ -1759,9 +1818,23 @@ class DaemonMcpServer(
     staleRenderLine(DaemonAddr(uri.workspaceId, uri.modulePath))
 
   private fun staleRenderLine(addr: DaemonAddr): String? {
-    val note = staleNotes[addr] ?: return null
-    val files = note.sources.joinToString(", ") { File(it).name }
-    return "stale: this render may not include the latest edit to $files — ${note.reason}"
+    val compileLine =
+      staleNotes[addr]?.let { note ->
+        val files = note.sources.joinToString(", ") { File(it).name }
+        "stale: this render may not include the latest edit to $files — ${note.reason}"
+      }
+    val descriptorLine =
+      supervisor.staleDescriptor(addr.workspaceId, addr.modulePath)?.let { note ->
+        "stale: ${note.message}"
+      }
+    return when {
+      compileLine != null && descriptorLine != null ->
+        if (compileLine.contains(GradleSourceCompiler.DAEMON_START_TASK)) compileLine
+        else "$compileLine; ${descriptorLine.removePrefix("stale: ")}"
+      compileLine != null -> compileLine
+      descriptorLine != null -> descriptorLine
+      else -> null
+    }
   }
 
   /**
@@ -3783,6 +3856,8 @@ class DaemonMcpServer(
       }
       putJsonArray("projects") {
         projects.forEach { project ->
+          val staleDescriptors = supervisor.staleDescriptors(project)
+          val staleByModule = staleDescriptors.associateBy { it.modulePath }
           add(
             buildJsonObject {
               put("workspaceId", project.workspaceId.value)
@@ -3808,8 +3883,23 @@ class DaemonMcpServer(
                         "previewCount",
                         catalog[DaemonAddr(project.workspaceId, module)]?.size ?: 0,
                       )
+                      staleByModule[module]?.let { put("staleDescriptor", it.message) }
                     },
                   )
+                }
+              }
+              if (staleDescriptors.isNotEmpty()) {
+                putJsonArray("staleDescriptors") {
+                  staleDescriptors.forEach { stale ->
+                    add(
+                      buildJsonObject {
+                        put("module", stale.modulePath)
+                        put("newerBuildFile", stale.newerBuildFile.path)
+                        stale.reason?.let { put("reason", it) }
+                        put("message", stale.message)
+                      },
+                    )
+                  }
                 }
               }
             },
@@ -6913,7 +7003,7 @@ class DaemonMcpServer(
       if (focus.isEmpty) sourceFocus.remove(project.workspaceId)
       else sourceFocus[project.workspaceId] = focus
     }
-    val declared = declaredModules(project.path)
+    val declared = declaredModules(project.workspaceId, project.path)
     val payload = buildJsonObject {
       put("workspaceId", project.workspaceId.value)
       putJsonArray("focus") {

@@ -81,10 +81,11 @@ class DaemonSupervisor(
   private val maxActiveProjects: Int = 0,
   /**
    * Rewrites a module's launch descriptor when the one on disk names classpath entries that no
-   * longer exist; see [launchableDescriptor]. Null leaves a stale descriptor to fail with its
-   * missing entries named. [DaemonMcpMain] passes [ProjectBootstrap.refreshDescriptor].
+   * longer exist or is older than a watched build file (#258); see [launchableDescriptor]. Null
+   * fails on missing classpath entries and records a stale-descriptor warning when a build file is
+   * newer than the descriptor. [DaemonMcpMain] passes [ProjectBootstrap.refreshDescriptorOutcome].
    */
-  private val refreshDescriptor: ((RegisteredProject, String) -> Unit)? = null,
+  private val refreshDescriptor: ((RegisteredProject, String) -> DescriptorRefreshOutcome)? = null,
   /**
    * How long a spawned render daemon may sit unused before being shut down (`0` = disabled).
    * Stopped daemons respawn lazily on their next render. [DaemonMcpMain] passes
@@ -107,6 +108,20 @@ class DaemonSupervisor(
 
   /** When each `(workspaceId, modulePath)` daemon was last requested, for [reapIdleDaemons]. */
   private val daemonLastUsedNanos = ConcurrentHashMap<Pair<WorkspaceId, String>, Long>()
+
+  /**
+   * Per-`(workspaceId, modulePath)` warning recorded when a module's launch descriptor is older
+   * than a watched build file and refreshing it failed or could not run (#258).
+   */
+  private val staleDescriptorNotes =
+    ConcurrentHashMap<Pair<WorkspaceId, String>, StaleDescriptorNote>()
+
+  /**
+   * Per-`(workspaceId, modulePath)` newest build-file mtime confirmed up-to-date by a successful
+   * `composePreviewDaemonStart` run that left `daemon-launch.json`'s mtime unchanged
+   * (`UP-TO-DATE`).
+   */
+  private val verifiedBuildFileMtimes = ConcurrentHashMap<Pair<WorkspaceId, String>, Long>()
 
   /** Per-`(workspaceId, modulePath)` lock coordinating acquisition with idle eviction. */
   private val daemonLocks = ConcurrentHashMap<Pair<WorkspaceId, String>, Any>()
@@ -176,6 +191,8 @@ class DaemonSupervisor(
 
   /** Stops and drops this process's live project without changing the shared store. */
   private fun removeLiveProject(workspaceId: WorkspaceId) {
+    staleDescriptorNotes.keys.removeIf { it.first == workspaceId }
+    verifiedBuildFileMtimes.keys.removeIf { it.first == workspaceId }
     val project = projects.remove(workspaceId) ?: return
     project.daemons.values.forEach { runCatching { it.shutdown() } }
     project.daemons.clear()
@@ -361,6 +378,8 @@ class DaemonSupervisor(
     }
     projects.clear()
     daemonLastUsedNanos.clear()
+    staleDescriptorNotes.clear()
+    verifiedBuildFileMtimes.clear()
   }
 
   /**
@@ -385,32 +404,192 @@ class DaemonSupervisor(
       current.hardTtlSeconds != running.hardTtlSeconds
   }
 
+  /**
+   * The newest build-file timestamp confirmed up-to-date by `composePreviewDaemonStart` for
+   * `(workspaceId, modulePath)` when Gradle left `daemon-launch.json`'s mtime unchanged, or `0`.
+   */
+  fun verifiedBuildFileMtime(workspaceId: WorkspaceId, modulePath: String): Long =
+    verifiedBuildFileMtimes[workspaceId to modulePath] ?: 0L
+
+  /**
+   * Records that `composePreviewDaemonStart` succeeded for build files up to [modifiedMs] (e.g.
+   * after `compileAndRelaunch` confirmed `launchChanged == false`) and clears any stale-descriptor
+   * warning for that timestamp.
+   */
+  fun markBuildFilesVerified(workspaceId: WorkspaceId, modulePath: String, modifiedMs: Long) {
+    val key = workspaceId to modulePath
+    verifiedBuildFileMtimes.merge(key, modifiedMs, ::maxOf)
+    staleDescriptorNotes.computeIfPresent(key) { _, note ->
+      if (note.newerBuildFileModifiedMs <= modifiedMs) null else note
+    }
+  }
+
+  /**
+   * Records a stale-descriptor warning (e.g. when a build-file recompile failed or could not run),
+   * surfaced by `status` and render notes.
+   */
+  fun recordStaleDescriptor(
+    workspaceId: WorkspaceId,
+    modulePath: String,
+    note: StaleDescriptorNote,
+  ) {
+    staleDescriptorNotes[workspaceId to modulePath] = note
+  }
+
+  /**
+   * Stale-descriptor warning for `(workspaceId, modulePath)`, or `null` when current. Re-checks the
+   * on-disk descriptor when [descriptorProvider] exposes it, so an external
+   * `composePreviewDaemonStart` clears the warning automatically.
+   */
+  fun staleDescriptor(workspaceId: WorkspaceId, modulePath: String): StaleDescriptorNote? {
+    val key = workspaceId to modulePath
+    val recorded = staleDescriptorNotes[key]
+    val project = projects[workspaceId] ?: return recorded
+    val descriptorFile =
+      runCatching { descriptorProvider.descriptorFileFor(project, modulePath) }.getOrNull()
+        ?: return recorded
+    if (!descriptorFile.isFile) return recorded
+    val descriptor =
+      runCatching { descriptorProvider.descriptorFor(project, modulePath) }.getOrNull()
+        ?: return recorded
+    val verified = verifiedBuildFileMtimes[key] ?: 0L
+    val newer =
+      DescriptorFreshness.newerBuildFile(project.path, descriptor, descriptorFile, verified)
+    if (newer == null) {
+      staleDescriptorNotes.remove(key)
+      return null
+    }
+    if (
+      recorded != null &&
+        recorded.newerBuildFile.absoluteFile.normalize() == newer.absoluteFile.normalize() &&
+        recorded.newerBuildFileModifiedMs == newer.lastModified() &&
+        recorded.descriptorModifiedMs == descriptorFile.lastModified()
+    ) {
+      return recorded
+    }
+    return DescriptorFreshness.staleNote(
+      projectRoot = project.path,
+      modulePath = modulePath,
+      newerBuildFile = newer,
+      descriptorModifiedMs = descriptorFile.lastModified(),
+    )
+  }
+
+  /** Every stale-descriptor warning across [project]'s running and on-disk modules. */
+  fun staleDescriptors(project: RegisteredProject): List<StaleDescriptorNote> {
+    val modules = LinkedHashSet<String>()
+    modules += project.daemons.keys
+    staleDescriptorNotes.keys
+      .filter { it.first == project.workspaceId }
+      .forEach { modules += it.second }
+    runCatching { DescriptorProvider.indexDescriptorsByModulePath(project.path, fileSystem).keys }
+      .getOrDefault(emptySet())
+      .forEach { modules += it }
+    return modules.sorted().mapNotNull { staleDescriptor(project.workspaceId, it) }
+  }
+
   /** Returns the [NotificationRouter] so callers can register handlers. */
   fun router(): NotificationRouter = router
 
   // Internals.
 
   /**
-   * The module's launch descriptor, checked before a JVM is started on it. A descriptor whose
-   * classpath names jars that are gone (a cleaned Gradle transforms cache) starts a daemon that
-   * dies at once with `ClassNotFoundException`, which the client only noticed when `initialize`
-   * timed out, minutes later. Such a descriptor is rewritten once through [refreshDescriptor]; one
-   * still missing entries fails here, naming them.
+   * The module's launch descriptor, checked before a JVM is started on it.
+   *
+   * Two staleness conditions trigger a one-shot rewrite through [refreshDescriptor]:
+   * 1. Classpath jars that no longer exist (a cleaned Gradle transforms cache): a daemon started on
+   *    them dies at once with `ClassNotFoundException`, so a descriptor still missing entries fails
+   *    here, naming them.
+   * 2. Watched build files (including convention-plugin included builds) newer than
+   *    `daemon-launch.json` itself (#258): refreshed before spawning so the daemon starts with the
+   *    current plugin version and JVM flags. If refresh is unavailable or fails while classpath
+   *    jars are intact, the daemon still starts (preserving offline/no-Gradle flows) and a
+   *    [StaleDescriptorNote] is recorded for `status` and render notes.
    */
   private fun launchableDescriptor(
     project: RegisteredProject,
     modulePath: String,
   ): DaemonLaunchDescriptor {
+    val key = project.workspaceId to modulePath
     val first = descriptorProvider.descriptorFor(project, modulePath)
+    val firstFile = descriptorProvider.descriptorFileFor(project, modulePath)
     val missing = missingClasspath(first)
-    if (missing.isEmpty()) return first
-    val refresh =
-      refreshDescriptor ?: throw IllegalStateException(staleMessage(modulePath, missing))
-    runCatching { refresh(project, modulePath) }
+    val newerBuildFile =
+      DescriptorFreshness.newerBuildFile(
+        projectRoot = project.path,
+        descriptor = first,
+        descriptorFile = firstFile,
+        verifiedUpToMs = verifiedBuildFileMtimes[key] ?: 0L,
+      )
+    if (missing.isEmpty() && newerBuildFile == null) {
+      staleDescriptorNotes.remove(key)
+      return first
+    }
+    val refresh = refreshDescriptor
+    if (refresh == null) {
+      if (missing.isNotEmpty()) throw IllegalStateException(staleMessage(modulePath, missing))
+      if (newerBuildFile != null) {
+        staleDescriptorNotes[key] =
+          DescriptorFreshness.staleNote(
+            projectRoot = project.path,
+            modulePath = modulePath,
+            newerBuildFile = newerBuildFile,
+            descriptorModifiedMs = firstFile?.lastModified() ?: 0L,
+          )
+      }
+      return first
+    }
+    val outcome = runCatching {
+      refresh(project, modulePath)
+    }
+      .getOrElse { DescriptorRefreshOutcome.Failed(it.message ?: it.javaClass.simpleName) }
     val second = descriptorProvider.descriptorFor(project, modulePath)
+    val secondFile = descriptorProvider.descriptorFileFor(project, modulePath)
     val stillMissing = missingClasspath(second)
     if (stillMissing.isNotEmpty())
       throw IllegalStateException(staleMessage(modulePath, stillMissing))
+    val stillNewer =
+      DescriptorFreshness.newerBuildFile(
+        projectRoot = project.path,
+        descriptor = second,
+        descriptorFile = secondFile,
+      )
+    if (stillNewer == null) {
+      staleDescriptorNotes.remove(key)
+      verifiedBuildFileMtimes.remove(key)
+    } else {
+      when (outcome) {
+        is DescriptorRefreshOutcome.Refreshed -> {
+          // `composePreviewDaemonStart` exited 0 without rewriting the file (Gradle UP-TO-DATE).
+          verifiedBuildFileMtimes.merge(key, stillNewer.lastModified(), ::maxOf)
+          staleDescriptorNotes.remove(key)
+        }
+        is DescriptorRefreshOutcome.Failed -> {
+          val note =
+            DescriptorFreshness.staleNote(
+              projectRoot = project.path,
+              modulePath = modulePath,
+              newerBuildFile = stillNewer,
+              descriptorModifiedMs = secondFile?.lastModified() ?: 0L,
+              reason = "refresh failed: ${outcome.reason}",
+            )
+          staleDescriptorNotes[key] = note
+          System.err.println("compose-preview-mcp: ${note.message}")
+        }
+        is DescriptorRefreshOutcome.Unavailable -> {
+          val note =
+            DescriptorFreshness.staleNote(
+              projectRoot = project.path,
+              modulePath = modulePath,
+              newerBuildFile = stillNewer,
+              descriptorModifiedMs = secondFile?.lastModified() ?: 0L,
+              reason = outcome.reason,
+            )
+          staleDescriptorNotes[key] = note
+          System.err.println("compose-preview-mcp: ${note.message}")
+        }
+      }
+    }
     return second
   }
 
@@ -841,6 +1020,12 @@ class SupervisedDaemon(val workspaceId: WorkspaceId, val modulePath: String) {
 fun interface DescriptorProvider {
   fun descriptorFor(project: RegisteredProject, modulePath: String): DaemonLaunchDescriptor
 
+  /**
+   * The on-disk `daemon-launch.json` file for [modulePath], when this provider reads from disk.
+   * Used to compare the descriptor's own mtime against watched build files (#258).
+   */
+  fun descriptorFileFor(project: RegisteredProject, modulePath: String): File? = null
+
   companion object {
     /**
      * Reads `build/compose-previews/daemon-launch.json` per module from disk, written by `./gradlew
@@ -851,34 +1036,44 @@ fun interface DescriptorProvider {
       // Only positive results are cached, so a newly written descriptor is found without a restart;
       // the rescan cost lands only on the error path.
       val scannedIndexByRoot = ConcurrentHashMap<String, Map<String, File>>()
-      return DescriptorProvider { project, modulePath ->
+      fun resolveFile(project: RegisteredProject, modulePath: String): File? {
         // Fast path: the Gradle path mirrors the directory layout (`:a:b` → <root>/a/b).
         val guessed =
           File(
             gradlePathToFile(project.path, modulePath),
             "build/compose-previews/daemon-launch.json",
           )
-        val descriptorFile =
-          if (guessed.isFile) {
-            guessed
-          } else {
-            // Fallback for projects that remap projectDir in settings.gradle.kts: find the
-            // descriptor by the modulePath recorded inside each daemon-launch.json. Reuse the
-            // cached index only if it resolves this module; otherwise rescan and cache.
-            val root = project.path.absolutePath
-            scannedIndexByRoot[root]?.get(modulePath)
-              ?: run {
-                val rescanned = indexDescriptorsByModulePath(project.path, fileSystem)
-                scannedIndexByRoot[root] = rescanned
-                rescanned[modulePath]
-                  ?: error(
-                    "Missing daemon launch descriptor for $modulePath under " +
-                      "${project.path.absolutePath}. " +
-                      "Run `./gradlew $modulePath:composePreviewDaemonStart` first.",
-                  )
-              }
-          }
-        DaemonLaunchDescriptor.parse(fileSystem.read(descriptorFile.path.toPath()) { readUtf8() })
+        if (guessed.isFile) return guessed
+        // Fallback for projects that remap projectDir in settings.gradle.kts: find the
+        // descriptor by the modulePath recorded inside each daemon-launch.json. Reuse the
+        // cached index only if it resolves an existing file; otherwise rescan and cache.
+        val root = project.path.absolutePath
+        scannedIndexByRoot[root]?.get(modulePath)?.takeIf(File::isFile)?.let {
+          return it
+        }
+        val rescanned = indexDescriptorsByModulePath(project.path, fileSystem)
+        scannedIndexByRoot[root] = rescanned
+        return rescanned[modulePath]
+      }
+      return object : DescriptorProvider {
+        override fun descriptorFileFor(project: RegisteredProject, modulePath: String): File? =
+          resolveFile(project, modulePath)
+
+        override fun descriptorFor(
+          project: RegisteredProject,
+          modulePath: String,
+        ): DaemonLaunchDescriptor {
+          val descriptorFile =
+            resolveFile(project, modulePath)
+              ?: error(
+                "Missing daemon launch descriptor for $modulePath under " +
+                  "${project.path.absolutePath}. " +
+                  "Run `./gradlew $modulePath:composePreviewDaemonStart` first.",
+              )
+          return DaemonLaunchDescriptor.parse(
+            fileSystem.read(descriptorFile.path.toPath()) { readUtf8() },
+          )
+        }
       }
     }
 

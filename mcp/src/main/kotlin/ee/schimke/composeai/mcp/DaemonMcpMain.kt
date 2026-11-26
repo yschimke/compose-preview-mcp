@@ -44,6 +44,7 @@ object DaemonMcpMain {
     }
     val replicasPerDaemon = parseReplicasPerDaemon(args)
     val storybookProfile = parseStorybookProfile(args)
+    TempFileSweep.sweepAsync()
     // Storybook compatibility is intentionally a closed tool surface. Do not even construct the
     // remote adapter in that profile: an ambient UI-builder URL must not add tools or make a token
     // mandatory for a Storybook-only process.

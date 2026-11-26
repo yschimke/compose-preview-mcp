@@ -687,7 +687,10 @@ class DaemonMcpServer(
     ConcurrentHashMap<Session, ConcurrentHashMap<FileRenderKey, String>>()
 
   /** Process-owned, bounded cache for immutable path-shaped render results. */
-  private val fileRenderCacheDir = Files.createTempDirectory("compose-preview-mcp-").toFile()
+  private val fileRenderCacheDir =
+    Files.createTempDirectory("compose-preview-mcp-").toFile().also {
+      TempFileSweep.writePidMarker(it)
+    }
 
   private val fileRenderCacheLock = Any()
 

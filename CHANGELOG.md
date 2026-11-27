@@ -1,5 +1,16 @@
 # Changelog
 
+## [4.28.0](https://github.com/yschimke/compose-preview-mcp/compare/v4.27.0...v4.28.0) (2026-11-27)
+
+
+### Bug Fixes
+
+* **deps:** update dependency ee.schimke.composeai:remote-compose-player-js-dist to v3 ([#261](https://github.com/yschimke/compose-preview-mcp/issues/261)) ([7033ca7](https://github.com/yschimke/compose-preview-mcp/commit/7033ca7c3c901ba37c3249a547d40e5278691f35))
+* **deps:** update dependency ee.schimke.composeai:remote-compose-player-js-dist to v3.10.0 ([#264](https://github.com/yschimke/compose-preview-mcp/issues/264)) ([6a9d3fd](https://github.com/yschimke/compose-preview-mcp/commit/6a9d3fd5c06c078b7dd58de0896da11918ca75c0))
+* **deps:** update ktor to v3.6.2 ([#259](https://github.com/yschimke/compose-preview-mcp/issues/259)) ([64e0830](https://github.com/yschimke/compose-preview-mcp/commit/64e083092e3dae1493dc423b08332617eea4c53d))
+* refresh stale launch descriptors older than watched build files ([#262](https://github.com/yschimke/compose-preview-mcp/issues/262)) ([e826b5d](https://github.com/yschimke/compose-preview-mcp/commit/e826b5df1e96942b7d1ef32fd146435711f1467a))
+* sweep orphaned MCP and daemon temp entries on server startup ([#263](https://github.com/yschimke/compose-preview-mcp/issues/263)) ([bf49426](https://github.com/yschimke/compose-preview-mcp/commit/bf49426b334c2cd8a916e20a6f3747caf7598b8d))
+
 ## [4.27.0](https://github.com/yschimke/compose-preview-mcp/compare/v4.26.0...v4.27.0) (2026-11-25)
 
 
